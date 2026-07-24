@@ -1,0 +1,15 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+outputs/
+
+CLAUDE.md
+
+# Virtual environments
+.venv
+
+# Preprocessed datasets
+full.csv
+train.csv
+val.csv
+test.csv

@@ -1,0 +1,61 @@
+seed: 42
+experiment_name: cvae_suffix_baseline
+output_dir: outputs
+
+data:
+  dir: data/bpic2012_a
+
+  case_key: "Case ID"
+  activity_key: Activity
+  resource_key: Resource
+  timestamp_key: "time:timestamp"
+  label_key: label
+
+  train_split: 0.65
+  val_split: 0.15
+  test_split: 0.2
+  max_seq_len: 50
+  vocab_size: 100
+  condition_features:
+    - case:label
+  time_clip_percentile: 99.0
+  batch_size: 64
+  num_workers: 4
+
+model:
+  encoder:
+    embedding_dim: 64
+    hidden_dim: 128
+    num_layers: 2
+    dropout: 0.1
+  decoder:
+    hidden_dim: 128
+    num_layers: 2
+    dropout: 0.1
+  latent:
+    latent_dim: 32
+    condition_dim: 16
+
+loss:
+  kl_annealing_cycles: 4
+  kl_annealing_ratio: 0.5
+  kl_annealing_start_weight: 0.0
+  kl_annealing_full_weight: 1.0
+
+optimizer:
+  lr: 0.001
+  weight_decay: 0.0001
+
+training:
+  max_num_epochs: 100
+  grad_clip_norm: 5.0
+  device: cpu
+  checkpoint_dir: outputs/checkpoints
+  log_dir: outputs/tensorboard
+  log_every_n_steps: 50
+  val_every_n_epochs: 1
+
+early_stopping:
+  patience: 10
+  min_delta_perc: 0.0
+  debug: false
