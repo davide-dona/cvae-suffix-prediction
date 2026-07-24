@@ -31,6 +31,10 @@ class DataConfig(StrictModel):
     condition_features: list[str] = Field(
         ..., description="Canonical (post-preprocessing) case-level columns used as the CVAE condition"
     )
+    attribute_features: list[str] = Field(
+        ..., description="Canonical (post-preprocessing) per-event columns reconstructed alongside "
+        "activity/resource/timestamp"
+    )
 
     time_clip_percentile: float = Field(
         ..., gt=0.0, le=100.0,

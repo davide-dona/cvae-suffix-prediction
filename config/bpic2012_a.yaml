@@ -18,6 +18,9 @@ data:
   vocab_size: 100
   condition_features:
     - case:label
+  attribute_features:
+    - AMOUNT_REQ
+    - "lifecycle:transition"
   time_clip_percentile: 99.0
   batch_size: 64
   num_workers: 4
