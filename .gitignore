@@ -7,9 +7,5 @@ CLAUDE.md
 
 # Virtual environments
 .venv
-
 # Preprocessed datasets
-full.csv
-train.csv
-val.csv
-test.csv
+processed/

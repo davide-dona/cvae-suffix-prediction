@@ -66,7 +66,9 @@ def run(data_config: DataConfig) -> None:
     # Read, preprocess and write the full log
     log = read_log(data_config.dir / 'original.csv', column_mapping=column_mapping)
     log = preprocess(log)
-    write_log(log, data_config.dir / 'full.csv')
+    
+    processed_dir = data_config.dir / 'processed'
+    write_log(log, processed_dir / 'full.csv')
 
     # Split the log into train/val/test and write them
     train, val, test = temporal_split(
@@ -77,9 +79,9 @@ def run(data_config: DataConfig) -> None:
         val_frac=data_config.val_split,
         test_frac=data_config.test_split,
     )
-    write_log(train, data_config.dir / 'train.csv')
-    write_log(val, data_config.dir / 'val.csv')
-    write_log(test, data_config.dir / 'test.csv')
+    write_log(train, processed_dir / 'train.csv')
+    write_log(val, processed_dir / 'val.csv')
+    write_log(test, processed_dir / 'test.csv')
 
     print(f'Preprocessed "{data_config.dir}": {len(train)} train, {len(val)} val, {len(test)} test events')
 
