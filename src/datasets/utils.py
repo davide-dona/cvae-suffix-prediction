@@ -5,9 +5,9 @@ import torch
 def move_to_device(x, device: torch.device):
     """Recursively move every tensor in `x` to `device`, preserving its container shape.
 
-    Handles the nested structures used throughout `src/training/`: a bare `Tensor`
-    (e.g. `mean`/`std`), or the `(attributes, activities, timestamps, resources)` tuple
-    where `attributes` is a `dict[str, Tensor]`. Anything else is returned unchanged.
+    Handles the structures used throughout `src/training/`: a bare `Tensor`, or the
+    `dict[str, Tensor]` batches `SuffixDataset` produces, or any tuple/list of those.
+    Anything else is returned unchanged.
     """
     if isinstance(x, torch.Tensor):
         return x.to(device)

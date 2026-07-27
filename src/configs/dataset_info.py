@@ -22,24 +22,15 @@ class TimeStats:
 
 
 @dataclass(frozen=True)
-class CategoricalFeatureStats:
-    """Vocabulary of a categorical condition/attribute feature, fit on train."""
-    categories: list[str]
-
-
-@dataclass(frozen=True)
-class NumericFeatureStats:
-    """Min-max normalization range of a numeric condition/attribute feature, fit on train."""
-    min: float
-    max: float
-
-
-@dataclass(frozen=True)
 class DatasetInfo:
-    """Everything `Encoding` and `GenericDataset` need to know about a dataset.
+    """Everything `Codec`, `SuffixDataset` and the model need to know about a dataset.
 
     Build with `DatasetInfo.build(data_config)`. All vocabularies and normalization
     ranges are fit on `train` only and then reused, unchanged, for `val`/`test`.
+
+    This is also the single source of the data-derived dimensions the model is built
+    against (vocabulary sizes, special-token indices, sequence length), so `AttentionCVAE`
+    needs nothing beyond `ModelConfig` and one of these.
     """
     train: pd.DataFrame
     val: pd.DataFrame
@@ -49,36 +40,57 @@ class DatasetInfo:
     resource_vocab: list[str]
     time_stats: TimeStats
 
-    condition_features: list[str]
-    condition_stats: dict[str, CategoricalFeatureStats | NumericFeatureStats]
-
-    attribute_features: list[str]
-    attribute_stats: dict[str, CategoricalFeatureStats | NumericFeatureStats]
-
     max_trace_length: int
 
+    # The special tokens sit directly above the fitted vocabulary, in this order, for both
+    # activities and resources. Defining the layout here rather than in `Codec` keeps one
+    # definition for the data layer and the model embeddings to agree on.
     @property
     def num_activities(self) -> int:
-        """Vocab size including the EOT and PAD tokens."""
+        """Vocab size including the EOT, PAD and SOS tokens."""
+        return len(self.activity_vocab) + 3
+
+    @property
+    def eot_activity_index(self) -> int:
+        return len(self.activity_vocab)
+
+    @property
+    def pad_activity_index(self) -> int:
+        return len(self.activity_vocab) + 1
+
+    @property
+    def sos_activity_index(self) -> int:
         return len(self.activity_vocab) + 2
 
     @property
     def num_resources(self) -> int:
-        """Vocab size including the EOT and PAD tokens."""
+        """Vocab size including the EOT, PAD and SOS tokens."""
+        return len(self.resource_vocab) + 3
+
+    @property
+    def eot_resource_index(self) -> int:
+        return len(self.resource_vocab)
+
+    @property
+    def pad_resource_index(self) -> int:
+        return len(self.resource_vocab) + 1
+
+    @property
+    def sos_resource_index(self) -> int:
         return len(self.resource_vocab) + 2
 
     @classmethod
     def build(cls, data_config: DataConfig) -> "DatasetInfo":
-        train = read_log(data_config.dir / "train.csv")
-        val = read_log(data_config.dir / "val.csv")
-        test = read_log(data_config.dir / "test.csv")
+        # `pipelines/preprocess.py` writes the splits into this subdirectory.
+        processed_dir = data_config.dir / "processed"
+        train = read_log(processed_dir / "train.csv")
+        val = read_log(processed_dir / "val.csv")
+        test = read_log(processed_dir / "test.csv")
 
         activity_vocab = sorted(train[ACTIVITY_KEY].unique().tolist())
         resource_vocab = sorted(train[RESOURCE_KEY].astype(str).unique().tolist())
 
         time_stats = _fit_time_stats(train, percentile=data_config.time_clip_percentile)
-        condition_stats = _fit_feature_stats(train, data_config.condition_features)
-        attribute_stats = _fit_feature_stats(train, data_config.attribute_features)
 
         return cls(
             train=train,
@@ -87,10 +99,6 @@ class DatasetInfo:
             activity_vocab=activity_vocab,
             resource_vocab=resource_vocab,
             time_stats=time_stats,
-            condition_features=data_config.condition_features,
-            condition_stats=condition_stats,
-            attribute_features=data_config.attribute_features,
-            attribute_stats=attribute_stats,
             max_trace_length=data_config.max_seq_len,
         )
 
@@ -101,21 +109,3 @@ def _fit_time_stats(train: pd.DataFrame, *, percentile: float) -> TimeStats:
     clipped = np.clip(deltas, 0.0, clip_value)
     log_deltas = np.log1p(clipped)
     return TimeStats(clip_value=clip_value, log_min=float(log_deltas.min()), log_max=float(log_deltas.max()))
-
-
-def _fit_feature_stats(
-    train: pd.DataFrame, features: list[str]
-) -> dict[str, CategoricalFeatureStats | NumericFeatureStats]:
-    """Fit one stats object per feature: a vocabulary for categorical columns, a min-max
-    range for numeric ones. Shared by `condition_features` (case-level, see
-    `GenericDataset`) and `attribute_features` (per-event) alike, since fitting only
-    depends on the column's dtype, not on how it will later be used.
-    """
-    stats: dict[str, CategoricalFeatureStats | NumericFeatureStats] = {}
-    for feature in features:
-        column = train[feature]
-        if pd.api.types.is_numeric_dtype(column):
-            stats[feature] = NumericFeatureStats(min=float(column.min()), max=float(column.max()))
-        else:
-            stats[feature] = CategoricalFeatureStats(categories=sorted(column.astype(str).unique().tolist()))
-    return stats

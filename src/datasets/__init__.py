@@ -1,9 +1,9 @@
-from .dataset import GenericDataset
-from .encoding import Encoding
+from .codec import Codec
+from .dataset import SuffixDataset
 from .utils import move_to_device
 
 __all__ = [
-    "Encoding",
-    "GenericDataset",
+    "Codec",
+    "SuffixDataset",
     "move_to_device",
 ]

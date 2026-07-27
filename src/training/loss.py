@@ -1,101 +1,117 @@
 import torch
-from torch import nn
 import torch.nn.functional as F
 
-from src.configs import DatasetInfo
-from src.datasets.encoding import Encoding
+from src.models import AttentionCVAE
+from src.training.metrics import Metrics
 
-def reconstruction_loss_fn(
-    *,
-    x: tuple,
-    x_predicted: tuple,
-    encoding: Encoding,
-    dataset_info: DatasetInfo,
-    device: torch.device
-) -> tuple:
-    """
-    Compute the reconstruction loss for the CVAE model.
-    The reconstruction loss is computed as the sum of the losses for each component of the input:
-    - Categorical attributes: Binary Cross Entropy Loss
-    - Numerical attributes: Mean Squared Error Loss
-    - Activities: Binary Cross Entropy Loss
-    - Timestamps: Mean Squared Error Loss
-    - Resources: Binary Cross Entropy Loss
+
+def length_mask(lengths: torch.Tensor, seq_len: int) -> torch.Tensor:
+    """A boolean mask marking the real (non-padded) positions of a padded batch.
+
     Args:
-        x_predicted: The predicted input from the CVAE model.
-        x: The original input.
-        encoding: The vocabularies the batch is encoded with.
-        dataset_info: The dataset information.
-        device: The device to run the computations on.
+        lengths: Real length per sequence, `[batch_size]`.
+        seq_len: The padded length.
     Returns:
-        loss: The total reconstruction loss.
-        loss_components: A tensor containing the individual losses for each component.
+        `[batch_size, seq_len]`, True where the position holds a real event.
     """
-    # Initialize the loss components
-    cat_attributes_loss, num_attributes_loss, cf_loss, ts_loss, resource_loss = torch.tensor(0.0).to(device), torch.tensor(0.0).to(device), torch.tensor(0.0).to(device), torch.tensor(0.0).to(device), torch.tensor(0.0).to(device)
+    positions = torch.arange(seq_len, device=lengths.device)
+    return positions.unsqueeze(0) < lengths.unsqueeze(1)
 
-    # Define the loss functions for each component
-    cat_attribute_loss_fn = nn.BCELoss(reduction='sum')
-    num_attribute_loss_fn = nn.MSELoss(reduction='sum')
-    cf_loss_fn = nn.BCELoss(reduction='sum')
-    ts_loss_fn = nn.MSELoss(reduction='sum')
-    resource_loss_fn = nn.BCELoss(reduction='sum')
 
-    # Unpack the predicted and original inputs
-    attributes_predicted, activities_predicted, ts_predicted, resources_predicted = x_predicted
-    attributes, activities, timestamps, resources = x
+def masked_mse(predicted: torch.Tensor, target: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
+    """Summed squared error over the real positions of a padded batch.
 
-    # Convert categorical attributes to one-hot encoding
-    for attribute_name, attribute_val in attributes.items():
-        if attribute_name in encoding.s2i: # it is a categorical attribute
-            attributes[attribute_name] = F.one_hot(attribute_val.to(torch.int64), num_classes=len(encoding.s2i[attribute_name])).to(torch.float32).to(device)
+    Padding is excluded rather than zeroed, so how much a batch happens to be padded
+    cannot influence the gradient.
 
-    # Turn all PAD activities into EOT activities, since PAD sits outside the output
-    # width of the model and so cannot appear in the ground truth we compare against
-    activities = torch.where(activities == encoding.pad_activity_index, encoding.eot_activity_index, activities).to(device)
-    # Convert activities to one-hot encoding
-    activities = F.one_hot(activities.to(torch.int64), num_classes=dataset_info.num_activities).to(torch.float32)
+    Args:
+        predicted: `[batch_size, seq_len]`.
+        target: `[batch_size, seq_len]`.
+        lengths: Real length per sequence, `[batch_size]`.
+    Returns:
+        A scalar.
+    """
+    mask = length_mask(lengths, predicted.size(1))
+    return ((predicted - target) ** 2 * mask).sum()
 
-    # attributes
-    for attribute_name, attribute_val in attributes.items():
-        if attribute_name in encoding.s2i:
-            cat_attributes_loss += cat_attribute_loss_fn(attributes_predicted[attribute_name], attribute_val)
-        else:
-            attributes_predicted[attribute_name] = attributes_predicted[attribute_name].squeeze()
-            num_attributes_loss += num_attribute_loss_fn(attributes_predicted[attribute_name], attribute_val).to(torch.float32)
 
-    # activities
-    cf_loss += cf_loss_fn(activities_predicted, activities)
-
-    # ts
-    # the length of a trace is where its first EOT activity sits, read off the
-    # ground truth so that the mask does not depend on how good the model currently is
-    lens = activities.argmax(dim=2).argmax(dim=1)
-    # use lens and compute loss only for the first lens elements
-    for i in range(len(lens)):
-        ts_predicted[i, lens[i]:] = 0.0
-        
-    ts_loss += ts_loss_fn(ts_predicted, timestamps)
-
-    # resources
-    resources = torch.where(resources == encoding.pad_resource_index, encoding.eot_resource_index, resources).to(device)
-    resources = F.one_hot(resources.to(torch.int64), num_classes=dataset_info.num_resources).to(torch.float32)
-
-    resource_loss += resource_loss_fn(resources_predicted, resources)
-
-    # sum up loss components
-    loss = cat_attributes_loss + num_attributes_loss + cf_loss + ts_loss + resource_loss
-
-    return loss, torch.tensor([cat_attributes_loss, num_attributes_loss, cf_loss, ts_loss, resource_loss])
-
-def kl_divergence_loss_fn(
-    mean: torch.Tensor,
-    std: torch.Tensor
+def gaussian_kl(
+    posterior_mean: torch.Tensor,
+    posterior_logvar: torch.Tensor,
+    prior_mean: torch.Tensor,
+    prior_logvar: torch.Tensor,
 ) -> torch.Tensor:
+    """Closed-form KL divergence between two diagonal Gaussians, summed over the batch.
+
+    The prior is an argument rather than a fixed `N(0, I)` because a conditional VAE
+    compares its posterior against a learned, conditioned prior: whatever the condition
+    already explains then costs nothing to encode in the latent.
+
+    Args:
+        posterior_mean, posterior_logvar: Parameters of `q`, `[batch_size, latent_dim]`.
+        prior_mean, prior_logvar: Parameters of `p`, `[batch_size, latent_dim]`.
+    Returns:
+        A scalar.
     """
-    Compute the KL divergence loss between two Gaussian distributions.
+    divergence = (
+        prior_logvar
+        - posterior_logvar
+        + (posterior_logvar.exp() + (posterior_mean - prior_mean) ** 2) / prior_logvar.exp()
+        - 1.0
+    )
+    return 0.5 * divergence.sum()
+
+
+def compute_loss(
+    model: AttentionCVAE, batch: dict[str, torch.Tensor], kl_weight: float
+) -> tuple[torch.Tensor, Metrics]:
+    """Run one training or evaluation step and report what it cost.
+
+    The two returned values are scaled differently on purpose. The loss is divided by the
+    batch size, so the gradient does not grow with it. The metrics are left as sums over the
+    batch, because `run_epoch` adds them across batches and divides once by the size of the
+    split; dividing here as well would only be undone there, and batches are not equal-sized.
+
+    Args:
+        model: The model to run.
+        batch: A batch from `SuffixDataset`, already on the right device.
+        kl_weight: The weight the KL term is given this epoch (see `training/annealing.py`).
+    Returns:
+        The per-trace loss to backpropagate, and the metrics to log, summed over the batch.
     """
-    # Ensure that the std is positive to avoid numerical issues
-    std = torch.clamp(std, min=1e-9)
-    # Compute the KL divergence loss using the formula for two Gaussian distributions
-    return - torch.sum(1 + torch.log(std ** 2) - mean ** 2 - std ** 2)
+    output = model(batch)
+    batch_size = batch['target_activities'].size(0)
+
+    # `ignore_index` drops the padded suffix positions, so predictions past the end of a
+    # trace neither contribute a gradient nor dilute the reported loss.
+    activity_loss = F.cross_entropy(
+        output.decoder.activity_logits.transpose(1, 2),
+        batch['target_activities'],
+        ignore_index=model.pad_activity_index,
+        reduction='sum',
+    )
+    resource_loss = F.cross_entropy(
+        output.decoder.resource_logits.transpose(1, 2),
+        batch['target_resources'],
+        ignore_index=model.pad_resource_index,
+        reduction='sum',
+    )
+    timestamp_loss = masked_mse(
+        output.decoder.timestamps, batch['target_timestamps'], batch['suffix_len']
+    )
+
+    reconstruction_loss = activity_loss + resource_loss + timestamp_loss
+    kl_loss = gaussian_kl(
+        output.posterior.mean, output.posterior.logvar, output.prior.mean, output.prior.logvar
+    )
+    total_loss = reconstruction_loss + kl_weight * kl_loss
+
+    metrics = Metrics(
+        loss=total_loss.item(),
+        reconstruction_loss=reconstruction_loss.item(),
+        kl_loss=kl_loss.item(),
+        activity_loss=activity_loss.item(),
+        resource_loss=resource_loss.item(),
+        timestamp_loss=timestamp_loss.item(),
+    )
+    return total_loss / batch_size, metrics

@@ -7,8 +7,7 @@ def temporal_split(
     case_key: str,
     timestamp_key: str,
     train_frac: float,
-    val_frac: float,
-    test_frac: float,
+    val_frac: float
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Split a log into train/val/test by case start time.
@@ -23,17 +22,9 @@ def temporal_split(
         timestamp_key: Column holding the (already parsed) event timestamp.
         train_frac: Fraction of cases assigned to the training set.
         val_frac: Fraction of cases assigned to the validation set.
-        test_frac: Fraction of cases assigned to the test set.
     Returns:
         `(train, val, test)` DataFrames, each a row-subset of `log`.
-    Raises:
-        ValueError: If the fractions do not sum to 1.
     """
-    # Check that splits sum to 1.0
-    total = train_frac + val_frac + test_frac
-    if abs(total - 1.0) > 1e-6:
-        raise ValueError(f'train/val/test fractions must sum to 1.0, got {total}')
-
     # Get the first event timestamp for each case and sort cases by that timestamp
     case_start = log.groupby(case_key)[timestamp_key].min().sort_values()
     cases = case_start.index.to_list()
@@ -46,7 +37,7 @@ def temporal_split(
     # Split the cases into train/val/test based on the computed indices
     train_cases = cases[:n_train]
     val_cases = cases[n_train:n_train + n_val]
-    test_cases = cases[n_train + n_val:]
+    test_cases = cases[n_train + n_val:]    # Assumed to be the remainder, so no rounding issues arise
     assert len(train_cases) + len(val_cases) + len(test_cases) == n
     
     train = log[log[case_key].isin(train_cases)]

@@ -3,8 +3,6 @@ experiment_name: cvae_suffix_baseline
 output_dir: outputs
 
 model:
-  name: attention_cvae
-
   embeddings:
     activity_dim: 64
     resource_dim: 32
@@ -14,7 +12,7 @@ model:
     num_layers: 2
     dropout: 0.1
 
-  posterior:
+  suffix_encoder:
     hidden_dim: 128
     num_layers: 1
     dropout: 0.1
@@ -52,10 +50,8 @@ training:
   device: cpu
   checkpoint_dir: outputs/checkpoints
   log_dir: outputs/tensorboard
-  log_every_n_steps: 50
   val_every_n_epochs: 1
 
 early_stopping:
   patience: 10
   min_delta_perc: 0.0
-  debug: false

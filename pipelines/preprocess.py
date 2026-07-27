@@ -43,14 +43,39 @@ def preprocess(log: pd.DataFrame) -> pd.DataFrame:
     return log
 
 
+def ensure_dataset(data_config: DataConfig) -> None:
+    """
+    Preprocess the dataset if its splits are not on disk yet, so a training run only ever
+    needs the raw log to have been placed in `<dir>/original.csv`.
+
+    Args:
+        data_config: The `data` section of this dataset's experiment config.
+    Raises:
+        FileNotFoundError: If the splits are missing and there is no raw log to build them from.
+    """
+    processed_dir = data_config.dir / 'processed'
+    if all((processed_dir / f'{split}.csv').exists() for split in ('train', 'val', 'test')):
+        return
+
+    original = data_config.dir / 'original.csv'
+    if not original.exists():
+        raise FileNotFoundError(
+            f'{processed_dir} has no train/val/test splits and there is no raw log at {original} '
+            'to build them from.'
+        )
+
+    print(f'Splits missing under "{processed_dir}", preprocessing "{original}" first')
+    run(data_config)
+
+
 def run(data_config: DataConfig) -> None:
     """
     Preprocess and split a dataset, writing outputs next to the input.
 
     Reads `<dir>/original.csv`, renames its structural columns to the
     canonical names used throughout the codebase, adds the relative-timestamp
-    columns, writes the result as `<dir>/full.csv`, then splits it by case
-    start time into `train.csv`, `val.csv` and `test.csv` in the same folder.
+    columns, writes the result as `<dir>/processed/full.csv`, then splits it by
+    case start time into `train.csv`, `val.csv` and `test.csv` in the same folder.
 
     Args:
         data_config: The `data` section of this dataset's experiment config.

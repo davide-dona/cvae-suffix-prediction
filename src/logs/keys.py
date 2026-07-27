@@ -10,8 +10,10 @@ LABEL_KEY = 'case:label'
 # the encoding, not of the data, and are identical for every dataset and every split.
 EOT_ACTIVITY = 'EOT'
 PADDING_ACTIVITY = 'PAD'
+SOS_ACTIVITY = 'SOS'
 EOT_RESOURCE = 'EOT-RES'
 PADDING_RESOURCE = 'PAD-RES'
+SOS_RESOURCE = 'SOS-RES'
 
 # Case attribute added by pipelines/preprocess.py (see add_case_offset) and
 # always fed to the model.
@@ -21,9 +23,6 @@ CASE_OFFSET_KEY = 'relative_timestamp_from_start'
 # minutes since the previous activity in the same case. This is the timestamp
 # the model actually predicts.
 EVENT_DELTA_KEY = 'relative_timestamp_from_previous_activity'
-
-# Column holding the label recomputed on generated data.
-RECOMPUTED_LABEL_KEY = 'recomputed_label'
 
 # Separator used by every raw and processed CSV log in this project.
 CSV_SEPARATOR = ';'

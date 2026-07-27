@@ -5,8 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class StrictModel(BaseModel):
-    """Base for all config sections: immutable and typo-proof."""
-
+    """Strict base model for all config sections: immutable and typo-proof."""
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
@@ -26,14 +25,20 @@ class DataConfig(StrictModel):
     val_split: float = Field(..., gt=0.0, lt=1.0)
     test_split: float = Field(..., gt=0.0, lt=1.0)
 
-    max_seq_len: int = Field(..., gt=0, description="Max prefix/suffix length in events; longer traces are truncated")
-    vocab_size: int = Field(..., gt=0, description="Number of distinct activity labels")
+    max_seq_len: int = Field(
+        ..., gt=0,
+        description="Cases are truncated to this many events, which also bounds every prefix and suffix cut "
+        "from them; the model's sequence tensors are padded to it",
+    )
+    # Neither is read by the data layer or the model: the prefix is the only condition, and an
+    # event is (activity, resource, time delta). They record which columns each dataset offers
+    # for the two roles, and `src/notebooks/exploration.ipynb` reads them.
     condition_features: list[str] = Field(
-        ..., description="Canonical (post-preprocessing) case-level columns used as the CVAE condition"
+        ..., description="Canonical (post-preprocessing) case-level columns, candidates for the CVAE condition"
     )
     attribute_features: list[str] = Field(
-        ..., description="Canonical (post-preprocessing) per-event columns reconstructed alongside "
-        "activity/resource/timestamp"
+        ..., description="Canonical (post-preprocessing) per-event columns, candidates for reconstruction "
+        "alongside activity/resource/timestamp"
     )
 
     time_clip_percentile: float = Field(
@@ -52,10 +57,47 @@ class DataConfig(StrictModel):
         return self
 
 
-class EncoderConfig(StrictModel):
-    embedding_dim: int = Field(..., gt=0)
-    hidden_dim: int = Field(..., gt=0)
+class EmbeddingConfig(StrictModel):
+    """Event embeddings, shared by both trace encoders and the decoder."""
+
+    activity_dim: int = Field(..., gt=0)
+    resource_dim: int = Field(..., gt=0)
+
+
+class TraceEncoderConfig(StrictModel):
+    """Bidirectional LSTM reading a sequence of events.
+
+    Used twice, with its own values each time: once over the prefix, whose summary conditions
+    both the prior and the decoder, and once over the ground-truth suffix, which is read on
+    the training path only, to give the posterior something to encode.
+    """
+
+    hidden_dim: int = Field(..., gt=0, description="Per-direction hidden size; the summary is twice this wide")
     num_layers: int = Field(..., gt=0)
+    dropout: float = Field(..., ge=0.0, lt=1.0)
+
+
+class PriorConfig(StrictModel):
+    """MLP mapping the prefix summary to `p(z | prefix)`, the distribution sampled from at
+    inference time.
+
+    It takes the place a fixed `N(0, I)` takes in an unconditional VAE. Because the KL term
+    compares the posterior against this conditioned prior rather than against `N(0, I)`, z
+    only has to carry what the prefix does not already imply.
+    """
+
+    hidden_dims: list[int] = Field(..., description="Widths of the hidden layers; empty for a linear prior")
+    dropout: float = Field(..., ge=0.0, lt=1.0)
+
+
+class LatentConfig(StrictModel):
+    latent_dim: int = Field(..., gt=0)
+
+
+class AttentionConfig(StrictModel):
+    """Single-head scaled dot-product attention over the prefix and the suffix so far."""
+
+    dim: int = Field(..., gt=0, description="Shared width the prefix outputs and decoder states are projected to")
     dropout: float = Field(..., ge=0.0, lt=1.0)
 
 
@@ -63,17 +105,24 @@ class DecoderConfig(StrictModel):
     hidden_dim: int = Field(..., gt=0)
     num_layers: int = Field(..., gt=0)
     dropout: float = Field(..., ge=0.0, lt=1.0)
-
-
-class LatentConfig(StrictModel):
-    latent_dim: int = Field(..., gt=0)
-    condition_dim: int = Field(..., gt=0)
+    head_hidden_dim: int = Field(..., gt=0, description="Width of the layer shared by the three output heads")
 
 
 class ModelConfig(StrictModel):
-    encoder: EncoderConfig
-    decoder: DecoderConfig
+    """Every hyperparameter of `AttentionCVAE`.
+
+    Dimensions derived from the data (vocabulary sizes, special-token indices, sequence
+    length) are deliberately absent: they come from `DatasetInfo` at build time, so a
+    config cannot disagree with the dataset it is trained on.
+    """
+
+    embeddings: EmbeddingConfig
+    prefix_encoder: TraceEncoderConfig
+    suffix_encoder: TraceEncoderConfig
+    prior: PriorConfig
     latent: LatentConfig
+    attention: AttentionConfig
+    decoder: DecoderConfig
 
 
 class LossConfig(StrictModel):
@@ -96,7 +145,6 @@ class TrainingConfig(StrictModel):
     device: Literal["cpu", "cuda", "mps"]
     checkpoint_dir: Path
     log_dir: Path = Field(..., description="TensorBoard event directory")
-    log_every_n_steps: int = Field(..., gt=0)
     val_every_n_epochs: int = Field(..., gt=0)
 
 
@@ -109,7 +157,6 @@ class EarlyStoppingConfig(StrictModel):
 
     patience: int = Field(..., gt=0, description="Non-improving evaluations tolerated before stopping")
     min_delta_perc: float = Field(..., ge=0.0, description="Minimum relative improvement to reset the patience counter")
-    debug: bool = Field(..., description="Write per-epoch stopper state to a debug file")
 
 
 class ExperimentConfig(StrictModel):
