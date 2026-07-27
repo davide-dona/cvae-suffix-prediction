@@ -11,3 +11,10 @@ dependencies = [
     "tensorboard>=2.21.0",
     "torch>=2.13.0",
 ]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.3.0",
+    "matplotlib>=3.11.1",
+    "pm4py>=2.7.23.3",
+]
