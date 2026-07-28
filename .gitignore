@@ -5,6 +5,9 @@ outputs/
 
 CLAUDE.md
 
+# Notes on things worth trying, kept out of the repo until one of them is actually done
+ideas/
+
 # Virtual environments
 .venv
 # Preprocessed datasets

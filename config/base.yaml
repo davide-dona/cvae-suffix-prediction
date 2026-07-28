@@ -50,7 +50,10 @@ training:
   # this with a budget of its own.
   max_num_epochs: 1000
   grad_clip_norm: 5.0  # null to leave gradients unclipped
-  device: cuda
+  # "mps" is the Apple-silicon GPU. It beats "cpu" here, but only because the per-step decoder
+  # is launch-bound rather than compute-bound: the margin grows with the batch size, so a
+  # smaller batch than this one narrows it. A dataset file overrides this with "cuda" or "cpu".
+  device: mps
   checkpoint_dir: outputs/checkpoints
   log_dir: outputs/tensorboard
   val_every_n_epochs: 1

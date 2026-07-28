@@ -23,7 +23,10 @@ data:
     - expense
   time_clip_percentile: 99.0
   batch_size: 256
-  num_workers: 4
+  # 0, not 4: `__getitem__` only slices arrays the codec already decoded, so a worker has
+  # nothing to overlap with the GPU, and macOS spawns rather than forks - every epoch pays
+  # four fresh torch imports per loader. Measured at 2.1x slower end to end than 0.
+  num_workers: 0
 
 training:
   max_num_epochs: 7600  # 84249 train traces, cut into 221016 prefix/suffix pairs

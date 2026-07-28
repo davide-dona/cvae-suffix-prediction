@@ -142,7 +142,7 @@ class Decoder(nn.Module):
         z: torch.Tensor,
         state: DecoderState,
         prefix_memory: torch.Tensor,
-        prefix_mask: torch.Tensor,
+        prefix_pad_mask: torch.Tensor,
     ) -> tuple[torch.Tensor, DecoderState]:
         """Advance the recurrence by one event.
 
@@ -153,10 +153,10 @@ class Decoder(nn.Module):
             z: The sampled latent, `[batch_size, latent_dim]`.
             state: What the previous step handed over, or `initial_state` at the first step.
             prefix_memory: The projected prefix outputs, `[batch_size, seq_len, attention_dim]`.
-            prefix_mask: True where a prefix position holds a real event, `[batch_size, seq_len]`.
+            prefix_pad_mask: True where a prefix position holds padding, `[batch_size, seq_len]`.
         Returns:
-            The features the output heads read, `[batch_size, head_hidden_dim]`, and the state
-            the next step continues from.
+            This step's representation, `[batch_size, representation_dim]`, which `predict`
+            reads an event out of, and the state the next step continues from.
         """
         # z injection point 2 of 3, alongside the context the previous step read: the latent is
         # an input at every step rather than a seed the recurrence may forget, and the prefix
@@ -169,31 +169,32 @@ class Decoder(nn.Module):
         output, (hidden, cell) = self.lstm(self.dropout(lstm_input), (state.hidden, state.cell))
         output = output.squeeze(dim=1)  # [batch_size, hidden_dim]
 
-        # The new state joins the memory before being attended over, so a step may read itself.
+        # One projection reads this step's state as both the query and the memory row it leaves
+        # behind. The row joins the memory before being attended over, so a step may read itself.
+        query, memory_row = self.attention.project_state(output)
         suffix_memory = torch.cat(
-            tensors=(
-                state.suffix_memory,
-                self.attention.suffix_projection(output).unsqueeze(dim=1),
-            ),
-            dim=1,
+            tensors=(state.suffix_memory, memory_row.unsqueeze(dim=1)), dim=1
         )  # [batch_size, steps_taken, attention_dim]
-        context = self.attention(output, prefix_memory, suffix_memory, prefix_mask)
+        context = self.attention(query, prefix_memory, suffix_memory, prefix_pad_mask)
 
-        # z injection point 3 of 3, into the trunk the three heads read from.
-        features = self.shared_layer(
-            torch.cat(tensors=(output, context, z), dim=-1)
-        )  # [batch_size, head_hidden_dim]
+        # z injection point 3 of 3. The trunk and the heads behind it are `predict`'s business,
+        # so the loop over events carries no head-side work: what a step hands back is what it
+        # holds, what it just read, and the latent it is decoding.
+        representation = torch.cat(tensors=(output, context, z), dim=-1)
 
-        return features, DecoderState(
+        return representation, DecoderState(
             hidden=hidden, cell=cell, context=context, suffix_memory=suffix_memory
         )
 
-    def predict(self, features: torch.Tensor) -> DecoderOutput:
-        """Read events out of the shared trunk's features.
+    def predict(self, representation: torch.Tensor) -> DecoderOutput:
+        """Read events out of the representations `step` produces.
 
-        The heads are linear, so this serves one step's features, `[batch_size,
-        head_hidden_dim]`, as well as a whole suffix's, `[batch_size, seq_len, head_hidden_dim]`.
+        The trunk and the heads are position-wise, so this serves one step's representation,
+        `[batch_size, representation_dim]`, as well as a whole suffix's stacked into
+        `[batch_size, seq_len, representation_dim]`. Serving both is what lets the teacher-forced
+        path keep the trunk out of its loop and run it once, over every position at once.
         """
+        features = self.shared_layer(representation)  # [..., head_hidden_dim]
         return DecoderOutput(
             activity_logits=self.activity_head(features),
             resource_logits=self.resource_head(features),
@@ -231,18 +232,23 @@ class Decoder(nn.Module):
         # The condition, prepared once: every step attends over the same projected prefix, and
         # the only thing ever hidden from it is that prefix's padding.
         prefix_memory = self.attention.prefix_projection(prefix_outputs)  # [batch_size, seq_len, attention_dim]
+        # Built here, once, in the form attention consumes: every step masks the same padding,
+        # and negating it inside the loop would pay for it `seq_len` times over.
         positions = torch.arange(end=seq_len, device=prefix_outputs.device)
-        prefix_mask = positions.unsqueeze(dim=0) < batch['prefix_len'].unsqueeze(
+        prefix_pad_mask = positions.unsqueeze(dim=0) >= batch['prefix_len'].unsqueeze(
             dim=1
         )  # [batch_size, seq_len]
 
         state = self.initial_state(z, prefix_summary)
-        features = []
+        representations = []
         for position in range(seq_len):
-            step_features, state = self.step(embedded[:, position], z, state, prefix_memory, prefix_mask)
-            features.append(step_features)
+            representation, state = self.step(
+                embedded[:, position], z, state, prefix_memory, prefix_pad_mask
+            )
+            representations.append(representation)
 
-        # One prediction per suffix position, for each field of an event.
+        # One prediction per suffix position, for each field of an event. The stack is what lets
+        # the trunk and the heads run once over the whole suffix instead of once per step.
         return self.predict(
-            torch.stack(tensors=features, dim=1)
-        )  # [batch_size, seq_len, head_hidden_dim]
+            torch.stack(tensors=representations, dim=1)
+        )  # [batch_size, seq_len, representation_dim]

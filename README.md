@@ -57,5 +57,5 @@ A dataset file can override any base field, nested ones included, by repeating t
 ```yaml
 # config/sepsis.yaml
 training:
-  device: mps
+  device: cuda
 ```
