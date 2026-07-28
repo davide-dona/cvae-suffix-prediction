@@ -40,5 +40,8 @@ data:
     - LacticAcid
     - Leucocytes
   time_clip_percentile: 99.0
-  batch_size: 64
+  batch_size: 256
   num_workers: 4
+
+training:
+  max_num_epochs: 1250  # 508 train traces, cut into 8070 prefix/suffix pairs

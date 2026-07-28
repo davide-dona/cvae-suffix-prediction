@@ -22,7 +22,9 @@ class TraceEncoder(nn.Module):
             input_size=embeddings.output_dim,
             hidden_size=config.hidden_dim,
             num_layers=config.num_layers,
-            dropout=config.dropout,
+            # nn.LSTM applies this between stacked layers, so a single-layer stack has nowhere
+            # to put it. Passing it anyway is silently ignored, with a warning.
+            dropout=config.dropout if config.num_layers > 1 else 0.0,
             bidirectional=True,
             batch_first=True,
         )

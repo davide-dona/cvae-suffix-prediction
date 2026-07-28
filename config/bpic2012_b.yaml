@@ -17,5 +17,11 @@ data:
     - AMOUNT_REQ
     - "lifecycle:transition"
   time_clip_percentile: 99.0
-  batch_size: 64
+  batch_size: 256
   num_workers: 4
+
+training:
+  max_num_epochs: 500  # 3045 train traces, cut into 119073 prefix/suffix pairs
+
+early_stopping:
+  patience: 20  # full-weight stretches are 31 epochs long at this budget

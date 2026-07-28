@@ -141,7 +141,9 @@ class OptimizerConfig(StrictModel):
 
 class TrainingConfig(StrictModel):
     max_num_epochs: int = Field(..., gt=0)
-    grad_clip_norm: float = Field(..., gt=0.0)
+    grad_clip_norm: float | None = Field(
+        None, gt=0.0, description="Max gradient norm; null or absent leaves gradients unclipped"
+    )
     device: Literal["cpu", "cuda", "mps"]
     checkpoint_dir: Path
     log_dir: Path = Field(..., description="TensorBoard event directory")

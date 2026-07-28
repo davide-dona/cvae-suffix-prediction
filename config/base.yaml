@@ -4,54 +4,60 @@ output_dir: outputs
 
 model:
   embeddings:
-    activity_dim: 64
-    resource_dim: 32
+    activity_dim: 32
+    resource_dim: 16
 
   prefix_encoder:
-    hidden_dim: 128
-    num_layers: 2
-    dropout: 0.1
+    hidden_dim: 200  # per direction: the summary is twice this wide
+    num_layers: 1
+    dropout: 0.05
 
   suffix_encoder:
-    hidden_dim: 128
+    hidden_dim: 200
     num_layers: 1
-    dropout: 0.1
+    dropout: 0.05
 
   prior:
-    hidden_dims: [128]
-    dropout: 0.1
+    hidden_dims: [200]  # empty for a linear prior
+    dropout: 0.05
 
   latent:
     latent_dim: 32
 
   attention:
-    dim: 128
-    dropout: 0.1
+    dim: 200
+    dropout: 0.05
 
   decoder:
-    hidden_dim: 128
-    num_layers: 2
-    dropout: 0.1
-    head_hidden_dim: 128
+    hidden_dim: 200
+    num_layers: 1
+    dropout: 0.05
+    head_hidden_dim: 100
 
 loss:
-  kl_annealing_cycles: 4
+  kl_annealing_cycles: 8
   kl_annealing_ratio: 0.5
   kl_annealing_start_weight: 0.0
   kl_annealing_full_weight: 1.0
 
 optimizer:
-  lr: 0.001
-  weight_decay: 0.0001
+  lr: 0.0003
+  weight_decay: 0.0
 
 training:
-  max_num_epochs: 100
-  grad_clip_norm: 5.0
-  device: cpu
+  # An epoch is one pass over every (prefix, suffix) pair of the split, so a dataset of few
+  # long traces needs far fewer epochs than its trace count suggests. Each dataset overrides
+  # this with a budget of its own.
+  max_num_epochs: 1000
+  grad_clip_norm: 5.0  # null to leave gradients unclipped
+  device: cuda
   checkpoint_dir: outputs/checkpoints
   log_dir: outputs/tensorboard
   val_every_n_epochs: 1
 
 early_stopping:
-  patience: 10
+  # The counter only runs while the KL weight is at its full value and resets when it drops,
+  # so patience has to stay below the length of one full-weight stretch: with 8 cycles at
+  # ratio 0.5 that is `max_num_epochs / 16`.
+  patience: 50
   min_delta_perc: 0.0
