@@ -8,7 +8,7 @@ from pipelines.preprocess import ensure_dataset
 from src.configs import DatasetInfo, ExperimentConfig, load_config
 from src.datasets.codec import Codec
 from src.datasets.dataset import SuffixDataset
-from src.models import AttentionCVAE, best_model_path_for_epoch, save_checkpoint
+from src.model import AttentionCVAE, best_model_path_for_epoch, save_checkpoint
 from src.training.train import train
 
 

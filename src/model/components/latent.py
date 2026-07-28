@@ -21,16 +21,16 @@ class Gaussian:
     def from_parameters(cls, parameters: torch.Tensor) -> "Gaussian":
         """Read a `[batch_size, 2 * latent_dim]` head output as a mean and a log-variance."""
         # The head emits both halves in one tensor: first the mean, then the log-variance.
-        mean, logvar = parameters.chunk(2, dim=-1)  # each [batch_size, latent_dim]
-        return cls(mean=mean, logvar=logvar.clamp(LOGVAR_MIN, LOGVAR_MAX))
+        mean, logvar = parameters.chunk(chunks=2, dim=-1)  # each [batch_size, latent_dim]
+        return cls(mean=mean, logvar=logvar.clamp(min=LOGVAR_MIN, max=LOGVAR_MAX))
 
     def sample(self) -> torch.Tensor:
         """Draw one sample through the reparametrization trick, so the gradient reaches
         `mean` and `logvar`."""
         # mean + std * noise: the randomness sits in a term with no parameters, which is what
         # leaves a gradient path through `mean` and `logvar`.
-        std = torch.exp(0.5 * self.logvar)                      # [batch_size, latent_dim]
-        return self.mean + std * torch.randn_like(self.mean)    # [batch_size, latent_dim]
+        std = torch.exp(input=0.5 * self.logvar)                        # [batch_size, latent_dim]
+        return self.mean + std * torch.randn_like(input=self.mean)      # [batch_size, latent_dim]
 
 
 class PriorNetwork(nn.Module):
@@ -52,10 +52,16 @@ class PriorNetwork(nn.Module):
         # The input is the prefix summary; each hidden layer then narrows or widens from there.
         width = prefix_dim
         for hidden_dim in config.hidden_dims:
-            layers += [nn.Linear(width, hidden_dim), nn.ReLU(), nn.Dropout(config.dropout)]
+            layers += [
+                nn.Linear(in_features=width, out_features=hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(p=config.dropout),
+            ]
             width = hidden_dim
         # The output layer emits mean and log-variance side by side, hence twice `latent_dim`.
-        layers.append(nn.Linear(width, 2 * latent_config.latent_dim))
+        layers.append(
+            nn.Linear(in_features=width, out_features=2 * latent_config.latent_dim)
+        )
 
         # With `hidden_dims` empty this collapses to a single linear layer.
         self.net = nn.Sequential(*layers)
@@ -90,7 +96,9 @@ class PosteriorNetwork(nn.Module):
         super().__init__()
         # Both summaries come in already encoded by an LSTM each, so a single linear layer is
         # enough here; like the prior's output layer it emits mean and log-variance together.
-        self.head = nn.Linear(suffix_dim + prefix_dim, 2 * latent_config.latent_dim)
+        self.head = nn.Linear(
+            in_features=suffix_dim + prefix_dim, out_features=2 * latent_config.latent_dim
+        )
 
     def forward(self, prefix_summary: torch.Tensor, suffix_summary: torch.Tensor) -> Gaussian:
         """
@@ -100,5 +108,7 @@ class PosteriorNetwork(nn.Module):
         Returns:
             `q(z | prefix, suffix)`.
         """
-        summaries = torch.cat((suffix_summary, prefix_summary), dim=-1)  # [batch_size, suffix + prefix]
+        summaries = torch.cat(
+            tensors=(suffix_summary, prefix_summary), dim=-1
+        )  # [batch_size, suffix + prefix]
         return Gaussian.from_parameters(self.head(summaries))  # head: [batch_size, 2 * latent_dim]

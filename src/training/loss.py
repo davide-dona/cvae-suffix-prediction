@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-from src.models import AttentionCVAE
+from src.model import AttentionCVAE
 from src.training.metrics import Metrics
 
 

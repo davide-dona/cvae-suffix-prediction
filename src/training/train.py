@@ -12,7 +12,7 @@ from src.configs.schema import (
     TrainingConfig,
 )
 from src.datasets.utils import move_to_device
-from src.models import AttentionCVAE
+from src.model import AttentionCVAE
 from src.training.annealing import cyclical_linear_weights
 from src.training.early_stopping import EarlyStopper
 from src.training.loss import compute_loss

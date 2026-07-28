@@ -6,7 +6,7 @@ from torch import nn
 
 from src.configs.dataset_info import DatasetInfo
 from src.configs.schema import ModelConfig
-from src.models.attention_cvae import AttentionCVAE
+from src.model.attention_cvae import AttentionCVAE
 
 #: Subdirectory (relative to a run's directory) that per-epoch checkpoints are saved
 #: under, one per improving best.
@@ -37,13 +37,15 @@ def save_checkpoint(model: nn.Module, *, model_config: dict, path: Union[str, Pa
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    torch.save({'model_config': model_config, 'model_state_dict': model.state_dict()}, path)
+    torch.save(
+        obj={'model_config': model_config, 'model_state_dict': model.state_dict()}, f=path
+    )
     return path
 
 
 def load_checkpoint(model_path: Union[str, Path]) -> dict:
     """Read a checkpoint file written by `save_checkpoint`."""
-    return torch.load(Path(model_path), map_location='cpu', weights_only=False)
+    return torch.load(f=Path(model_path), map_location='cpu', weights_only=False)
 
 
 def build_model_from_checkpoint(
@@ -66,7 +68,7 @@ def build_model_from_checkpoint(
 
     config = ModelConfig.model_validate(checkpoint['model_config'])
 
-    model = AttentionCVAE(config, dataset_info).to(device)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    model = AttentionCVAE(config, dataset_info).to(device=device)
+    model.load_state_dict(state_dict=checkpoint['model_state_dict'])
     model.eval()
     return model

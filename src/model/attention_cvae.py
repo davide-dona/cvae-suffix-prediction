@@ -5,10 +5,10 @@ from torch import nn
 
 from src.configs.dataset_info import DatasetInfo
 from src.configs.schema import ModelConfig
-from src.models.components.decoder import Decoder, DecoderOutput
-from src.models.components.embeddings import EventEmbeddings
-from src.models.components.latent import Gaussian, PosteriorNetwork, PriorNetwork
-from src.models.components.trace_encoder import TraceEncoder
+from src.model.components.decoder import Decoder, DecoderOutput
+from src.model.components.embeddings import EventEmbeddings
+from src.model.components.latent import Gaussian, PosteriorNetwork, PriorNetwork
+from src.model.components.trace_encoder import TraceEncoder
 
 
 @dataclass
