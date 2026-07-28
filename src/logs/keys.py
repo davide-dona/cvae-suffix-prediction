@@ -11,9 +11,11 @@ LABEL_KEY = 'case:label'
 EOT_ACTIVITY = 'EOT'
 PADDING_ACTIVITY = 'PAD'
 SOS_ACTIVITY = 'SOS'
+UNK_ACTIVITY = 'UNK'
 EOT_RESOURCE = 'EOT-RES'
 PADDING_RESOURCE = 'PAD-RES'
 SOS_RESOURCE = 'SOS-RES'
+UNK_RESOURCE = 'UNK-RES'
 
 # Case attribute added by pipelines/preprocess.py (see add_case_offset) and
 # always fed to the model.

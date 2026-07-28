@@ -67,13 +67,10 @@ class Decoder(nn.Module):
             attention_config, prefix_dim=prefix_dim, decoder_dim=config.hidden_dim
         )
         self.lstm = nn.LSTM(
-            # Every step reads an embedded event, z (injection point 2 of 3) and the context the
-            # previous step attended to.
+            # Every step reads an embedded event, z and the context the previous step attended to
             input_size=embeddings.output_dim + latent_config.latent_dim + self.attention.output_dim,
             hidden_size=config.hidden_dim,
             num_layers=config.num_layers,
-            # nn.LSTM applies this between stacked layers, so a single-layer stack has nowhere
-            # to put it. Passing it anyway is silently ignored, with a warning.
             dropout=config.dropout if config.num_layers > 1 else 0.0,
             batch_first=True,
         )

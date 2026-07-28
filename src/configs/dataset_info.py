@@ -42,13 +42,13 @@ class DatasetInfo:
 
     max_trace_length: int
 
-    # The special tokens sit directly above the fitted vocabulary, in this order, for both
-    # activities and resources. Defining the layout here rather than in `Codec` keeps one
-    # definition for the data layer and the model embeddings to agree on.
+    # The special tokens sit directly above the fitted vocabulary, in this order (EOT, PAD,
+    # SOS, UNK), for both activities and resources. Defining the layout here rather than in
+    # `Codec` keeps one definition for the data layer and the model embeddings to agree on.
     @property
     def num_activities(self) -> int:
-        """Vocab size including the EOT, PAD and SOS tokens."""
-        return len(self.activity_vocab) + 3
+        """Vocab size including the EOT, PAD, SOS and UNK tokens."""
+        return len(self.activity_vocab) + 4
 
     @property
     def eot_activity_index(self) -> int:
@@ -63,9 +63,14 @@ class DatasetInfo:
         return len(self.activity_vocab) + 2
 
     @property
+    def unk_activity_index(self) -> int:
+        """Every activity val/test holds that the train split did not, collapsed into one token."""
+        return len(self.activity_vocab) + 3
+
+    @property
     def num_resources(self) -> int:
-        """Vocab size including the EOT, PAD and SOS tokens."""
-        return len(self.resource_vocab) + 3
+        """Vocab size including the EOT, PAD, SOS and UNK tokens."""
+        return len(self.resource_vocab) + 4
 
     @property
     def eot_resource_index(self) -> int:
@@ -79,6 +84,11 @@ class DatasetInfo:
     def sos_resource_index(self) -> int:
         return len(self.resource_vocab) + 2
 
+    @property
+    def unk_resource_index(self) -> int:
+        """Every resource val/test holds that the train split did not, collapsed into one token."""
+        return len(self.resource_vocab) + 3
+
     @classmethod
     def build(cls, data_config: DataConfig) -> "DatasetInfo":
         # `pipelines/preprocess.py` writes the splits into this subdirectory.
@@ -87,7 +97,11 @@ class DatasetInfo:
         val = read_log(processed_dir / "val.csv")
         test = read_log(processed_dir / "test.csv")
 
-        activity_vocab = sorted(train[ACTIVITY_KEY].unique().tolist())
+        # Both columns are stringified before the vocabulary is fit, and again on the lookup
+        # side in `_group_traces`. `read_log` lets pandas infer dtypes per split file, so a
+        # column of numeric-looking codes can come back as float in one split and str in
+        # another; coercing both ends is what keeps the two agreeing.
+        activity_vocab = sorted(train[ACTIVITY_KEY].astype(str).unique().tolist())
         resource_vocab = sorted(train[RESOURCE_KEY].astype(str).unique().tolist())
 
         time_stats = _fit_time_stats(train, percentile=data_config.time_clip_percentile)

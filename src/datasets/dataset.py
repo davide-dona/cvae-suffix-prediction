@@ -129,20 +129,16 @@ class SuffixDataset(Dataset):
         }
 
 
-def _map_to_index(column: pd.Series, mapping: dict[str, int], *, kind: str) -> np.ndarray:
-    """Map a whole column of categorical values to vocabulary indices, raising on any value the
-    train split did not contain."""
-    # `map` leaves NaN wherever the value is absent from the vocabulary, which is the test below.
-    encoded = column.map(mapping)
+def _map_to_index(column: pd.Series, mapping: dict[str, int], *, unk_index: int) -> np.ndarray:
+    """Map a whole column of categorical values to vocabulary indices, sending any value the
+    train split did not contain to `unk_index`.
 
-    unseen = encoded.isna()
-    if unseen.any():
-        raise KeyError(
-            f"{kind} value(s) {sorted(set(column[unseen]))!r} were not seen in the train "
-            "split; the Codec is fit train-only and does not support unseen values at val/test time"
-        )
-
-    return encoded.to_numpy(dtype=np.int64)
+    The splits are temporal, so a val/test case can legitimately name a resource that had not
+    appeared yet when the vocabulary was fit. UNK is what the model is told about those: not
+    which value it was, only that it was none of the ones it was trained on.
+    """
+    # `map` leaves NaN wherever the value is absent from the vocabulary, which is what UNK covers.
+    return column.map(mapping).fillna(unk_index).to_numpy(dtype=np.int64)
 
 
 def _group_traces(split_dataset: pd.DataFrame, max_content_len: int, codec: Codec) -> list[_Trace]:
@@ -150,8 +146,13 @@ def _group_traces(split_dataset: pd.DataFrame, max_content_len: int, codec: Code
     content already mapped to indices and normalized floats."""
     # Whole columns at a time, once per split: the same work done per event in `__getitem__`
     # would be repeated for every cut point of every case.
-    activity_idx_col = _map_to_index(split_dataset[ACTIVITY_KEY], codec.activity_to_index, kind="activity")
-    resource_idx_col = _map_to_index(split_dataset[RESOURCE_KEY].astype(str), codec.resource_to_index, kind="resource")
+    # `.astype(str)` on both, matching how `DatasetInfo.build` fits the two vocabularies.
+    activity_idx_col = _map_to_index(
+        split_dataset[ACTIVITY_KEY].astype(str), codec.activity_to_index, unk_index=codec.unk_activity_index
+    )
+    resource_idx_col = _map_to_index(
+        split_dataset[RESOURCE_KEY].astype(str), codec.resource_to_index, unk_index=codec.unk_resource_index
+    )
     ts_col = codec.normalize_time(split_dataset[EVENT_DELTA_KEY].to_numpy(dtype=np.float32))
 
     traces = []

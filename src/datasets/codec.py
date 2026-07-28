@@ -9,6 +9,8 @@ from src.logs.keys import (
     PADDING_RESOURCE,
     SOS_ACTIVITY,
     SOS_RESOURCE,
+    UNK_ACTIVITY,
+    UNK_RESOURCE,
 )
 
 
@@ -29,22 +31,28 @@ class Codec:
         self.eot_activity_index = dataset_info.eot_activity_index
         self.pad_activity_index = dataset_info.pad_activity_index
         self.sos_activity_index = dataset_info.sos_activity_index
+        self.unk_activity_index = dataset_info.unk_activity_index
         # The decode direction, for reading a prediction back as a trace. The special tokens are
         # added here only: no raw value maps to them, so they have no entry going the other way.
+        # UNK is the exception in spirit - many raw values map to it - but it is still one-way,
+        # since which of them it was is exactly what the encoding threw away.
         self.index_to_activity = {i: a for a, i in self.activity_to_index.items()} | {
             self.eot_activity_index: EOT_ACTIVITY,
             self.pad_activity_index: PADDING_ACTIVITY,
             self.sos_activity_index: SOS_ACTIVITY,
+            self.unk_activity_index: UNK_ACTIVITY,
         }
 
         self.resource_to_index = {resource: i for i, resource in enumerate(dataset_info.resource_vocab)}
         self.eot_resource_index = dataset_info.eot_resource_index
         self.pad_resource_index = dataset_info.pad_resource_index
         self.sos_resource_index = dataset_info.sos_resource_index
+        self.unk_resource_index = dataset_info.unk_resource_index
         self.index_to_resource = {i: r for r, i in self.resource_to_index.items()} | {
             self.eot_resource_index: EOT_RESOURCE,
             self.pad_resource_index: PADDING_RESOURCE,
             self.sos_resource_index: SOS_RESOURCE,
+            self.unk_resource_index: UNK_RESOURCE,
         }
 
         self._time_stats = dataset_info.time_stats

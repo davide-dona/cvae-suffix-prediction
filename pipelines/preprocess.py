@@ -95,14 +95,15 @@ def run(data_config: DataConfig) -> None:
     processed_dir = data_config.dir / 'processed'
     write_log(log, processed_dir / 'full.csv')
 
-    # Split the log into train/val/test and write them
+    # Split the log into train/val/test and write them. Test is whatever the first two fractions
+    # leave over, so `data_config.test_split` is not passed: it is validated against the other two
+    # in `DataConfig`, and re-deriving it here could only disagree with the remainder.
     train, val, test = temporal_split(
         log,
         case_key=CASE_KEY,
         timestamp_key=TIMESTAMP_KEY,
         train_frac=data_config.train_split,
         val_frac=data_config.val_split,
-        test_frac=data_config.test_split,
     )
     write_log(train, processed_dir / 'train.csv')
     write_log(val, processed_dir / 'val.csv')
