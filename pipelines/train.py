@@ -1,4 +1,5 @@
 import argparse
+from datetime import datetime
 from pathlib import Path
 
 import torch
@@ -67,10 +68,18 @@ def run(config: ExperimentConfig) -> None:
         )
         print(f'New best model (val loss {val_loss:.4f}) saved at {path}')
 
+    # TensorBoard reads one directory as one run, so every run needs its own or their curves
+    # are overlaid into a single unreadable one. The timestamp is what separates two runs of
+    # the same config, and sorts them in the order they were started. The dataset goes in
+    # front as a directory of its own: losses are only comparable within a dataset, and a
+    # nested run shows up grouped, so TensorBoard's filter can pick out one dataset's runs.
+    run_name = f'{config.data.dir.name}/{config.experiment_name}-{datetime.now():%Y%m%d-%H%M%S}'
+
     train(
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,
+        run_name=run_name,
         on_best_epoch=save_best,
         loss_config=config.loss,
         optimizer_config=config.optimizer,

@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from torch.utils.tensorboard import SummaryWriter
 
 
@@ -49,3 +49,25 @@ class Metrics:
         """
         for name, value in asdict(self).items():
             writer.add_scalar(f'{prefix}/{name}', value, step)
+
+    @classmethod
+    def log_layout(cls, writer: SummaryWriter) -> None:
+        """
+        Write the layout that also draws each metric's two passes as one chart.
+
+        The prefixed tags `log` writes are one chart each, which is what keeps a metric
+        comparable across runs; this pairs them up in TensorBoard's Custom Scalars
+        dashboard, where `train/loss` and `val/loss` are drawn overlaid instead. It is a
+        second view of the same tags and writes no numbers of its own, so nothing is
+        duplicated. Read from the fields, so adding a metric still means adding a field.
+
+        Args:
+            writer: The TensorBoard writer of the run to lay out. Written once per run,
+                since a run has one layout.
+        """
+        writer.add_custom_scalars({
+            'train vs val': {
+                field.name: ['Multiline', [f'train/{field.name}', f'val/{field.name}']]
+                for field in fields(cls)
+            }
+        })

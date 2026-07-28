@@ -30,10 +30,12 @@ Training stops at `training.max_num_epochs`, or once the validation loss plateau
 
 A run writes two things:
 
-- `outputs/tensorboard/`: the loss and its terms under `train/` and `val/`, plus `kl_weight`.
+- `outputs/tensorboard/<dataset>/<experiment_name>-<timestamp>/`: the loss and its terms under `train/` and `val/`, plus `kl_weight`. Point TensorBoard at the root and every run shows up as its own toggleable set of curves, grouped by dataset:
   ```bash
   tensorboard --logdir outputs/tensorboard
   ```
+  The Scalars dashboard keeps one chart per tag, which is what makes a metric comparable across runs; the Custom Scalars dashboard has the same numbers again as one chart per metric, with that run's train and val curve drawn together.
+  The run directory is printed when training starts. Two runs of the same dataset are told apart by `experiment_name`, so override it in a dataset config when you want a run labelled by what you changed.
 - `outputs/checkpoints/best-models/best-model-epoch-<n>.pt`: written on every validation improvement. The hyperparameters travel with the weights, so a checkpoint can be reloaded without restating them.
 
 ### Inference

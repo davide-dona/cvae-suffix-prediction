@@ -73,6 +73,7 @@ def train(
     model: AttentionCVAE,
     train_loader: DataLoader,
     val_loader: DataLoader,
+    run_name: str,
     on_best_epoch: Callable[[int, float], None],
     loss_config: LossConfig,
     optimizer_config: OptimizerConfig,
@@ -83,12 +84,18 @@ def train(
     Train a model on a dataset, logging to TensorBoard and saving checkpoints.
 
     Every number a run produces goes to TensorBoard, which is the record of it; nothing is
-    returned or printed except the events TensorBoard cannot express.
+    returned. The console gets one line per epoch, so a run can be watched without opening
+    TensorBoard, plus the events TensorBoard cannot express.
 
     Args:
         model: The model to train, already on `training.device`.
         train_loader: Batches to learn from.
         val_loader: Batches to evaluate on, every `training.val_every_n_epochs` epochs.
+        run_name: Subdirectory of `training.log_dir` this run writes its events to. One
+            directory is one TensorBoard run, so a name reused across runs overlays their
+            curves instead of listing them side by side; what makes it unique is the
+            caller's business. A `/` in it nests the run, which is how TensorBoard groups
+            runs under a common prefix.
         on_best_epoch: Called with the epoch number and its validation loss whenever an
             epoch improves on the best so far, so that saving a checkpoint stays the
             caller's business.
@@ -117,8 +124,11 @@ def train(
 
     current_best_val_loss = float('inf')
     last_epoch = 0
+    epoch_width = len(str(training.max_num_epochs))
 
-    writer = SummaryWriter(log_dir=training.log_dir)
+    writer = SummaryWriter(log_dir=training.log_dir / run_name)
+    Metrics.log_layout(writer)
+    print(f'Logging to {writer.log_dir}')
     try:
         for epoch in range(training.max_num_epochs):
             last_epoch = epoch
@@ -140,6 +150,7 @@ def train(
             writer.add_scalar('kl_weight', epoch_kl_weight, epoch_number)
 
             should_stop = False
+            val_loss = None
             if epoch % training.val_every_n_epochs == 0:
                 val_metrics = run_epoch(
                     model,
@@ -149,10 +160,21 @@ def train(
                     device=device,
                 )
                 val_metrics.log(writer, epoch_number, prefix='val')
+                val_loss = val_metrics.loss
 
+            # The one line of live feedback: enough to see a run is alive and heading down,
+            # while TensorBoard stays the place the numbers are actually read. Printed before
+            # the best-model check so that its message lands under the epoch it belongs to.
+            print(
+                f'Epoch {epoch_number:>{epoch_width}}/{training.max_num_epochs}  '
+                f'kl {epoch_kl_weight:.2f}  train {train_metrics.loss:.4f}  '
+                f'val {"-" if val_loss is None else f"{val_loss:.4f}"}',
+                flush=True,
+            )
+
+            if val_loss is not None:
                 # Only epochs evaluating the full loss function are comparable with each other,
                 # since a lower weight makes an epoch look better for free.
-                val_loss = val_metrics.loss
                 is_new_best = epoch_is_comparable and val_loss < current_best_val_loss
                 if is_new_best:
                     current_best_val_loss = val_loss
