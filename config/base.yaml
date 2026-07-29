@@ -54,7 +54,12 @@ training:
   # is launch-bound rather than compute-bound: the margin grows with the batch size, so a
   # smaller batch than this one narrows it. A dataset file overrides this with "cuda" or "cpu".
   device: mps
+  # A run's improving epochs are kept under `checkpoint_dir/<run name>/`, and its best epoch
+  # again under `best_model_dir` as the single file `<run name>.pt`. Two directories rather
+  # than one because they are read for different reasons: the best models are the results, and
+  # the history behind each is what you go looking through when a result needs explaining.
   checkpoint_dir: outputs/checkpoints
+  best_model_dir: outputs/best-models
   log_dir: outputs/tensorboard
   val_every_n_epochs: 1
 

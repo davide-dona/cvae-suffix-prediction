@@ -9,7 +9,7 @@ from pipelines.preprocess import ensure_dataset
 from src.configs import DatasetInfo, ExperimentConfig, load_config
 from src.datasets.codec import Codec
 from src.datasets.dataset import SuffixDataset
-from src.model import AttentionCVAE, best_model_path_for_epoch, save_checkpoint
+from src.model import AttentionCVAE, best_model_path, checkpoint_path, save_checkpoint
 from src.training.train import train
 
 
@@ -53,27 +53,43 @@ def run(config: ExperimentConfig) -> None:
 
     model = AttentionCVAE(config.model, dataset_info).to(config.training.device)
 
-    def save_best(epoch: int, val_loss: float) -> None:
-        """
-        Decorator for train()'s on_best_epoch callback, which saves the model to disk.
-        Defined here so it can access the config and model objects without passing them through train().
-        Args:
-            epoch: The epoch number that just finished.
-            val_loss: The validation loss that just finished.
-        """
-        path = save_checkpoint(
-            model,
-            model_config=config.model.model_dump(),
-            path=best_model_path_for_epoch(config.training.checkpoint_dir, epoch),
-        )
-        print(f'New best model (val loss {val_loss:.4f}) saved at {path}')
-
     # TensorBoard reads one directory as one run, so every run needs its own or their curves
     # are overlaid into a single unreadable one. The timestamp is what separates two runs of
     # the same config, and sorts them in the order they were started. The dataset goes in
     # front as a directory of its own: losses are only comparable within a dataset, and a
     # nested run shows up grouped, so TensorBoard's filter can pick out one dataset's runs.
+    # Checkpoints are named by the same thing, for the same reason: without it a second run of
+    # a config writes over the first one's epochs.
     run_name = f'{config.data.dir.name}/{config.experiment_name}-{datetime.now():%Y%m%d-%H%M%S}'
+
+    def save_best(epoch: int, val_loss: float) -> None:
+        """
+        Decorator for train()'s on_best_epoch callback, which saves the model to disk.
+        Defined here so it can access the config and model objects without passing them through train().
+
+        Every improving epoch is kept, and the last of them is by definition the run's best, so
+        the same weights are written twice: once into the run's history, and once over the
+        run's single best-model file.
+        Args:
+            epoch: The epoch number that just finished.
+            val_loss: The validation loss that just finished.
+        """
+        model_config = config.model.model_dump()
+        save_checkpoint(
+            model,
+            model_config=model_config,
+            epoch=epoch,
+            val_loss=val_loss,
+            path=checkpoint_path(config.training.checkpoint_dir, run_name, epoch),
+        )
+        path = save_checkpoint(
+            model,
+            model_config=model_config,
+            epoch=epoch,
+            val_loss=val_loss,
+            path=best_model_path(config.training.best_model_dir, run_name),
+        )
+        print(f'New best model (epoch {epoch}, val loss {val_loss:.4f}) saved at {path}')
 
     train(
         model=model,

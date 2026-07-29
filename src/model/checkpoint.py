@@ -8,17 +8,35 @@ from src.configs.dataset_info import DatasetInfo
 from src.configs.schema import ModelConfig
 from src.model.attention_cvae import AttentionCVAE
 
-#: Subdirectory (relative to a run's directory) that per-epoch checkpoints are saved
-#: under, one per improving best.
-BEST_MODELS_DIRNAME = 'best-models'
+def checkpoint_path(checkpoint_dir: Union[str, Path], run_name: str, epoch: int) -> Path:
+    """
+    Where one epoch of a run is kept: `<checkpoint_dir>/<run_name>/epoch-<n>.pt`.
+
+    `run_name` is the same name the run logs to in TensorBoard, and it holds a `/`, so a
+    run's checkpoints land grouped under its dataset just as its events do. Being per run is
+    what keeps two runs of one config from writing over each other's epochs.
+    """
+    return Path(checkpoint_dir) / run_name / f'epoch-{epoch}.pt'
 
 
-def best_model_path_for_epoch(checkpoint_dir: Union[str, Path], epoch: int) -> Path:
-    """The path `save_checkpoint` writes to for a given run and epoch."""
-    return Path(checkpoint_dir) / BEST_MODELS_DIRNAME / f'best-model-epoch-{epoch}.pt'
+def best_model_path(best_model_dir: Union[str, Path], run_name: str) -> Path:
+    """
+    Where the best epoch of a run is kept: `<best_model_dir>/<run_name>.pt`.
+
+    One file per run, overwritten as the best improves, so the directory holds every run's
+    result side by side and nothing has to be picked out of a history.
+    """
+    return Path(best_model_dir) / f'{run_name}.pt'
 
 
-def save_checkpoint(model: nn.Module, *, model_config: dict, path: Union[str, Path]) -> Path:
+def save_checkpoint(
+    model: nn.Module,
+    *,
+    model_config: dict,
+    epoch: int,
+    val_loss: float,
+    path: Union[str, Path],
+) -> Path:
     """
     Save a model checkpoint in the schema `build_model_from_checkpoint` expects.
 
@@ -27,9 +45,16 @@ def save_checkpoint(model: nn.Module, *, model_config: dict, path: Union[str, Pa
     stored: they come from the `DatasetInfo` of the dataset the model is being used on, which
     cannot then drift from the weights.
 
+    The write goes to a temporary file and is then moved onto `path`, which is atomic within a
+    directory. A best-model file is overwritten every time the best improves, so a run killed
+    mid-write would otherwise leave a truncated file where the only copy of the best model was.
+
     Args:
         model: The model whose weights to save.
         model_config: Its `ModelConfig`, dumped to plain data.
+        epoch: The epoch the weights are from. The best-model filename does not say, so the
+            file has to.
+        val_loss: That epoch's validation loss.
         path: Where to write, parent directories included.
     Returns:
         The path written to.
@@ -37,9 +62,17 @@ def save_checkpoint(model: nn.Module, *, model_config: dict, path: Union[str, Pa
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
+    temp_path = path.with_name(f'{path.name}.tmp')
     torch.save(
-        obj={'model_config': model_config, 'model_state_dict': model.state_dict()}, f=path
+        obj={
+            'model_config': model_config,
+            'model_state_dict': model.state_dict(),
+            'epoch': epoch,
+            'val_loss': val_loss,
+        },
+        f=temp_path,
     )
+    temp_path.replace(target=path)
     return path
 
 
@@ -53,6 +86,9 @@ def build_model_from_checkpoint(
 ) -> AttentionCVAE:
     """
     Rebuild the model a checkpoint holds, with its weights loaded.
+
+    Only the config and the weights are read; the `epoch` and `val_loss` a checkpoint also
+    carries describe the run it came from and say nothing about how to rebuild it.
 
     Args:
         checkpoint: A checkpoint read by `load_checkpoint`.

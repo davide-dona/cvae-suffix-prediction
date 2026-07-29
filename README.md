@@ -28,7 +28,7 @@ python -m pipelines.preprocess -c config/sepsis.yaml
 
 Training stops at `training.max_num_epochs`, or once the validation loss plateaus for `early_stopping.patience` evaluations. Only epochs at the full KL weight count for early stopping and best-model selection, since a partly annealed weight lowers the loss for free.
 
-A run writes two things:
+A run writes three things, all three named by the same `<dataset>/<experiment_name>-<timestamp>` run name, so a run's curves, its history and its result are found under one name:
 
 - `outputs/tensorboard/<dataset>/<experiment_name>-<timestamp>/`: the loss and its terms under `train/` and `val/`, plus `kl_weight`. Point TensorBoard at the root and every run shows up as its own toggleable set of curves, grouped by dataset:
   ```bash
@@ -36,7 +36,8 @@ A run writes two things:
   ```
   The Scalars dashboard keeps one chart per tag, which is what makes a metric comparable across runs; the Custom Scalars dashboard has the same numbers again as one chart per metric, with that run's train and val curve drawn together.
   The run directory is printed when training starts. Two runs of the same dataset are told apart by `experiment_name`, so override it in a dataset config when you want a run labelled by what you changed.
-- `outputs/checkpoints/best-models/best-model-epoch-<n>.pt`: written on every validation improvement. The hyperparameters travel with the weights, so a checkpoint can be reloaded without restating them.
+- `outputs/best-models/<dataset>/<experiment_name>-<timestamp>.pt`: the run's result. One file, overwritten every time the validation loss improves, so the last improvement of the run is what is left in it. The hyperparameters travel with the weights, along with the epoch and validation loss they came from, so a checkpoint can be reloaded without restating them.
+- `outputs/checkpoints/<dataset>/<experiment_name>-<timestamp>/epoch-<n>.pt`: the history behind that result, one file per validation improvement. Nothing is pruned, so a long run leaves a few dozen files of a few MB each.
 
 ### Inference
 
