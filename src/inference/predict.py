@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from src.datasets.codec import Codec
 from src.datasets.dataset import SuffixDataset, SuffixItem
 from src.inference.prediction import PredictionRow
-from src.model import AttentionCVAE
+from src.model import TransformerCVAE
 from src.model.components.decoder import GeneratedSuffix
 
 
@@ -23,7 +23,7 @@ def predictions_path(predictions_dir: Union[str, Path], run_name: str) -> Path:
 
 
 def generate_predictions(
-    model: AttentionCVAE,
+    model: TransformerCVAE,
     loader: DataLoader,
     codec: Codec,
     *,

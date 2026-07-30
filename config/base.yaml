@@ -3,35 +3,41 @@ experiment_name: cvae_suffix_baseline
 output_dir: outputs
 
 model:
+  # The one width the embeddings, both encoders and the decoder run at. Cross-attention over the
+  # prefix requires the decoder to match the prefix encoder, and the shared event embeddings
+  # require the suffix encoder to match both.
+  d_model: 128
+
   embeddings:
+    # Sized to their vocabularies rather than to `d_model`: an event is these two plus its time
+    # delta, projected up to `d_model` once.
     activity_dim: 32
     resource_dim: 16
 
   prefix_encoder:
-    hidden_dim: 200  # per direction: the summary is twice this wide
-    num_layers: 1
-    dropout: 0.05
+    num_layers: 2
+    num_heads: 4
+    feedforward_dim: 512
+    dropout: 0.1
 
   suffix_encoder:
-    hidden_dim: 200
-    num_layers: 1
-    dropout: 0.05
+    num_layers: 2
+    num_heads: 4
+    feedforward_dim: 512
+    dropout: 0.1
 
   prior:
-    hidden_dims: [200]  # empty for a linear prior
-    dropout: 0.05
+    hidden_dims: [128]  # empty for a linear prior
+    dropout: 0.1
 
   latent:
     latent_dim: 32
 
-  attention:
-    dim: 200
-    dropout: 0.05
-
   decoder:
-    hidden_dim: 200
-    num_layers: 1
-    dropout: 0.05
+    num_layers: 2
+    num_heads: 4
+    feedforward_dim: 512
+    dropout: 0.1
     head_hidden_dim: 100
 
 loss:
@@ -50,9 +56,9 @@ training:
   # this with a budget of its own.
   max_num_epochs: 1000
   grad_clip_norm: 5.0  # null to leave gradients unclipped
-  # "mps" is the Apple-silicon GPU. It beats "cpu" here, but only because the per-step decoder
-  # is launch-bound rather than compute-bound: the margin grows with the batch size, so a
-  # smaller batch than this one narrows it. A dataset file overrides this with "cuda" or "cpu".
+  # "mps" is the Apple-silicon GPU. Training is one parallel pass per batch and generation is a
+  # decoder pass per step, both of which are matmul-bound, so the margin over "cpu" grows with
+  # the batch size and the width. A dataset file overrides this with "cuda" or "cpu".
   device: mps
   # A run's best epoch is kept under `best_model_dir` as the single file `<run name>.pt`,
   # overwritten every time the validation loss improves.

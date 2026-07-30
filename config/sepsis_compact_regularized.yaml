@@ -1,17 +1,4 @@
-# Sepsis, compact and regularized.
-#
-# The baseline (`sepsis.yaml`) overfits from around epoch 30: train reconstruction loss keeps
-# falling while val reconstruction loss turns back up, and by epoch 59 the two have moved
-# 9.22 against 15.06. Reconstruction is the term to read, since it carries no KL weight and
-# is therefore comparable across a run whose weight is still annealing.
-#
-# The cause is the size of the log rather than the architecture: 508 train cases, 8891
-# events, 16 activities and 25 resources, against encoders and a decoder 200 wide with
-# dropout at 0.05 and no weight decay. So the architecture is unchanged and every knob below
-# either takes capacity away or puts noise back in. `data:` is copied verbatim from
-# `sepsis.yaml`, because `load_config` merges exactly one dataset file over `base.yaml`, and
-# it points at the same `data/sepsis` splits, so runs of both land in one TensorBoard folder
-# and are directly comparable.
+
 experiment_name: compact_regularized
 
 data:
@@ -57,48 +44,50 @@ data:
     - Leucocytes
   time_clip_percentile: 99.0
   batch_size: 256
-  # Kept at 256: the per-step decoder is launch-bound, so a smaller batch buys gradient noise
-  # at a disproportionate cost in wall clock on mps.
+  # Kept at 256: a batch is one parallel pass, so a smaller one buys gradient noise at a
+  # disproportionate cost in wall clock on mps.
   num_workers: 0
 
 model:
+  # Half the baseline width. It is shared by everything, so this one number is the main lever
+  # on the model's capacity here.
+  d_model: 64
+
   embeddings:
     activity_dim: 16  # 16 activities: 32 dimensions were more than the alphabet can fill
     resource_dim: 12  # 25 resources, and half of a resource's mass sits in a few of them
 
-  # Both encoders shrink, but not equally. The prefix summary conditions the prior and the
-  # decoder and is read at every step, so it keeps the most. The suffix encoder exists only
-  # to give the posterior something to encode on the training path, and its capacity is
-  # exactly what lets the posterior smuggle a whole suffix into z.
+  # The two encoders can no longer be sized apart - they share `d_model` with everything else -
+  # so what limits the suffix encoder is its depth, its dropout and `latent_dim`. That limit is
+  # the point: the suffix encoder exists only to give the posterior something to encode on the
+  # training path, and its capacity is exactly what lets the posterior smuggle a whole suffix
+  # into z.
   prefix_encoder:
-    hidden_dim: 96  # per direction: the summary is twice this wide
-    num_layers: 1
+    num_layers: 2
+    num_heads: 4
+    feedforward_dim: 128
     dropout: 0.2
 
   suffix_encoder:
-    hidden_dim: 64
     num_layers: 1
+    num_heads: 4
+    feedforward_dim: 128
     dropout: 0.2
 
   prior:
-    hidden_dims: [96]
+    hidden_dims: [64]
     dropout: 0.2
 
   latent:
     latent_dim: 16  # z only has to carry what the prefix does not already imply
 
-  attention:
-    dim: 96
-    # Dropout here deletes attention weights, which denies a step a position it wanted to
-    # read. That is a much blunter instrument than dropping a unit, so it stays low.
-    dropout: 0.1
-
   decoder:
-    hidden_dim: 96
-    num_layers: 1
-    # The heaviest of the three: this dropout is applied to the LSTM input at every step and
-    # again in the trunk shared by the output heads, which is where memorization of the
-    # train suffixes would live.
+    num_layers: 2
+    num_heads: 4
+    feedforward_dim: 128
+    # The heaviest of the three: this dropout is applied inside every layer, to the decoder's
+    # input and again in the trunk shared by the output heads, which is where memorization of
+    # the train suffixes would live.
     dropout: 0.25
     head_hidden_dim: 64
 

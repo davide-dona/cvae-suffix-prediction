@@ -1,12 +1,11 @@
 from pathlib import Path
 from typing import Union
-
 import torch
 from torch import nn
 
 from src.configs.dataset_info import DatasetInfo
 from src.configs.schema import ModelConfig
-from src.model.attention_cvae import AttentionCVAE
+from src.model.transformer_cvae import TransformerCVAE
 
 def best_model_path(best_model_dir: Union[str, Path], run_name: str) -> Path:
     """
@@ -98,7 +97,7 @@ def load_checkpoint(model_path: Union[str, Path]) -> dict:
 
 def build_model_from_checkpoint(
     checkpoint: dict, dataset_info: DatasetInfo, *, device: str = 'cpu'
-) -> AttentionCVAE:
+) -> TransformerCVAE:
     """
     Rebuild the model a checkpoint holds, with its weights loaded.
 
@@ -119,7 +118,7 @@ def build_model_from_checkpoint(
 
     config = ModelConfig.model_validate(checkpoint['model_config'])
 
-    model = AttentionCVAE(config=config, dataset_info=dataset_info).to(device=device)
+    model = TransformerCVAE(config=config, dataset_info=dataset_info).to(device=device)
     model.load_state_dict(state_dict=checkpoint['model_state_dict'])
     model.eval()
     return model

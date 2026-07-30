@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 
 from src.datasets.dataset import SuffixItem
-from src.model import AttentionCVAE
+from src.model import TransformerCVAE
 from src.training.metrics import Metrics
 
 
@@ -64,7 +64,7 @@ def gaussian_kl(
 
 
 def compute_loss(
-    model: AttentionCVAE, batch: SuffixItem, kl_weight: float
+    model: TransformerCVAE, batch: SuffixItem, kl_weight: float
 ) -> tuple[torch.Tensor, Metrics]:
     """Run one training or evaluation step and report what it cost.
 

@@ -65,15 +65,19 @@ class EmbeddingConfig(StrictModel):
 
 
 class TraceEncoderConfig(StrictModel):
-    """Bidirectional LSTM reading a sequence of events.
+    """Transformer encoder reading a sequence of events, every position attending over every other.
 
     Used twice, with its own values each time: once over the prefix, whose summary conditions
     both the prior and the decoder, and once over the ground-truth suffix, which is read on
     the training path only, to give the posterior something to encode.
+
+    The width is absent: an encoder reads the shared event embeddings and, for the prefix, is
+    read back by the decoder's cross-attention, so it runs at `ModelConfig.d_model`.
     """
 
-    hidden_dim: int = Field(..., gt=0, description="Per-direction hidden size; the summary is twice this wide")
     num_layers: int = Field(..., gt=0)
+    num_heads: int = Field(..., gt=0, description="Attention heads per layer; must divide `d_model`")
+    feedforward_dim: int = Field(..., gt=0, description="Width of the feed-forward block inside a layer")
     dropout: float = Field(..., ge=0.0, lt=1.0)
 
 
@@ -94,35 +98,54 @@ class LatentConfig(StrictModel):
     latent_dim: int = Field(..., gt=0)
 
 
-class AttentionConfig(StrictModel):
-    """Single-head scaled dot-product attention over the prefix and the suffix so far."""
-
-    dim: int = Field(..., gt=0, description="Shared width the prefix outputs and decoder states are projected to")
-    dropout: float = Field(..., ge=0.0, lt=1.0)
-
-
 class DecoderConfig(StrictModel):
-    hidden_dim: int = Field(..., gt=0)
+    """Transformer decoder writing the suffix: causal self-attention over the suffix so far,
+    cross-attention over the encoded prefix.
+
+    Like the encoders it runs at `ModelConfig.d_model`, which cross-attention over the prefix
+    requires of it anyway.
+    """
+
     num_layers: int = Field(..., gt=0)
+    num_heads: int = Field(..., gt=0, description="Attention heads per layer; must divide `d_model`")
+    feedforward_dim: int = Field(..., gt=0, description="Width of the feed-forward block inside a layer")
     dropout: float = Field(..., ge=0.0, lt=1.0)
     head_hidden_dim: int = Field(..., gt=0, description="Width of the layer shared by the three output heads")
 
 
 class ModelConfig(StrictModel):
-    """Every hyperparameter of `AttentionCVAE`.
+    """Every hyperparameter of `TransformerCVAE`.
 
     Dimensions derived from the data (vocabulary sizes, special-token indices, sequence
     length) are deliberately absent: they come from `DatasetInfo` at build time, so a
     config cannot disagree with the dataset it is trained on.
     """
 
+    d_model: int = Field(
+        ..., gt=0,
+        description="The one width the embeddings, both encoders and the decoder all run at. "
+        "Cross-attention makes the prefix encoder and the decoder agree on it, and the shared "
+        "event embeddings make the suffix encoder agree with them",
+    )
+
     embeddings: EmbeddingConfig
     prefix_encoder: TraceEncoderConfig
     suffix_encoder: TraceEncoderConfig
     prior: PriorConfig
     latent: LatentConfig
-    attention: AttentionConfig
     decoder: DecoderConfig
+
+    @model_validator(mode="after")
+    def _heads_divide_width(self) -> "ModelConfig":
+        # nn.MultiheadAttention asserts this when the layer is built, halfway through a run's
+        # setup. Checking it here turns a config mistake back into a config error.
+        for name in ("prefix_encoder", "suffix_encoder", "decoder"):
+            num_heads = getattr(self, name).num_heads
+            if self.d_model % num_heads != 0:
+                raise ValueError(
+                    f"model.{name}.num_heads ({num_heads}) must divide model.d_model ({self.d_model})"
+                )
+        return self
 
 
 class LossConfig(StrictModel):

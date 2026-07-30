@@ -9,7 +9,7 @@ from pipelines.preprocess import ensure_dataset
 from src.configs import DatasetInfo, ExperimentConfig, load_config
 from src.datasets.codec import Codec
 from src.datasets.dataset import SuffixDataset
-from src.model import AttentionCVAE, best_model_path, save_checkpoint
+from src.model import TransformerCVAE, best_model_path, save_checkpoint
 from src.training.train import train
 
 
@@ -51,7 +51,7 @@ def run(config: ExperimentConfig) -> None:
         f'validating on {len(val_loader.dataset)}'
     )
 
-    model = AttentionCVAE(config.model, dataset_info).to(config.training.device)
+    model = TransformerCVAE(config.model, dataset_info).to(config.training.device)
 
     # TensorBoard reads one directory as one run, so every run needs its own or their curves
     # are overlaid into a single unreadable one. The timestamp is what separates two runs of

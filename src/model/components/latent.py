@@ -94,8 +94,8 @@ class PosteriorNetwork(nn.Module):
 
     def __init__(self, latent_config: LatentConfig, *, prefix_dim: int, suffix_dim: int):
         super().__init__()
-        # Both summaries come in already encoded by an LSTM each, so a single linear layer is
-        # enough here; like the prior's output layer it emits mean and log-variance together.
+        # Both summaries come in already encoded by a transformer each, so a single linear layer
+        # is enough here; like the prior's output layer it emits mean and log-variance together.
         self.head = nn.Linear(
             in_features=suffix_dim + prefix_dim, out_features=2 * latent_config.latent_dim
         )

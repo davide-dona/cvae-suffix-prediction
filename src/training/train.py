@@ -11,7 +11,7 @@ from src.configs.schema import (
     OptimizerConfig,
     TrainingConfig,
 )
-from src.model import AttentionCVAE
+from src.model import TransformerCVAE
 from src.training.annealing import cyclical_linear_weights
 from src.training.early_stopping import EarlyStopper
 from src.training.loss import compute_loss
@@ -19,7 +19,7 @@ from src.training.metrics import Metrics
 
 
 def run_epoch(
-    model: AttentionCVAE,
+    model: TransformerCVAE,
     loader: DataLoader,
     *,
     kl_weight: float,
@@ -69,7 +69,7 @@ def run_epoch(
 
 def train(
     *,
-    model: AttentionCVAE,
+    model: TransformerCVAE,
     train_loader: DataLoader,
     val_loader: DataLoader,
     run_name: str,

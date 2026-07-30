@@ -29,7 +29,7 @@ class DatasetInfo:
     ranges are fit on `train` only and then reused, unchanged, for `val`/`test`.
 
     This is also the single source of the data-derived dimensions the model is built
-    against (vocabulary sizes, special-token indices, sequence length), so `AttentionCVAE`
+    against (vocabulary sizes, special-token indices, sequence length), so `TransformerCVAE`
     needs nothing beyond `ModelConfig` and one of these.
     """
     train: pd.DataFrame
