@@ -63,6 +63,14 @@ training:
   log_dir: outputs/tensorboard
   val_every_n_epochs: 1
 
+inference:
+  # Every sample of a prefix is a row of its own in the decoder, so the batch it actually runs
+  # is `data.batch_size * num_samples`. The k suffixes of one prefix differ only in the latent
+  # drawn from p(z | prefix): the heads are read greedily, so what varies across them is what
+  # the model claims the prefix leaves undetermined.
+  num_samples: 10
+  predictions_dir: outputs/predictions
+
 early_stopping:
   # The counter only runs while the KL weight is at its full value and resets when it drops,
   # so patience has to stay below the length of one full-weight stretch: with 8 cycles at

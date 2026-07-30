@@ -3,6 +3,7 @@ import torch
 from torch import nn
 
 from src.configs.schema import AttentionConfig, DecoderConfig, LatentConfig
+from src.datasets.dataset import PaddedEvents
 from src.model.components.attention import PrefixSuffixAttention
 from src.model.components.embeddings import EventEmbeddings
 
@@ -13,6 +14,22 @@ class DecoderOutput:
     activity_logits: torch.Tensor  # [batch_size, seq_len, num_activities]
     resource_logits: torch.Tensor  # [batch_size, seq_len, num_resources]
     timestamps: torch.Tensor       # [batch_size, seq_len], in [0, 1] like the targets
+
+
+@dataclass
+class GeneratedSuffix:
+    """A batch of freely generated suffixes: what the decoder produced when fed its own
+    predictions rather than a ground truth.
+
+    The events are kept as the raw prediction, EOT and everything after it included; `lengths`
+    is what says where each suffix actually ended. The leading axes are whatever the caller
+    generated over: `[batch_size, steps]` from `Decoder.generate`, and
+    `[batch_size, num_samples, steps]` from `AttentionCVAE.generate`.
+    """
+    activities: torch.Tensor  # [..., steps]
+    resources: torch.Tensor   # [..., steps]
+    timestamps: torch.Tensor  # [..., steps], in [0, 1] like the targets
+    lengths: torch.Tensor     # [...], events emitted before EOT, or `steps` if EOT never came
 
 
 @dataclass
@@ -50,12 +67,21 @@ class Decoder(nn.Module):
         prefix_dim: int,
         num_activities: int,
         num_resources: int,
+        sos_activity_index: int,
+        sos_resource_index: int,
+        eot_activity_index: int,
     ):
         super().__init__()
         self.embeddings = embeddings
         self.dropout = nn.Dropout(p=config.dropout)
         self.num_layers = config.num_layers
         self.hidden_dim = config.hidden_dim
+
+        # Only `generate` reads these: the token a suffix opens on, and the one it ends on.
+        # Teacher forcing is handed both by the dataset instead, in `decoder_input_*`.
+        self.sos_activity_index = sos_activity_index
+        self.sos_resource_index = sos_resource_index
+        self.eot_activity_index = eot_activity_index
 
         # One projection for every layer's hidden and cell state at once, hence the 2 and the
         # `num_layers` factor; `initial_state` splits the result back apart.
@@ -64,7 +90,7 @@ class Decoder(nn.Module):
             out_features=2 * config.num_layers * config.hidden_dim,
         )
         self.attention = PrefixSuffixAttention(
-            attention_config, prefix_dim=prefix_dim, decoder_dim=config.hidden_dim
+            config=attention_config, prefix_dim=prefix_dim, decoder_dim=config.hidden_dim
         )
         self.lstm = nn.LSTM(
             # Every step reads an embedded event, z and the context the previous step attended to
@@ -163,7 +189,9 @@ class Decoder(nn.Module):
         ).unsqueeze(dim=1)
         # A length-1 sequence, so the layer stack and the dropout between layers stay nn.LSTM's
         # business while the loop over events is ours.
-        output, (hidden, cell) = self.lstm(self.dropout(lstm_input), (state.hidden, state.cell))
+        output, (hidden, cell) = self.lstm(
+            input=self.dropout(lstm_input), hx=(state.hidden, state.cell)
+        )
         output = output.squeeze(dim=1)  # [batch_size, hidden_dim]
 
         # One projection reads this step's state as both the query and the memory row it leaves
@@ -172,7 +200,12 @@ class Decoder(nn.Module):
         suffix_memory = torch.cat(
             tensors=(state.suffix_memory, memory_row.unsqueeze(dim=1)), dim=1
         )  # [batch_size, steps_taken, attention_dim]
-        context = self.attention(query, prefix_memory, suffix_memory, prefix_pad_mask)
+        context = self.attention(
+            query=query,
+            prefix_memory=prefix_memory,
+            suffix_memory=suffix_memory,
+            prefix_pad_mask=prefix_pad_mask,
+        )
 
         # z injection point 3 of 3. The trunk and the heads behind it are `predict`'s business,
         # so the loop over events carries no head-side work: what a step hands back is what it
@@ -182,6 +215,28 @@ class Decoder(nn.Module):
         return representation, DecoderState(
             hidden=hidden, cell=cell, context=context, suffix_memory=suffix_memory
         )
+
+    def _prepare_prefix(
+        self, prefix_outputs: torch.Tensor, prefix_len: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Put the condition in the form every step consumes: the projected prefix, and the
+        mask hiding its padding.
+
+        Both are the same at every step, so they are built once per pass rather than inside the
+        loop, and once here rather than once per path: teacher forcing and generation attend
+        over the same prefix and must not disagree about how it was prepared.
+
+        Args:
+            prefix_outputs: The prefix encoder's outputs, `[batch_size, seq_len, prefix_dim]`.
+            prefix_len: Number of real events per prefix, `[batch_size]`.
+        Returns:
+            The projected prefix memory, `[batch_size, seq_len, attention_dim]`, and a mask
+            that is True where a prefix position holds padding, `[batch_size, seq_len]`.
+        """
+        prefix_memory = self.attention.prefix_projection(prefix_outputs)
+        positions = torch.arange(end=prefix_outputs.size(dim=1), device=prefix_outputs.device)
+        prefix_pad_mask = positions.unsqueeze(dim=0) >= prefix_len.unsqueeze(dim=1)
+        return prefix_memory, prefix_pad_mask
 
     def predict(self, representation: torch.Tensor) -> DecoderOutput:
         """Read events out of the representations `step` produces.
@@ -201,46 +256,46 @@ class Decoder(nn.Module):
 
     def forward(
         self,
-        batch: dict[str, torch.Tensor],
+        decoder_input: PaddedEvents,
+        prefix_len: torch.Tensor,
         z: torch.Tensor,
         prefix_outputs: torch.Tensor,
         prefix_summary: torch.Tensor,
     ) -> DecoderOutput:
         """
         Args:
-            batch: A batch from `SuffixDataset`, read for its `decoder_input_*` and
-                `prefix_len` entries.
+            decoder_input: The teacher-forced step inputs, the ground-truth suffix shifted one
+                step behind SOS, `[batch_size, seq_len]` per field.
+            prefix_len: Number of real events per prefix, `[batch_size]`.
             z: The sampled latent, `[batch_size, latent_dim]`.
             prefix_outputs: The prefix encoder's outputs, `[batch_size, seq_len, prefix_dim]`.
             prefix_summary: The prefix encoder's summary, `[batch_size, prefix_dim]`.
         Returns:
             The per-position predictions.
         """
-        seq_len = batch['decoder_input_activities'].size(dim=1)
+        seq_len = decoder_input.activities.size(dim=1)
 
         # Teacher forcing: the step inputs are the ground-truth suffix shifted one behind SOS.
         # They are all known up front, so they are embedded in one call rather than per step.
         embedded = self.embeddings(
-            batch['decoder_input_activities'],
-            batch['decoder_input_resources'],
-            batch['decoder_input_timestamps'],
+            activities=decoder_input.activities,
+            resources=decoder_input.resources,
+            timestamps=decoder_input.timestamps,
         )  # [batch_size, seq_len, embeddings.output_dim]
 
-        # The condition, prepared once: every step attends over the same projected prefix, and
-        # the only thing ever hidden from it is that prefix's padding.
-        prefix_memory = self.attention.prefix_projection(prefix_outputs)  # [batch_size, seq_len, attention_dim]
-        # Built here, once, in the form attention consumes: every step masks the same padding,
-        # and negating it inside the loop would pay for it `seq_len` times over.
-        positions = torch.arange(end=seq_len, device=prefix_outputs.device)
-        prefix_pad_mask = positions.unsqueeze(dim=0) >= batch['prefix_len'].unsqueeze(
-            dim=1
-        )  # [batch_size, seq_len]
+        prefix_memory, prefix_pad_mask = self._prepare_prefix(
+            prefix_outputs=prefix_outputs, prefix_len=prefix_len
+        )
 
-        state = self.initial_state(z, prefix_summary)
+        state = self.initial_state(z=z, prefix_summary=prefix_summary)
         representations = []
         for position in range(seq_len):
             representation, state = self.step(
-                embedded[:, position], z, state, prefix_memory, prefix_pad_mask
+                embedded_event=embedded[:, position],
+                z=z,
+                state=state,
+                prefix_memory=prefix_memory,
+                prefix_pad_mask=prefix_pad_mask,
             )
             representations.append(representation)
 
@@ -249,3 +304,97 @@ class Decoder(nn.Module):
         return self.predict(
             torch.stack(tensors=representations, dim=1)
         )  # [batch_size, seq_len, representation_dim]
+
+    def generate(
+        self,
+        z: torch.Tensor,
+        prefix_outputs: torch.Tensor,
+        prefix_summary: torch.Tensor,
+        prefix_len: torch.Tensor,
+        max_steps: int,
+    ) -> GeneratedSuffix:
+        """Run the decoder free, feeding each step the event the previous one predicted.
+
+        The same `step` as `forward`, driven by the model's own output instead of a ground
+        truth: the recurrence cannot tell the two apart, which is what keeps the path a suffix
+        is generated on identical to the one it was trained on. The heads are read greedily, so
+        the only thing that differs between two generations of one prefix is the z each was
+        given, and a spread across them is a spread in `p(z | prefix)` rather than in a
+        softmax sample.
+
+        A row that has emitted EOT keeps being stepped until every row has, or `max_steps` is
+        reached; `lengths` is what marks its ending, and the events past it are ignored rather
+        than suppressed, which would cost a masked write in the per-step path for output no
+        one reads.
+
+        Args:
+            z: The sampled latent, `[batch_size, latent_dim]`.
+            prefix_outputs: The prefix encoder's outputs, `[batch_size, seq_len, prefix_dim]`.
+            prefix_summary: The prefix encoder's summary, `[batch_size, prefix_dim]`.
+            prefix_len: Number of real events per prefix, `[batch_size]`.
+            max_steps: Hard cap on the suffix length, for the prefixes whose generation never
+                emits EOT at all.
+        Returns:
+            The generated suffixes and the length of each.
+        """
+        batch_size = z.size(dim=0)
+        prefix_memory, prefix_pad_mask = self._prepare_prefix(
+            prefix_outputs=prefix_outputs, prefix_len=prefix_len
+        )
+        state = self.initial_state(z=z, prefix_summary=prefix_summary)
+
+        # The first step reads SOS, exactly as the teacher-forced inputs open on it. Its
+        # timestamp is 0.0, matching how `SuffixDataset` builds that position.
+        activities = torch.full(
+            size=(batch_size,), fill_value=self.sos_activity_index, dtype=torch.long, device=z.device
+        )
+        resources = torch.full(
+            size=(batch_size,), fill_value=self.sos_resource_index, dtype=torch.long, device=z.device
+        )
+        timestamps = z.new_zeros(size=(batch_size,))
+
+        # A row that never emits EOT ran to the cap, so that is the length it keeps.
+        lengths = torch.full(
+            size=(batch_size,), fill_value=max_steps, dtype=torch.long, device=z.device
+        )
+        finished = torch.zeros(size=(batch_size,), dtype=torch.bool, device=z.device)
+
+        generated_activities, generated_resources, generated_timestamps = [], [], []
+        for position in range(max_steps):
+            representation, state = self.step(
+                embedded_event=self.embeddings(
+                    activities=activities, resources=resources, timestamps=timestamps
+                ),
+                z=z,
+                state=state,
+                prefix_memory=prefix_memory,
+                prefix_pad_mask=prefix_pad_mask,
+            )
+            # One step's worth, so the trunk cannot be hoisted out of the loop the way the
+            # teacher-forced path hoists it: nothing here knows the next step's input yet.
+            prediction = self.predict(representation)
+
+            activities = prediction.activity_logits.argmax(dim=-1)  # [batch_size]
+            resources = prediction.resource_logits.argmax(dim=-1)   # [batch_size]
+            timestamps = prediction.timestamps                      # [batch_size]
+
+            generated_activities.append(activities)
+            generated_resources.append(resources)
+            generated_timestamps.append(timestamps)
+
+            # A suffix ends at its first EOT, so a later one cannot move the length back.
+            just_finished = ~finished & (activities == self.eot_activity_index)
+            lengths = lengths.masked_fill(mask=just_finished, value=position)
+            finished |= just_finished
+            # Reading this stalls the device queue once per step, which the per-step path is
+            # otherwise written to avoid. It pays for itself anyway: suffixes are far shorter
+            # than `max_seq_len` on every log here, so most of the loop is skipped outright.
+            if bool(finished.all()):
+                break
+
+        return GeneratedSuffix(
+            activities=torch.stack(tensors=generated_activities, dim=1),  # [batch_size, steps]
+            resources=torch.stack(tensors=generated_resources, dim=1),
+            timestamps=torch.stack(tensors=generated_timestamps, dim=1),
+            lengths=lengths,
+        )

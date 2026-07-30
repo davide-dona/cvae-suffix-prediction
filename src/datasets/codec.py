@@ -1,5 +1,8 @@
 from __future__ import annotations
+from dataclasses import dataclass
+from typing import NamedTuple
 import numpy as np
+import pandas as pd
 
 from src.configs.dataset_info import DatasetInfo
 from src.logs.keys import (
@@ -12,6 +15,48 @@ from src.logs.keys import (
     UNK_ACTIVITY,
     UNK_RESOURCE,
 )
+
+
+class DecodedSuffix(NamedTuple):
+    """One suffix's raw values, decoded from indices and cut to its content length."""
+    activities: list[str]
+    resources: list[str]
+    time_deltas_minutes: list[float]
+
+
+@dataclass(frozen=True)
+class EncodedSequence:
+    """One run of events, encoded to indices and normalized floats: a whole split's worth of
+    rows out of `Codec.encode_events`, or the slice of it before/after a cut once
+    `SuffixDataset` groups and cuts it. Internal-only, like `PairInfo`: nothing outside
+    dataset-building code needs it, so it stays a dataclass rather than a `NamedTuple`.
+    """
+    activities: np.ndarray  # int64, shape [len]
+    resources: np.ndarray   # int64, shape [len(activities)]
+    timestamps: np.ndarray  # float32 in [0, 1], shape [len(activities)]
+
+    def __len__(self) -> int:
+        return len(self.activities)
+
+    def __getitem__(self, cut: slice) -> "EncodedSequence":
+        """Cut all three at once. numpy slices are views, so a cut copies nothing."""
+        return EncodedSequence(
+            activities=self.activities[cut],
+            resources=self.resources[cut],
+            timestamps=self.timestamps[cut],
+        )
+
+
+def _map_to_index(column: pd.Series, mapping: dict[str, int], *, unk_index: int) -> np.ndarray:
+    """Map a whole column of categorical values to vocabulary indices, sending any value the
+    train split did not contain to `unk_index`.
+
+    The splits are temporal, so a val/test case can legitimately name a resource that had not
+    appeared yet when the vocabulary was fit. UNK is what the model is told about those: not
+    which value it was, only that it was none of the ones it was trained on.
+    """
+    # `map` leaves NaN wherever the value is absent from the vocabulary, which is what UNK covers.
+    return column.map(mapping).fillna(unk_index).to_numpy(dtype=np.int64)
 
 
 class Codec:
@@ -56,6 +101,55 @@ class Codec:
         }
 
         self._time_stats = dataset_info.time_stats
+
+    def encode_events(
+        self,
+        activities: pd.Series,
+        resources: pd.Series,
+        time_deltas_minutes: np.ndarray,
+    ) -> EncodedSequence:
+        """Map a run of raw events to the indices and normalized floats the model consumes.
+
+        Args:
+            activities: Raw activity values, one row per event.
+            resources: Raw resource values, one row per event, aligned with `activities`.
+            time_deltas_minutes: Time deltas in minutes, aligned with `activities`.
+
+        Returns:
+            The same events as vocabulary indices and a normalized timestamp column.
+        """
+        return EncodedSequence(
+            activities=_map_to_index(activities, self.activity_to_index, unk_index=self.unk_activity_index),
+            resources=_map_to_index(resources, self.resource_to_index, unk_index=self.unk_resource_index),
+            timestamps=self.normalize_time(time_deltas_minutes),
+        )
+
+    def decode_suffix(
+        self,
+        activities: np.ndarray,
+        resources: np.ndarray,
+        timestamps: np.ndarray,
+        *,
+        length: int,
+    ) -> DecodedSuffix:
+        """Read one suffix's indices and normalized timestamps back to raw values: the
+        inverse of `encode_events`.
+
+        Args:
+            activities: Activity indices, `[seq_len]`.
+            resources: Resource indices, `[seq_len]`.
+            timestamps: Normalized time deltas in `[0, 1]`, as produced by `normalize_time`.
+            length: How many events to keep; the cut is what drops the EOT a generation ended
+                on and the padding behind it, so what comes back holds events and nothing else.
+
+        Returns:
+            The suffix's raw activities, resources and time deltas (in minutes), cut to `length`.
+        """
+        return DecodedSuffix(
+            activities=[self.index_to_activity[int(i)] for i in activities[:length]],
+            resources=[self.index_to_resource[int(i)] for i in resources[:length]],
+            time_deltas_minutes=self.denormalize_time(timestamps[:length]).tolist(),
+        )
 
     def normalize_time(self, delta_minutes: np.ndarray) -> np.ndarray:
         """log1p + min-max into `[0, 1]`, clipping to the range fit on the train split."""

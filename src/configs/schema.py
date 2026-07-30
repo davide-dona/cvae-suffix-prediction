@@ -153,6 +153,23 @@ class TrainingConfig(StrictModel):
     val_every_n_epochs: int = Field(..., gt=0)
 
 
+class InferenceConfig(StrictModel):
+    """Generating suffixes for a whole split, which is what evaluation reads.
+
+    The device and the batch size are not repeated here: a run generates on the device it
+    trained on (`training.device`) and in the batches its data section already describes
+    (`data.batch_size`), noting that the decoder actually sees `batch_size * num_samples`
+    rows, since every sample of a prefix is a row of its own.
+    """
+
+    num_samples: int = Field(
+        ..., gt=0,
+        description="Suffixes generated per prefix, all from that prefix's p(z | prefix); the "
+        "spread across them is what the latent is claiming the prefix leaves open",
+    )
+    predictions_dir: Path = Field(..., description="One predictions file per run, named after it")
+
+
 class EarlyStoppingConfig(StrictModel):
     """Stop training once the validation loss plateaus (see `training/early_stopping.py`).
 
@@ -182,3 +199,4 @@ class ExperimentConfig(StrictModel):
     optimizer: OptimizerConfig
     training: TrainingConfig
     early_stopping: EarlyStoppingConfig
+    inference: InferenceConfig

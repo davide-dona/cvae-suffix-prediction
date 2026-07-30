@@ -1,9 +1,11 @@
-from .codec import Codec
-from .dataset import SuffixDataset
-from .utils import move_to_device
+from .codec import Codec, DecodedSuffix, EncodedSequence
+from .dataset import PaddedEvents, SuffixDataset, SuffixItem
 
 __all__ = [
     "Codec",
+    "DecodedSuffix",
+    "EncodedSequence",
+    "PaddedEvents",
     "SuffixDataset",
-    "move_to_device",
+    "SuffixItem",
 ]

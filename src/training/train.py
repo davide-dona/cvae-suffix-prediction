@@ -11,7 +11,6 @@ from src.configs.schema import (
     OptimizerConfig,
     TrainingConfig,
 )
-from src.datasets.utils import move_to_device
 from src.model import AttentionCVAE
 from src.training.annealing import cyclical_linear_weights
 from src.training.early_stopping import EarlyStopper
@@ -34,7 +33,7 @@ def run_epoch(
 
     Args:
         model: The model to train or evaluate.
-        loader: The dataloader to iterate over. Its batches are dicts of tensors.
+        loader: The dataloader to iterate over. Its batches are `SuffixItem`s.
         kl_weight: The weight this epoch's KL term is given, passed straight through to
             `compute_loss`.
         is_training: Whether to backpropagate. When False the model is put in evaluation
@@ -53,7 +52,7 @@ def run_epoch(
     totals = Metrics()
     with torch.set_grad_enabled(is_training):
         for batch in loader:
-            batch = move_to_device(batch, device)
+            batch = batch.to(device)
             loss, metrics = compute_loss(model, batch, kl_weight)
             totals += metrics
 

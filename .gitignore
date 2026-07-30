@@ -12,3 +12,5 @@ ideas/
 .venv
 # Preprocessed datasets
 processed/
+# Figures workspace
+/docs/figures

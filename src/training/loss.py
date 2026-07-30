@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 
+from src.datasets.dataset import SuffixItem
 from src.model import AttentionCVAE
 from src.training.metrics import Metrics
 
@@ -63,7 +64,7 @@ def gaussian_kl(
 
 
 def compute_loss(
-    model: AttentionCVAE, batch: dict[str, torch.Tensor], kl_weight: float
+    model: AttentionCVAE, batch: SuffixItem, kl_weight: float
 ) -> tuple[torch.Tensor, Metrics]:
     """Run one training or evaluation step and report what it cost.
 
@@ -80,24 +81,24 @@ def compute_loss(
         The per-trace loss to backpropagate, and the metrics to log, summed over the batch.
     """
     output = model(batch)
-    batch_size = batch['target_activities'].size(0)
+    batch_size = batch.suffix.activities.size(0)
 
     # `ignore_index` drops the padded suffix positions, so predictions past the end of a
     # trace neither contribute a gradient nor dilute the reported loss.
     activity_loss = F.cross_entropy(
         output.decoder.activity_logits.transpose(1, 2),
-        batch['target_activities'],
+        batch.suffix.activities,
         ignore_index=model.pad_activity_index,
         reduction='sum',
     )
     resource_loss = F.cross_entropy(
         output.decoder.resource_logits.transpose(1, 2),
-        batch['target_resources'],
+        batch.suffix.resources,
         ignore_index=model.pad_resource_index,
         reduction='sum',
     )
     timestamp_loss = masked_mse(
-        output.decoder.timestamps, batch['target_timestamps'], batch['suffix_len']
+        output.decoder.timestamps, batch.suffix.timestamps, batch.suffix_len
     )
 
     reconstruction_loss = activity_loss + resource_loss + timestamp_loss
