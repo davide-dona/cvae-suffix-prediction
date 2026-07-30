@@ -30,7 +30,7 @@ The raw log is preprocessed first if `data/<name>/processed/` holds no splits. T
 python -m pipelines.preprocess -c config/sepsis.yaml
 ```
 
-A run writes three things, all three named by the same `<dataset>/<experiment_name>-<timestamp>` run name, so a run's curves, its history and its result are found under one name:
+A run writes two things, both named by the same `<dataset>/<experiment_name>-<timestamp>` run name, so a run's curves and its result are found under one name:
 
 - `outputs/tensorboard/<dataset>/<experiment_name>-<timestamp>/`: the loss and its terms under `train/` and `val/`, plus `kl_weight`. 
 Point TensorBoard at the root and every run shows up as its own toggleable set of curves, grouped by dataset:
@@ -38,7 +38,6 @@ Point TensorBoard at the root and every run shows up as its own toggleable set o
   tensorboard --logdir outputs/tensorboard
   ```
 - `outputs/best-models/<dataset>/<experiment_name>-<timestamp>.pt`: the run's result. One file, overwritten every time the validation loss improves, so the last improvement of the run is what is left in it.
-- `outputs/checkpoints/<dataset>/<experiment_name>-<timestamp>/epoch-<n>.pt`: the history behind that result, one file per validation improvement. Nothing is pruned, so a long run leaves a few dozen files of a few MB each.
 
 ### Inference
 

@@ -9,7 +9,7 @@ from pipelines.preprocess import ensure_dataset
 from src.configs import DatasetInfo, ExperimentConfig, load_config
 from src.datasets.codec import Codec
 from src.datasets.dataset import SuffixDataset
-from src.model import AttentionCVAE, best_model_path, checkpoint_path, save_checkpoint
+from src.model import AttentionCVAE, best_model_path, save_checkpoint
 from src.training.train import train
 
 
@@ -66,25 +66,13 @@ def run(config: ExperimentConfig) -> None:
         """
         Decorator for train()'s on_best_epoch callback, which saves the model to disk.
         Defined here so it can access the config and model objects without passing them through train().
-
-        Every improving epoch is kept, and the last of them is by definition the run's best, so
-        the same weights are written twice: once into the run's history, and once over the
-        run's single best-model file.
         Args:
             epoch: The epoch number that just finished.
             val_loss: The validation loss that just finished.
         """
-        model_config = config.model.model_dump()
-        save_checkpoint(
-            model,
-            model_config=model_config,
-            epoch=epoch,
-            val_loss=val_loss,
-            path=checkpoint_path(config.training.checkpoint_dir, run_name, epoch),
-        )
         path = save_checkpoint(
             model,
-            model_config=model_config,
+            model_config=config.model.model_dump(),
             epoch=epoch,
             val_loss=val_loss,
             path=best_model_path(config.training.best_model_dir, run_name),

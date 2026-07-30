@@ -145,9 +145,6 @@ class TrainingConfig(StrictModel):
         None, gt=0.0, description="Max gradient norm; null or absent leaves gradients unclipped"
     )
     device: Literal["cpu", "cuda", "mps"]
-    checkpoint_dir: Path = Field(
-        ..., description="Every epoch a run improved on, one directory per run"
-    )
     best_model_dir: Path = Field(..., description="The best epoch of a run, one file per run")
     log_dir: Path = Field(..., description="TensorBoard event directory")
     val_every_n_epochs: int = Field(..., gt=0)

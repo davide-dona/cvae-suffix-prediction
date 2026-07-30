@@ -8,17 +8,6 @@ from src.configs.dataset_info import DatasetInfo
 from src.configs.schema import ModelConfig
 from src.model.attention_cvae import AttentionCVAE
 
-def checkpoint_path(checkpoint_dir: Union[str, Path], run_name: str, epoch: int) -> Path:
-    """
-    Where one epoch of a run is kept: `<checkpoint_dir>/<run_name>/epoch-<n>.pt`.
-
-    `run_name` is the same name the run logs to in TensorBoard, and it holds a `/`, so a
-    run's checkpoints land grouped under its dataset just as its events do. Being per run is
-    what keeps two runs of one config from writing over each other's epochs.
-    """
-    return Path(checkpoint_dir) / run_name / f'epoch-{epoch}.pt'
-
-
 def best_model_path(best_model_dir: Union[str, Path], run_name: str) -> Path:
     """
     Where the best epoch of a run is kept: `<best_model_dir>/<run_name>.pt`.
