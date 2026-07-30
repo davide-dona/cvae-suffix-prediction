@@ -39,6 +39,12 @@ class EventEmbeddings(nn.Module):
         self.projection = nn.Linear(
             in_features=config.activity_dim + config.resource_dim + 1, out_features=d_model
         )
+        # The projection emits vectors whose norm is set by its fan-in, and the position table
+        # below has a norm of its own, near sqrt(d_model / 2), that nothing scales. Left alone
+        # the two land within a few percent of each other, so half of what a layer reads is
+        # position and an event's identity has to be recovered from the other half. Scaling the
+        # content up by sqrt(d_model) is what puts it above the position it is being tagged with.
+        self.content_scale = math.sqrt(d_model)
         # Not persistent: it is a function of `max_trace_length` and `d_model`, both of which are
         # known at build time, so storing it in every checkpoint would only be a way for the
         # saved table and the rebuilt model to disagree.
@@ -73,7 +79,8 @@ class EventEmbeddings(nn.Module):
         # The leading `seq_len` rows of the table, broadcast over the batch: position `i` of every
         # sequence in the batch is the i-th event of that sequence.
         positions = self.positional_encoding[: activities.size(dim=1)]  # [seq_len, d_model]
-        return self.projection(event) + positions  # [batch_size, seq_len, d_model]
+        content = self.projection(event) * self.content_scale  # [batch_size, seq_len, d_model]
+        return content + positions  # [batch_size, seq_len, d_model]
 
 
 def _sinusoidal_encoding(length: int, d_model: int) -> torch.Tensor:
