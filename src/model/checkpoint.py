@@ -9,7 +9,7 @@ from src.model.transformer_cvae import TransformerCVAE
 
 def best_model_path(best_model_dir: Union[str, Path], run_name: str) -> Path:
     """
-    Where the best epoch of a run is kept: `<best_model_dir>/<run_name>.pt`.
+    Where the best step of a run is kept: `<best_model_dir>/<run_name>.pt`.
 
     One file per run, overwritten as the best improves, so the directory holds every run's
     result side by side and nothing has to be picked out of a history.
@@ -47,7 +47,7 @@ def save_checkpoint(
     model: nn.Module,
     *,
     model_config: dict,
-    epoch: int,
+    step: int,
     val_loss: float,
     path: Union[str, Path],
 ) -> Path:
@@ -66,9 +66,9 @@ def save_checkpoint(
     Args:
         model: The model whose weights to save.
         model_config: Its `ModelConfig`, dumped to plain data.
-        epoch: The epoch the weights are from. The best-model filename does not say, so the
-            file has to.
-        val_loss: That epoch's validation loss.
+        step: The optimizer step the weights are from. The best-model filename does not say,
+            so the file has to.
+        val_loss: That step's prior-path validation loss.
         path: Where to write, parent directories included.
     Returns:
         The path written to.
@@ -81,7 +81,7 @@ def save_checkpoint(
         obj={
             'model_config': model_config,
             'model_state_dict': model.state_dict(),
-            'epoch': epoch,
+            'step': step,
             'val_loss': val_loss,
         },
         f=temp_path,
@@ -101,7 +101,7 @@ def build_model_from_checkpoint(
     """
     Rebuild the model a checkpoint holds, with its weights loaded.
 
-    Only the config and the weights are read; the `epoch` and `val_loss` a checkpoint also
+    Only the config and the weights are read; the `step` and `val_loss` a checkpoint also
     carries describe the run it came from and say nothing about how to rebuild it.
 
     Args:

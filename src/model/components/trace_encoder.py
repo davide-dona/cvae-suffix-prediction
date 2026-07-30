@@ -2,16 +2,16 @@ import torch
 from torch import nn
 
 from src.configs.schema import TraceEncoderConfig
+from src.datasets.dataset import EncodedEvents
 from src.model.components.embeddings import EventEmbeddings
 
 
 def padding_mask(lengths: torch.Tensor, seq_len: int) -> torch.Tensor:
     """Mark the positions of an encoder input that hold padding.
 
+    True means padding, the polarity `nn.Transformer`'s `*_key_padding_mask` arguments take,
+    and the opposite of `loss.real_event_mask`; both names say which way round they are.
     The extra leading column is the CLS token every encoder prepends, which is never padding.
-    Defining the layout here, rather than at each of the places that mask against it, is what
-    keeps the two encoders and the decoder's cross-attention agreeing on what a row holds.
-
     Args:
         lengths: Number of real events per sequence, `[batch_size]`.
         seq_len: The padded width the events come in at.
@@ -30,16 +30,13 @@ class TraceEncoder(nn.Module):
 
     A learned CLS token is prepended to the sequence, and the row it comes back as is the
     sequence's summary: the pooling is learned rather than fixed, so what a summary holds is
-    whatever the latent networks reading it turn out to need. It is kept in the returned tensor
-    rather than split out, so the decoder cross-attending over an encoded prefix gets a
-    whole-prefix row to read alongside the individual events.
+    whatever the latent networks reading it turn out to need.
     """
-
     def __init__(self, config: TraceEncoderConfig, embeddings: EventEmbeddings, *, d_model: int):
         super().__init__()
         self.embeddings = embeddings
         self.dropout = nn.Dropout(p=config.dropout)
-        # Broadcast over the batch in `forward`; it is one vector, the same for every sequence.
+        # Initialize the CLS token to zero, so the encoder starts with no bias
         self.cls_token = nn.Parameter(data=torch.zeros(size=(1, 1, d_model)))
 
         self.encoder = nn.TransformerEncoder(
@@ -51,7 +48,7 @@ class TraceEncoder(nn.Module):
                 batch_first=True,
                 # Pre-norm: each sublayer normalizes its input rather than its output, which
                 # leaves the residual path clean and is what lets the stack train without the
-                # warmup schedule post-norm needs. The training loop has no warmup.
+                # warmup schedule post-norm needs.
                 norm_first=True,
             ),
             num_layers=config.num_layers,
@@ -64,16 +61,10 @@ class TraceEncoder(nn.Module):
         )
         self.output_dim = d_model
 
-    def forward(
-        self,
-        activities: torch.Tensor,
-        resources: torch.Tensor,
-        timestamps: torch.Tensor,
-        pad_mask: torch.Tensor,
-    ) -> torch.Tensor:
+    def forward(self, events: EncodedEvents, pad_mask: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            activities, resources, timestamps: The events to read, `[batch_size, seq_len]` each.
+            events: The events to read, `[batch_size, seq_len]` per field.
             pad_mask: True where a position holds padding, `[batch_size, 1 + seq_len]`, from
                 `padding_mask`.
         Returns:
@@ -82,9 +73,7 @@ class TraceEncoder(nn.Module):
         """
         # One vector per event, positions included, then dropout so no single feature can carry
         # a position on its own.
-        embedded = self.dropout(
-            self.embeddings(activities=activities, resources=resources, timestamps=timestamps)
-        )  # [batch_size, seq_len, d_model]
+        embedded = self.dropout(self.embeddings(events))  # [batch_size, seq_len, d_model]
 
         cls_token = self.cls_token.expand(embedded.size(dim=0), -1, -1)  # [batch_size, 1, d_model]
         sequence = torch.cat(tensors=(cls_token, embedded), dim=1)  # [batch_size, 1 + seq_len, d_model]

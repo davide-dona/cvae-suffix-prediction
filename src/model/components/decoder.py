@@ -1,10 +1,9 @@
 from dataclasses import dataclass
-
 import torch
 from torch import nn
 
 from src.configs.schema import DecoderConfig, LatentConfig
-from src.datasets.dataset import PaddedEvents
+from src.datasets.dataset import EncodedEvents
 from src.model.components.embeddings import EventEmbeddings
 
 
@@ -13,7 +12,7 @@ class DecoderOutput:
     """What the decoder predicts for every suffix position."""
     activity_logits: torch.Tensor  # [batch_size, seq_len, num_activities]
     resource_logits: torch.Tensor  # [batch_size, seq_len, num_resources]
-    timestamps: torch.Tensor       # [batch_size, seq_len], in [0, 1] like the targets
+    time_deltas: torch.Tensor       # [batch_size, seq_len], in [0, 1] like the targets
 
 
 @dataclass
@@ -28,7 +27,7 @@ class GeneratedSuffix:
     """
     activities: torch.Tensor  # [..., steps]
     resources: torch.Tensor   # [..., steps]
-    timestamps: torch.Tensor  # [..., steps], in [0, 1] like the targets
+    time_deltas: torch.Tensor  # [..., steps], in [0, 1] like the targets
     lengths: torch.Tensor     # [...], events emitted before EOT, or `steps` if EOT never came
 
 
@@ -37,14 +36,13 @@ class Decoder(nn.Module):
     Writes the suffix with a transformer decoder: causal self-attention over the suffix so far,
     cross-attention over the encoded prefix.
 
-    The causal mask is the whole of what makes the prediction at a position depend on nothing
-    after it, so the teacher-forced pass is a single parallel call rather than a loop. The
-    prefix reaches every position and every layer through cross-attention, including the CLS
+    The causal mask allows the decoder to self-attend over the suffix so far, but not over anything after it.
+    This allows the teacher-forced pass to be a single parallel call rather than a loop.
+    
+    The prefix reaches every position and every layer through cross-attention, including the CLS
     row that summarizes it.
 
-    z is added to every position of the decoder's input. It therefore sits in the residual
-    stream from the first layer on and cannot be routed around by an attention pattern, which is
-    what stands between a conditional VAE and a decoder that quietly learns to ignore its latent.
+    z is added to every position of the decoder's input.
     """
 
     def __init__(
@@ -63,9 +61,7 @@ class Decoder(nn.Module):
         super().__init__()
         self.embeddings = embeddings
         self.dropout = nn.Dropout(p=config.dropout)
-
-        # Only `generate` reads these: the token a suffix opens on, and the one it ends on.
-        # Teacher forcing is handed both by the dataset instead, in `decoder_input`.
+        
         self.sos_activity_index = sos_activity_index
         self.sos_resource_index = sos_resource_index
         self.eot_activity_index = eot_activity_index
@@ -88,9 +84,7 @@ class Decoder(nn.Module):
             norm=nn.LayerNorm(normalized_shape=d_model),
         )
 
-        # A trunk shared by the three heads below, not a head itself: what an event is depends
-        # on its activity, its resource and its timing together, so they are read off one
-        # representation rather than three unrelated projections of the same vector.
+        # A trunk shared by the three heads, so the heads can be smaller and the model can be trained with a single loss.
         self.shared_layer = nn.Sequential(
             nn.Linear(in_features=d_model, out_features=config.head_hidden_dim),
             nn.ReLU(),
@@ -103,11 +97,11 @@ class Decoder(nn.Module):
         self.resource_head = nn.Linear(
             in_features=config.head_hidden_dim, out_features=num_resources
         )
-        self.timestamp_head = nn.Linear(in_features=config.head_hidden_dim, out_features=1)
+        self.time_delta_head = nn.Linear(in_features=config.head_hidden_dim, out_features=1)
 
     def forward(
         self,
-        decoder_input: PaddedEvents,
+        decoder_input: EncodedEvents,
         z: torch.Tensor,
         prefix_encoded: torch.Tensor,
         prefix_pad_mask: torch.Tensor,
@@ -128,11 +122,9 @@ class Decoder(nn.Module):
         seq_len = decoder_input.activities.size(dim=1)
 
         # z is broadcast over positions: the same latent added to every one of them.
-        target = self.embeddings(
-            activities=decoder_input.activities,
-            resources=decoder_input.resources,
-            timestamps=decoder_input.timestamps,
-        ) + self.latent_projection(z).unsqueeze(dim=1)  # [batch_size, seq_len, d_model]
+        target = self.embeddings(decoder_input) + self.latent_projection(z).unsqueeze(
+            dim=1
+        )  # [batch_size, seq_len, d_model]
 
         # True above the diagonal, so a position attends over itself and everything before it and
         # nothing after. This is what a suffix being written one event at a time amounts to.
@@ -159,7 +151,7 @@ class Decoder(nn.Module):
             activity_logits=self.activity_head(features),
             resource_logits=self.resource_head(features),
             # Targets are min-max normalized into [0, 1], so the head is squashed to match.
-            timestamps=self.timestamp_head(features).sigmoid().squeeze(dim=-1),
+            time_deltas=self.time_delta_head(features).sigmoid().squeeze(dim=-1),
         )
 
     def generate(
@@ -209,12 +201,12 @@ class Decoder(nn.Module):
             dtype=torch.long,
             device=z.device,
         )
-        input_timestamps = z.new_zeros(size=(batch_size, max_steps))
+        input_time_deltas = z.new_zeros(size=(batch_size, max_steps))
 
         # What it produced, which is the same events shifted one position earlier.
         generated_activities = torch.zeros_like(input=input_activities)
         generated_resources = torch.zeros_like(input=input_resources)
-        generated_timestamps = torch.zeros_like(input=input_timestamps)
+        generated_time_deltas = torch.zeros_like(input=input_time_deltas)
 
         # A row that never emits EOT ran to the cap, so that is the length it keeps.
         lengths = torch.full(
@@ -226,10 +218,10 @@ class Decoder(nn.Module):
         for position in range(max_steps):
             # Everything written so far, the whole prefix of the suffix being built.
             output = self.forward(
-                decoder_input=PaddedEvents(
+                decoder_input=EncodedEvents(
                     activities=input_activities[:, : position + 1],
                     resources=input_resources[:, : position + 1],
-                    timestamps=input_timestamps[:, : position + 1],
+                    time_deltas=input_time_deltas[:, : position + 1],
                 ),
                 z=z,
                 prefix_encoded=prefix_encoded,
@@ -239,16 +231,16 @@ class Decoder(nn.Module):
             # written, since the causal mask makes them independent of anything after them.
             activities = output.activity_logits[:, -1].argmax(dim=-1)  # [batch_size]
             resources = output.resource_logits[:, -1].argmax(dim=-1)   # [batch_size]
-            timestamps = output.timestamps[:, -1]                      # [batch_size]
+            time_deltas = output.time_deltas[:, -1]                      # [batch_size]
 
             generated_activities[:, position] = activities
             generated_resources[:, position] = resources
-            generated_timestamps[:, position] = timestamps
+            generated_time_deltas[:, position] = time_deltas
             # The last step has no next position to feed.
             if position + 1 < max_steps:
                 input_activities[:, position + 1] = activities
                 input_resources[:, position + 1] = resources
-                input_timestamps[:, position + 1] = timestamps
+                input_time_deltas[:, position + 1] = time_deltas
 
             # A suffix ends at its first EOT, so a later one cannot move the length back.
             just_finished = ~finished & (activities == self.eot_activity_index)
@@ -264,6 +256,6 @@ class Decoder(nn.Module):
         return GeneratedSuffix(
             activities=generated_activities[:, :steps_taken],  # [batch_size, steps]
             resources=generated_resources[:, :steps_taken],
-            timestamps=generated_timestamps[:, :steps_taken],
+            time_deltas=generated_time_deltas[:, :steps_taken],
             lengths=lengths,
         )

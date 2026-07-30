@@ -26,24 +26,23 @@ class DecodedSuffix(NamedTuple):
 
 @dataclass(frozen=True)
 class EncodedSequence:
-    """One run of events, encoded to indices and normalized floats: a whole split's worth of
-    rows out of `Codec.encode_events`, or the slice of it before/after a cut once
-    `SuffixDataset` groups and cuts it. Internal-only, like `PairInfo`: nothing outside
-    dataset-building code needs it, so it stays a dataclass rather than a `NamedTuple`.
-    """
+    """One run of events, encoded to indices and normalized floats"""
     activities: np.ndarray  # int64, shape [len]
     resources: np.ndarray   # int64, shape [len(activities)]
-    timestamps: np.ndarray  # float32 in [0, 1], shape [len(activities)]
+    time_deltas: np.ndarray  # float32 in [0, 1], shape [len(activities)]
 
     def __len__(self) -> int:
         return len(self.activities)
 
-    def __getitem__(self, cut: slice) -> "EncodedSequence":
-        """Cut all three at once. numpy slices are views, so a cut copies nothing."""
+    def __getitem__(self, cut: int | slice | tuple) -> "EncodedSequence":
+        """Index all three at once, however numpy would: `[k:]` to cut a trace in two, `[i]`
+        or `[i, j]` to pull one sequence out of a batch of them. numpy indexing returns
+        views, so this copies nothing.
+        """
         return EncodedSequence(
             activities=self.activities[cut],
             resources=self.resources[cut],
-            timestamps=self.timestamps[cut],
+            time_deltas=self.time_deltas[cut],
         )
 
 
@@ -121,24 +120,15 @@ class Codec:
         return EncodedSequence(
             activities=_map_to_index(activities, self.activity_to_index, unk_index=self.unk_activity_index),
             resources=_map_to_index(resources, self.resource_to_index, unk_index=self.unk_resource_index),
-            timestamps=self.normalize_time(time_deltas_minutes),
+            time_deltas=self.normalize_time(time_deltas_minutes),
         )
 
-    def decode_suffix(
-        self,
-        activities: np.ndarray,
-        resources: np.ndarray,
-        timestamps: np.ndarray,
-        *,
-        length: int,
-    ) -> DecodedSuffix:
-        """Read one suffix's indices and normalized timestamps back to raw values: the
-        inverse of `encode_events`.
+    def decode_suffix(self, suffix: EncodedSequence, *, length: int) -> DecodedSuffix:
+        """Read one suffix's indices and normalized deltas back to raw values: the inverse of
+        `encode_events`, and so taking back the `EncodedSequence` that one returns.
 
         Args:
-            activities: Activity indices, `[seq_len]`.
-            resources: Resource indices, `[seq_len]`.
-            timestamps: Normalized time deltas in `[0, 1]`, as produced by `normalize_time`.
+            suffix: One suffix as the model holds it, `[seq_len]` per field.
             length: How many events to keep; the cut is what drops the EOT a generation ended
                 on and the padding behind it, so what comes back holds events and nothing else.
 
@@ -146,9 +136,9 @@ class Codec:
             The suffix's raw activities, resources and time deltas (in minutes), cut to `length`.
         """
         return DecodedSuffix(
-            activities=[self.index_to_activity[int(i)] for i in activities[:length]],
-            resources=[self.index_to_resource[int(i)] for i in resources[:length]],
-            time_deltas_minutes=self.denormalize_time(timestamps[:length]).tolist(),
+            activities=[self.index_to_activity[int(i)] for i in suffix.activities[:length]],
+            resources=[self.index_to_resource[int(i)] for i in suffix.resources[:length]],
+            time_deltas_minutes=self.denormalize_time(suffix.time_deltas[:length]).tolist(),
         )
 
     def normalize_time(self, delta_minutes: np.ndarray) -> np.ndarray:

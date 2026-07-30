@@ -22,9 +22,3 @@ data:
   # nothing to overlap with the GPU, and macOS spawns rather than forks - every epoch pays
   # four fresh torch imports per loader. Measured at 2.1x slower end to end than 0.
   num_workers: 0
-
-training:
-  max_num_epochs: 500  # 3045 train traces, cut into 119073 prefix/suffix pairs
-
-early_stopping:
-  patience: 20  # full-weight stretches are 31 epochs long at this budget

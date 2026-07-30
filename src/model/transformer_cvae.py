@@ -39,28 +39,27 @@ class TransformerCVAE(nn.Module):
 
     def __init__(self, config: ModelConfig, dataset_info: DatasetInfo):
         super().__init__()
-
-        # Built once and handed to every part below, so an activity means the same vector
-        # whether it is being read in a prefix or written into a suffix.
+        # The embeddings are shared between the prefix and suffix encoders, and between the decoder
+        # Allows to learn a single embedding space for activities and resources, reducing the number of parameters and improving generalization.
         self.embeddings = EventEmbeddings(
             config=config.embeddings, dataset_info=dataset_info, d_model=config.d_model
         )
-        # Same architecture, separate weights: one reads prefixes, the other ground-truth
-        # suffixes, and only the second is ever run on the training path.
+        # Same architecture, separate weights: one reads prefixes, the other ground-truth suffixes. 
+        # The prefix encoder is used at inference, the suffix encoder is not.
         self.prefix_encoder = TraceEncoder(
             config=config.prefix_encoder, embeddings=self.embeddings, d_model=config.d_model
         )
         self.suffix_encoder = TraceEncoder(
             config=config.suffix_encoder, embeddings=self.embeddings, d_model=config.d_model
         )
-
-        # Both summaries are CLS rows off an encoder, so both come in at `d_model`.
+        # Both prefix and suffix encoders produce a CLS row summarizing the whole of their input (dim=d_model).
         self.prior = PriorNetwork(
             config=config.prior, latent_config=config.latent, prefix_dim=config.d_model
         )
         self.posterior = PosteriorNetwork(
             latent_config=config.latent, prefix_dim=config.d_model, suffix_dim=config.d_model
         )
+        # The decoder reads the prefix and the latent z, and predicts the suffix. It is used both at training and inference. 
         self.decoder = Decoder(
             config=config.decoder,
             latent_config=config.latent,
@@ -72,7 +71,6 @@ class TransformerCVAE(nn.Module):
             sos_resource_index=dataset_info.sos_resource_index,
             eot_activity_index=dataset_info.eot_activity_index,
         )
-
         self.pad_activity_index = dataset_info.pad_activity_index
         self.pad_resource_index = dataset_info.pad_resource_index
 
@@ -92,50 +90,45 @@ class TransformerCVAE(nn.Module):
         Returns:
             The decoder's predictions and the latent distributions the loss compares.
         """
-        # Built once and read twice, by the encoder and by the decoder's cross-attention, so the
-        # two cannot disagree about which rows of the encoded prefix hold real events.
+        # Mask the padding positions of the prefix, blocking them from being attended over
         prefix_pad_mask = padding_mask(
             lengths=item.prefix_len, seq_len=item.prefix.activities.size(dim=1)
         )  # [batch_size, 1 + seq_len]
 
-        # The prefix is read once, into a form serving both purposes: a row per event for the
-        # decoder to attend over, and the CLS row the latent networks summarize it by.
+        # Encode the prefix, producing a row per event for the decoder to attend over, 
+        # and a CLS row summarizing the whole of it for the latent networks to read
         prefix_encoded = self.prefix_encoder(
-            activities=item.prefix.activities,
-            resources=item.prefix.resources,
-            timestamps=item.prefix.timestamps,
-            pad_mask=prefix_pad_mask,
+            events=item.prefix, pad_mask=prefix_pad_mask
         )  # [batch_size, 1 + seq_len, d_model]
-        prefix_summary = prefix_encoded[:, 0]  # [batch_size, d_model], the CLS row
+        prefix_CLS = prefix_encoded[:, 0]  # [batch_size, d_model], CLS row summarizing the whole prefix
 
-        # Always computed: it is sampled from at inference, and it is what the KL term on the
-        # training path measures the posterior against.
-        prior = self.prior(prefix_summary)  # mean, logvar: [batch_size, latent_dim] each
+        # Always computed: used for the KL term during training, and for sampling z during inference.
+        # The prior is conditioned on the prefix, so it is a distribution over what the suffix can be given the prefix.
+        prior = self.prior(prefix_CLS)  # mean, logvar: [batch_size, 2 * latent_dim]
 
-        if sample_from == 'posterior':
-            # The one place the ground-truth suffix is read, and only for its summary: the
-            # latent is a single vector, so there is nothing here for the per-event rows to feed.
-            suffix_summary = self.suffix_encoder(
-                activities=item.suffix.activities,
-                resources=item.suffix.resources,
-                timestamps=item.suffix.timestamps,
+        if sample_from == 'posterior': 
+            # TRAINING: Run the suffix encoder to produce a CLS row summarizing the whole of the suffix.
+            # The per event rows are not used, as the decoder is not allowed to read the suffix at all: it is what the model is trying to predict.
+            suffix_CLS = self.suffix_encoder(
+                events=item.suffix,
                 pad_mask=padding_mask(
                     lengths=item.suffix_len, seq_len=item.suffix.activities.size(dim=1)
                 ),
             )[:, 0]  # [batch_size, d_model]
-            # q(z | prefix, suffix): a latent that already describes the suffix being
-            # reconstructed, which is what makes the reconstruction learnable at all.
+
+            # q(z | prefix, suffix)
             posterior = self.posterior(
-                prefix_summary=prefix_summary, suffix_summary=suffix_summary
+                prefix_summary=prefix_CLS, suffix_summary=suffix_CLS
             )
             z = posterior.sample()  # [batch_size, latent_dim]
 
         else:
-            # Generating: the suffix is unknown, so the suffix encoder and the posterior are not
+            # GENERATION: the suffix is unknown, so the suffix encoder and the posterior are not
             # run and p(z | prefix) supplies the latent instead.
             posterior = None
             z = prior.sample()  # [batch_size, latent_dim]
-
+        
+        # Run the decoder, which reads the prefix and the latent z, and predicts the suffix.
         decoder_output = self.decoder(
             decoder_input=item.decoder_input,
             z=z,
@@ -147,16 +140,10 @@ class TransformerCVAE(nn.Module):
     @torch.no_grad()
     def generate(self, item: SuffixItem, *, num_samples: int) -> GeneratedSuffix:
         """Generate `num_samples` suffixes for every prefix in `item`.
-
-        The suffix is unknown here, so nothing but the prefix is read: the suffix encoder and
-        the posterior stay unrun and every latent comes from `p(z | prefix)`. The samples of
-        one prefix differ only in that latent, since the decoder reads its heads greedily,
-        which is what makes the spread across them a property of the prior rather than of a
-        softmax.
-
-        The prefix is encoded once and its rows repeated, so a sample costs the decoder's
-        per-step path and nothing else, and the whole `batch_size * num_samples` is generated as
-        one batch rather than as a loop over samples.
+        The suffix is unknown here, so only the prefix is encoded and every latent comes from `p(z | prefix)`. 
+        
+        The samples of one prefix differ only in that latent, since the decoder reads its heads greedily.
+        The spread across them is a property of the prior rather than of a softmax.
 
         Args:
             item: A batch from `SuffixDataset`, read for its prefix only.
@@ -165,14 +152,13 @@ class TransformerCVAE(nn.Module):
             The generated suffixes, `[batch_size, num_samples, steps]`, with row `(i, j)` the
             j-th sample for the i-th prefix of the batch.
         """
+        # Mask the padding positions of the prefix, blocking them from being attended over
         prefix_pad_mask = padding_mask(
             lengths=item.prefix_len, seq_len=item.prefix.activities.size(dim=1)
         )
+        # Encode the prefix, producing a row per event for the decoder to attend over
         prefix_encoded = self.prefix_encoder(
-            activities=item.prefix.activities,
-            resources=item.prefix.resources,
-            timestamps=item.prefix.timestamps,
-            pad_mask=prefix_pad_mask,
+            events=item.prefix, pad_mask=prefix_pad_mask
         )  # [batch_size, 1 + seq_len, d_model]
 
         # Every sample of a prefix gets its own row, adjacent to its siblings, so the flat
@@ -180,7 +166,7 @@ class TransformerCVAE(nn.Module):
         prefix_encoded = prefix_encoded.repeat_interleave(repeats=num_samples, dim=0)
         prefix_pad_mask = prefix_pad_mask.repeat_interleave(repeats=num_samples, dim=0)
 
-        # The rows of a prefix hold the same distribution, so they differ only in the draw.
+        # Define the latent for every sample of every prefix. The prior is conditioned on the prefix, so it is a distribution over what the suffix can be given the prefix
         z = self.prior(prefix_encoded[:, 0]).sample()  # [batch_size * num_samples, latent_dim]
 
         # A suffix holds at most `max_seq_len` events, the padded width the batch comes in at.
@@ -194,6 +180,6 @@ class TransformerCVAE(nn.Module):
         return GeneratedSuffix(
             activities=generated.activities.view(batch_size, num_samples, -1),
             resources=generated.resources.view(batch_size, num_samples, -1),
-            timestamps=generated.timestamps.view(batch_size, num_samples, -1),
+            time_deltas=generated.time_deltas.view(batch_size, num_samples, -1),
             lengths=generated.lengths.view(batch_size, num_samples),
         )

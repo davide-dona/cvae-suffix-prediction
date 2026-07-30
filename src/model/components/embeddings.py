@@ -5,18 +5,16 @@ from torch import nn
 
 from src.configs.dataset_info import DatasetInfo
 from src.configs.schema import EmbeddingConfig
+from src.datasets.dataset import EncodedEvents
 
 
 class EventEmbeddings(nn.Module):
     """Turns a sequence of events into the vectors the transformer stacks read.
-
-    An event is its activity embedding, its resource embedding and its scalar time delta,
-    concatenated and projected to `d_model`, with a sinusoidal encoding of its position added
-    on. Attention is order-blind, so the position has to be carried by the vector itself.
-
-    One instance is shared by both trace encoders and the decoder, so an activity means the
-    same vector wherever it is read or written, and every one of the three indexes positions
-    from the start of its own sequence.
+    An event is its activity encoding, its resource encoding and its scalar time delta,
+    concatenated and projected to `d_model`. 
+    
+    A sinusoidal encoding of its position is added to the projected vector, so the stacks 
+    can read the order of events out of the vectors.
     """
 
     def __init__(self, config: EmbeddingConfig, dataset_info: DatasetInfo, *, d_model: int):
@@ -33,21 +31,13 @@ class EventEmbeddings(nn.Module):
             embedding_dim=config.resource_dim,
             padding_idx=dataset_info.pad_resource_index,
         )
-        # The trailing 1 is the time delta, which is a scalar and needs no embedding table.
-        # Activity and resource keep widths of their own, sized to their vocabularies, and the
-        # projection is what brings an event up to the width the stacks run at.
+        # +1 for the time delta, which is a scalar
         self.projection = nn.Linear(
             in_features=config.activity_dim + config.resource_dim + 1, out_features=d_model
         )
-        # The projection emits vectors whose norm is set by its fan-in, and the position table
-        # below has a norm of its own, near sqrt(d_model / 2), that nothing scales. Left alone
-        # the two land within a few percent of each other, so half of what a layer reads is
-        # position and an event's identity has to be recovered from the other half. Scaling the
-        # content up by sqrt(d_model) is what puts it above the position it is being tagged with.
+        # The embeddings are scaled up by the square root of the width.
         self.content_scale = math.sqrt(d_model)
-        # Not persistent: it is a function of `max_trace_length` and `d_model`, both of which are
-        # known at build time, so storing it in every checkpoint would only be a way for the
-        # saved table and the rebuilt model to disagree.
+        # Save the fixed positional encoding table as a buffer, so it moves with the model and is saved in checkpoints, but not trained.
         self.register_buffer(
             name='positional_encoding',
             tensor=_sinusoidal_encoding(length=dataset_info.max_trace_length, d_model=d_model),
@@ -55,31 +45,27 @@ class EventEmbeddings(nn.Module):
         )
         self.output_dim = d_model
 
-    def forward(
-        self, activities: torch.Tensor, resources: torch.Tensor, timestamps: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, events: EncodedEvents) -> torch.Tensor:
         """
         Args:
-            activities: Activity indices, `[batch_size, seq_len]`.
-            resources: Resource indices, `[batch_size, seq_len]`.
-            timestamps: Normalized time deltas, `[batch_size, seq_len]`.
+            events: The events to embed, `[batch_size, seq_len]` per field. This is the one
+                place the three are read apart, each having a table or a width of its own.
         Returns:
             The embedded events, `[batch_size, seq_len, d_model]`.
         """
-        # One vector per event: the two looked-up embeddings with the time delta glued on.
+        # Concatenate the three fields of each event into a single vector, then project to `d_model`.
         event = torch.cat(
             tensors=(
-                self.activity_embedding(activities),  # [batch_size, seq_len, activity_dim]
-                self.resource_embedding(resources),   # [batch_size, seq_len, resource_dim]
-                timestamps.unsqueeze(dim=-1),         # [batch_size, seq_len, 1]
+                self.activity_embedding(events.activities),  # [batch_size, seq_len, activity_dim]
+                self.resource_embedding(events.resources),   # [batch_size, seq_len, resource_dim]
+                events.time_deltas.unsqueeze(dim=-1),        # [batch_size, seq_len, 1]
             ),
             dim=-1,
         )  # [batch_size, seq_len, activity_dim + resource_dim + 1]
-
-        # The leading `seq_len` rows of the table, broadcast over the batch: position `i` of every
-        # sequence in the batch is the i-th event of that sequence.
-        positions = self.positional_encoding[: activities.size(dim=1)]  # [seq_len, d_model]
         content = self.projection(event) * self.content_scale  # [batch_size, seq_len, d_model]
+
+        # Add the fixed positional encoding to event vectors
+        positions = self.positional_encoding[: events.activities.size(dim=1)]  # [seq_len, d_model]
         return content + positions  # [batch_size, seq_len, d_model]
 
 

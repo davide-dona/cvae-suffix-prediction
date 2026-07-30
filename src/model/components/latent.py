@@ -38,8 +38,7 @@ class PriorNetwork(nn.Module):
 
     It occupies the position the fixed `N(0, I)` occupies in an unconditional VAE. The
     difference is that its mean and variance are produced from the prefix summary rather
-    than held constant, so drawing a latent is still drawing from a Gaussian, but from the
-    Gaussian this particular prefix implies.
+    than held constant. Drawing a latent is drawing from the Gaussian this particular prefix implies.
 
     Because the KL term measures the posterior against this distribution rather than against
     `N(0, I)`, whatever the prefix already determines costs nothing to encode, and z is left
