@@ -5,14 +5,23 @@ from torch import nn
 from src.configs.schema import DecoderConfig, LatentConfig
 from src.datasets.dataset import EncodedEvents
 from src.model.components.embeddings import EventEmbeddings
+from src.model.components.latent import LOGVAR_MIN, LOGVAR_MAX
 
 
 @dataclass
 class DecoderOutput:
-    """What the decoder predicts for every suffix position."""
-    activity_logits: torch.Tensor  # [batch_size, seq_len, num_activities]
-    resource_logits: torch.Tensor  # [batch_size, seq_len, num_resources]
-    time_deltas: torch.Tensor       # [batch_size, seq_len], in [0, 1] like the targets
+    """What the decoder predicts for every suffix position.
+
+    The time delta comes back as a distribution rather than a point: a mean and a
+    log-variance, which `loss.masked_gaussian_nll` reads as a Gaussian. That keeps the term a
+    log-likelihood in nats, the same units as the activity cross-entropy it is added to, and
+    lets the model widen the variance on a gap it cannot call instead of regressing towards
+    the middle of a distribution that has an automated follow-up at one end and an overnight
+    wait at the other.
+    """
+    activity_logits: torch.Tensor      # [batch_size, seq_len, num_activities]
+    time_delta_mean: torch.Tensor      # [batch_size, seq_len], in [0, 1] like the targets
+    time_delta_logvar: torch.Tensor    # [batch_size, seq_len]
 
 
 @dataclass
@@ -26,7 +35,6 @@ class GeneratedSuffix:
     `[batch_size, num_samples, steps]` from `TransformerCVAE.generate`.
     """
     activities: torch.Tensor  # [..., steps]
-    resources: torch.Tensor   # [..., steps]
     time_deltas: torch.Tensor  # [..., steps], in [0, 1] like the targets
     lengths: torch.Tensor     # [...], events emitted before EOT, or `steps` if EOT never came
 
@@ -43,6 +51,12 @@ class Decoder(nn.Module):
     row that summarizes it.
 
     z is added to every position of the decoder's input.
+
+    An event it writes is an activity and a time delta. The resource is not among them: which
+    clerk picks a case up next is close to unpredictable, and on bpic-2017 a resource head
+    scores no better than a first-order Markov chain while taking two thirds of the gradient.
+    The prefix encoder still reads resources, where they are free conditioning; only the
+    suffix side gives them up.
     """
 
     def __init__(
@@ -53,9 +67,8 @@ class Decoder(nn.Module):
         *,
         d_model: int,
         num_activities: int,
-        num_resources: int,
         sos_activity_index: int,
-        sos_resource_index: int,
+        pad_resource_index: int,
         eot_activity_index: int,
     ):
         super().__init__()
@@ -63,7 +76,7 @@ class Decoder(nn.Module):
         self.dropout = nn.Dropout(p=config.dropout)
         
         self.sos_activity_index = sos_activity_index
-        self.sos_resource_index = sos_resource_index
+        self.pad_resource_index = pad_resource_index
         self.eot_activity_index = eot_activity_index
 
         # Brings the latent up to the width of the residual stream it is added into.
@@ -84,20 +97,17 @@ class Decoder(nn.Module):
             norm=nn.LayerNorm(normalized_shape=d_model),
         )
 
-        # A trunk shared by the three heads, so the heads can be smaller and the model can be trained with a single loss.
+        # A trunk shared by both heads, so the heads can be smaller and the model can be trained with a single loss.
         self.shared_layer = nn.Sequential(
             nn.Linear(in_features=d_model, out_features=config.head_hidden_dim),
             nn.ReLU(),
             nn.Dropout(p=config.dropout),
         )
-        # One head per field of an event; the timestamp is a scalar, so its head is width 1.
+        # One head per field of an event; the timestamp is a Gaussian, so its head is width 2.
         self.activity_head = nn.Linear(
             in_features=config.head_hidden_dim, out_features=num_activities
         )
-        self.resource_head = nn.Linear(
-            in_features=config.head_hidden_dim, out_features=num_resources
-        )
-        self.time_delta_head = nn.Linear(in_features=config.head_hidden_dim, out_features=1)
+        self.time_delta_head = nn.Linear(in_features=config.head_hidden_dim, out_features=2)
 
     def forward(
         self,
@@ -121,8 +131,19 @@ class Decoder(nn.Module):
         """
         seq_len = decoder_input.activities.size(dim=1)
 
+        # The decoder is not allowed to read the channel it cannot write. Under teacher forcing
+        # the ground-truth resources are sitting in `decoder_input` for the taking, and
+        # `generate` has none to feed; blanking them here, in the one call both paths go
+        # through, is what keeps the two identical. PAD is the row `EventEmbeddings` holds at a
+        # fixed zero vector, so this contributes nothing and collects no gradient.
+        events = decoder_input._replace(
+            resources=torch.full_like(
+                input=decoder_input.resources, fill_value=self.pad_resource_index
+            )
+        )
+
         # z is broadcast over positions: the same latent added to every one of them.
-        target = self.embeddings(decoder_input) + self.latent_projection(z).unsqueeze(
+        target = self.embeddings(events) + self.latent_projection(z).unsqueeze(
             dim=1
         )  # [batch_size, seq_len, d_model]
 
@@ -147,11 +168,14 @@ class Decoder(nn.Module):
 
         # The trunk and the heads are position-wise, so one call serves the whole suffix.
         features = self.shared_layer(output)  # [batch_size, seq_len, head_hidden_dim]
+        time_delta = self.time_delta_head(features)  # [batch_size, seq_len, 2]
         return DecoderOutput(
             activity_logits=self.activity_head(features),
-            resource_logits=self.resource_head(features),
-            # Targets are min-max normalized into [0, 1], so the head is squashed to match.
-            time_deltas=self.time_delta_head(features).sigmoid().squeeze(dim=-1),
+            # Targets are min-max normalized into [0, 1], so the mean is squashed to match; the
+            # log-variance is a spread rather than a value and is left unsquashed, clamped only
+            # against the `exp` that turns an unbounded head into a NaN loss.
+            time_delta_mean=time_delta[..., 0].sigmoid(),
+            time_delta_logvar=time_delta[..., 1].clamp(min=LOGVAR_MIN, max=LOGVAR_MAX),
         )
 
     def generate(
@@ -188,7 +212,8 @@ class Decoder(nn.Module):
 
         # What the decoder reads. Position 0 is SOS with a timestamp of 0.0, exactly how
         # `SuffixDataset` builds the teacher-forced position 0; position `i` is filled in with
-        # the event predicted at step `i - 1`.
+        # the event predicted at step `i - 1`. The resource channel stays PAD throughout, which
+        # is what `forward` blanks it to on the teacher-forced path as well.
         input_activities = torch.full(
             size=(batch_size, max_steps),
             fill_value=self.sos_activity_index,
@@ -197,7 +222,7 @@ class Decoder(nn.Module):
         )
         input_resources = torch.full(
             size=(batch_size, max_steps),
-            fill_value=self.sos_resource_index,
+            fill_value=self.pad_resource_index,
             dtype=torch.long,
             device=z.device,
         )
@@ -205,7 +230,6 @@ class Decoder(nn.Module):
 
         # What it produced, which is the same events shifted one position earlier.
         generated_activities = torch.zeros_like(input=input_activities)
-        generated_resources = torch.zeros_like(input=input_resources)
         generated_time_deltas = torch.zeros_like(input=input_time_deltas)
 
         # A row that never emits EOT ran to the cap, so that is the length it keeps.
@@ -230,16 +254,15 @@ class Decoder(nn.Module):
             # Only the last position is new; the earlier ones just reproduce what is already
             # written, since the causal mask makes them independent of anything after them.
             activities = output.activity_logits[:, -1].argmax(dim=-1)  # [batch_size]
-            resources = output.resource_logits[:, -1].argmax(dim=-1)   # [batch_size]
-            time_deltas = output.time_deltas[:, -1]                      # [batch_size]
+            # The head describes a distribution; its mean is the delta to write down. The
+            # log-variance is the model's confidence in it, which nothing downstream reads yet.
+            time_deltas = output.time_delta_mean[:, -1]                  # [batch_size]
 
             generated_activities[:, position] = activities
-            generated_resources[:, position] = resources
             generated_time_deltas[:, position] = time_deltas
             # The last step has no next position to feed.
             if position + 1 < max_steps:
                 input_activities[:, position + 1] = activities
-                input_resources[:, position + 1] = resources
                 input_time_deltas[:, position + 1] = time_deltas
 
             # A suffix ends at its first EOT, so a later one cannot move the length back.
@@ -255,7 +278,6 @@ class Decoder(nn.Module):
 
         return GeneratedSuffix(
             activities=generated_activities[:, :steps_taken],  # [batch_size, steps]
-            resources=generated_resources[:, :steps_taken],
             time_deltas=generated_time_deltas[:, :steps_taken],
             lengths=lengths,
         )

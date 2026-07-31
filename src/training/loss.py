@@ -1,3 +1,4 @@
+import math
 from typing import Literal
 
 import torch
@@ -24,21 +25,32 @@ def real_event_mask(lengths: torch.Tensor, seq_len: int) -> torch.Tensor:
     return positions.unsqueeze(0) < lengths.unsqueeze(1)
 
 
-def masked_mse(predicted: torch.Tensor, target: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
-    """Summed squared error over the real positions of a padded batch.
+def masked_gaussian_nll(
+    mean: torch.Tensor,
+    logvar: torch.Tensor,
+    target: torch.Tensor,
+    mask: torch.Tensor,
+) -> torch.Tensor:
+    """Summed Gaussian negative log-likelihood over the marked positions of a padded batch.
 
-    Padding is excluded rather than zeroed, so how much a batch happens to be padded
-    cannot influence the gradient.
+    A likelihood rather than a squared error, so the term comes out in nats and can be added
+    to the activity cross-entropy without a weight to reconcile two different scales, which is
+    also what makes `reconstruction + kl_weight * kl` an ELBO rather than a sum of unlike
+    things. The variance is the model's own, so a position it cannot call costs it a wide
+    Gaussian instead of dragging the mean towards the middle of a bimodal gap.
 
     Args:
-        predicted: `[batch_size, seq_len]`.
-        target: `[batch_size, seq_len]`.
-        lengths: Real length per sequence, `[batch_size]`.
+        mean: Predicted mean per position, `[batch_size, seq_len]`.
+        logvar: Predicted log-variance per position, `[batch_size, seq_len]`.
+        target: The observed value, `[batch_size, seq_len]`.
+        mask: True where the position should be scored, `[batch_size, seq_len]`.
     Returns:
         A scalar.
     """
-    mask = real_event_mask(lengths, predicted.size(1))
-    return ((predicted - target) ** 2 * mask).sum()
+    nll = 0.5 * (
+        logvar + (target - mean) ** 2 / logvar.exp() + math.log(2.0 * math.pi)
+    )  # [batch_size, seq_len]
+    return (nll * mask).sum()
 
 
 def gaussian_kl(
@@ -114,17 +126,20 @@ def compute_loss(
         ignore_index=model.pad_activity_index,
         reduction='sum',
     )
-    resource_loss = F.cross_entropy(
-        output.decoder.resource_logits.transpose(1, 2),
-        batch.suffix.resources,
-        ignore_index=model.pad_resource_index,
-        reduction='sum',
-    )
-    time_delta_loss = masked_mse(
-        output.decoder.time_deltas, batch.suffix.time_deltas, batch.suffix_len
+    # EOT closes a suffix rather than being an event of it, so it carries no gap of its own and
+    # the padding leaves a 0.0 in its place. Scored, that would be a real position teaching the
+    # head to predict no time at all once every suffix.
+    timed_positions = real_event_mask(
+        batch.suffix_len, batch.suffix.activities.size(dim=1)
+    ) & (batch.suffix.activities != model.eot_activity_index)  # [batch_size, seq_len]
+    time_delta_loss = masked_gaussian_nll(
+        mean=output.decoder.time_delta_mean,
+        logvar=output.decoder.time_delta_logvar,
+        target=batch.suffix.time_deltas,
+        mask=timed_positions,
     )
 
-    reconstruction_loss = activity_loss + resource_loss + time_delta_loss
+    reconstruction_loss = activity_loss + time_delta_loss
 
     if output.posterior is None:
         # The prior path: nothing was encoded, so there is no divergence to charge for.
@@ -152,7 +167,6 @@ def compute_loss(
         reconstruction_loss=reconstruction_loss.item(),
         kl_loss=kl_loss.item(),
         activity_loss=activity_loss.item(),
-        resource_loss=resource_loss.item(),
         time_delta_loss=time_delta_loss.item(),
     )
     return total_loss / batch_size, metrics

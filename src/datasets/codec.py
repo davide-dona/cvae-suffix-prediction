@@ -18,7 +18,11 @@ from src.logs.keys import (
 
 
 class DecodedSuffix(NamedTuple):
-    """One suffix's raw values, decoded from indices and cut to its content length."""
+    """One suffix's raw values, decoded from indices and cut to its content length.
+
+    `resources` is empty for a suffix the model generated, which carries no resource channel
+    to decode.
+    """
     activities: list[str]
     resources: list[str]
     time_deltas_minutes: list[float]
@@ -26,23 +30,28 @@ class DecodedSuffix(NamedTuple):
 
 @dataclass(frozen=True)
 class EncodedSequence:
-    """One run of events, encoded to indices and normalized floats"""
+    """One run of events, encoded to indices and normalized floats.
+
+    `resources` is None for a sequence the model generated: an event it reads is an activity,
+    a resource and a time delta, but an event it writes is an activity and a time delta.
+    Anything read out of the log carries all three.
+    """
     activities: np.ndarray  # int64, shape [len]
-    resources: np.ndarray   # int64, shape [len(activities)]
     time_deltas: np.ndarray  # float32 in [0, 1], shape [len(activities)]
+    resources: np.ndarray | None = None  # int64, shape [len(activities)]
 
     def __len__(self) -> int:
         return len(self.activities)
 
     def __getitem__(self, cut: int | slice | tuple) -> "EncodedSequence":
-        """Index all three at once, however numpy would: `[k:]` to cut a trace in two, `[i]`
+        """Index every field at once, however numpy would: `[k:]` to cut a trace in two, `[i]`
         or `[i, j]` to pull one sequence out of a batch of them. numpy indexing returns
         views, so this copies nothing.
         """
         return EncodedSequence(
             activities=self.activities[cut],
-            resources=self.resources[cut],
             time_deltas=self.time_deltas[cut],
+            resources=None if self.resources is None else self.resources[cut],
         )
 
 
@@ -128,7 +137,8 @@ class Codec:
         `encode_events`, and so taking back the `EncodedSequence` that one returns.
 
         Args:
-            suffix: One suffix as the model holds it, `[seq_len]` per field.
+            suffix: One suffix as the model holds it, `[seq_len]` per field. A generated one
+                has no resource channel, and then neither does what comes back.
             length: How many events to keep; the cut is what drops the EOT a generation ended
                 on and the padding behind it, so what comes back holds events and nothing else.
 
@@ -137,7 +147,11 @@ class Codec:
         """
         return DecodedSuffix(
             activities=[self.index_to_activity[int(i)] for i in suffix.activities[:length]],
-            resources=[self.index_to_resource[int(i)] for i in suffix.resources[:length]],
+            resources=(
+                []
+                if suffix.resources is None
+                else [self.index_to_resource[int(i)] for i in suffix.resources[:length]]
+            ),
             time_deltas_minutes=self.denormalize_time(suffix.time_deltas[:length]).tolist(),
         )
 

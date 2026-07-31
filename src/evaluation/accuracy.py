@@ -24,8 +24,6 @@ class AccuracyMetrics:
     """
     activity_dls_mean: float
     activity_dls_best: float
-    resource_dls_mean: float
-    resource_dls_best: float
     remaining_time_ae_mean_minutes: float
     remaining_time_ae_best_minutes: float
     length_ae_mean: float
@@ -35,12 +33,10 @@ class AccuracyMetrics:
 
 @dataclass(frozen=True)
 class _PrefixAccuracy:
-    """The same eight numbers, for the samples of a single prefix."""
+    """The same six numbers, for the samples of a single prefix."""
     prefix_len: int
     activity_dls_mean: float
     activity_dls_best: float
-    resource_dls_mean: float
-    resource_dls_best: float
     remaining_time_ae_mean_minutes: float
     remaining_time_ae_best_minutes: float
     length_ae_mean: float
@@ -68,8 +64,6 @@ def accuracy_metrics(predictions: pd.DataFrame) -> AccuracyMetrics:
     return AccuracyMetrics(
         activity_dls_mean=_mean([p.activity_dls_mean for p in per_prefix]),
         activity_dls_best=_mean([p.activity_dls_best for p in per_prefix]),
-        resource_dls_mean=_mean([p.resource_dls_mean for p in per_prefix]),
-        resource_dls_best=_mean([p.resource_dls_best for p in per_prefix]),
         remaining_time_ae_mean_minutes=_mean([p.remaining_time_ae_mean_minutes for p in per_prefix]),
         remaining_time_ae_best_minutes=_mean([p.remaining_time_ae_best_minutes for p in per_prefix]),
         length_ae_mean=_mean([p.length_ae_mean for p in per_prefix]),
@@ -93,12 +87,10 @@ def _prefix_accuracy(samples: pd.DataFrame) -> _PrefixAccuracy:
     true_remaining = float(sum(truth.true_time_deltas_minutes))
 
     activity_dls: list[float] = []
-    resource_dls: list[float] = []
     remaining_time_ae: list[float] = []
     length_ae: list[float] = []
     for sample in samples.itertuples():
         activity_dls.append(sequence_similarity(sample.predicted_activities, truth.true_activities))
-        resource_dls.append(sequence_similarity(sample.predicted_resources, truth.true_resources))
         remaining_time_ae.append(
             abs(float(sum(sample.predicted_time_deltas_minutes)) - true_remaining)
         )
@@ -108,8 +100,6 @@ def _prefix_accuracy(samples: pd.DataFrame) -> _PrefixAccuracy:
         prefix_len=int(truth.prefix_len),
         activity_dls_mean=_mean(activity_dls),
         activity_dls_best=max(activity_dls),
-        resource_dls_mean=_mean(resource_dls),
-        resource_dls_best=max(resource_dls),
         remaining_time_ae_mean_minutes=_mean(remaining_time_ae),
         remaining_time_ae_best_minutes=min(remaining_time_ae),
         length_ae_mean=_mean(length_ae),

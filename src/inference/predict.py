@@ -31,7 +31,7 @@ def generate_predictions(
     device: torch.device,
 ) -> pd.DataFrame:
     """Generate `num_samples` suffixes for every prefix in `loader`, and return them as a DataFrame of `PredictionRow`s.
-    The model predictions are denormalized and decoded back into the original activity and resource values, so
+    The model predictions are denormalized and decoded back into the original activity values and minutes, so
     what comes out is comparable against the log itself.
     Args:
         model: The trained model, already on `device`.
@@ -72,13 +72,12 @@ def _batch_rows(
     # one of these is what picks a single suffix out of it.
     predicted_suffixes = EncodedSequence(
         activities=generated.activities.cpu().numpy(),  # [batch_size, num_samples, steps]
-        resources=generated.resources.cpu().numpy(),
         time_deltas=generated.time_deltas.cpu().numpy(),  # normalized, [0, 1]
     )
     true_suffixes = EncodedSequence(
         activities=batch.suffix.activities.cpu().numpy(),  # [batch_size, seq_len]
-        resources=batch.suffix.resources.cpu().numpy(),
         time_deltas=batch.suffix.time_deltas.cpu().numpy(),  # normalized, [0, 1]
+        resources=batch.suffix.resources.cpu().numpy(),
     )
 
     rows = []
@@ -101,7 +100,6 @@ def _batch_rows(
                     truncated=info.truncated,
                     sample_index=sample_index,
                     predicted_activities=predicted.activities,
-                    predicted_resources=predicted.resources,
                     predicted_time_deltas_minutes=predicted.time_deltas_minutes,
                     true_activities=ground_truth.activities,
                     true_resources=ground_truth.resources,

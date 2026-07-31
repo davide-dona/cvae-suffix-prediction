@@ -34,7 +34,10 @@ class TransformerCVAE(nn.Module):
         prefix summary      -> p(z | prefix)
         + suffix summary    -> q(z | prefix, suffix)      (training only)
         z ~ p(z | prefix)                                 (q(z | prefix, suffix) during training)
-        z, prefix_encoded, suffix -> activity/resource/timestamp predictions
+        z, prefix_encoded, suffix -> activity/timestamp predictions
+
+    An event the model reads is (activity, resource, time delta); an event it writes is
+    (activity, time delta). The resource is condition-only: see `Decoder`.
     """
 
     def __init__(self, config: ModelConfig, dataset_info: DatasetInfo):
@@ -66,13 +69,12 @@ class TransformerCVAE(nn.Module):
             embeddings=self.embeddings,
             d_model=config.d_model,
             num_activities=dataset_info.num_activities,
-            num_resources=dataset_info.num_resources,
             sos_activity_index=dataset_info.sos_activity_index,
-            sos_resource_index=dataset_info.sos_resource_index,
+            pad_resource_index=dataset_info.pad_resource_index,
             eot_activity_index=dataset_info.eot_activity_index,
         )
         self.pad_activity_index = dataset_info.pad_activity_index
-        self.pad_resource_index = dataset_info.pad_resource_index
+        self.eot_activity_index = dataset_info.eot_activity_index
 
     def forward(
         self,
@@ -179,7 +181,6 @@ class TransformerCVAE(nn.Module):
         batch_size = item.prefix_len.size(dim=0)
         return GeneratedSuffix(
             activities=generated.activities.view(batch_size, num_samples, -1),
-            resources=generated.resources.view(batch_size, num_samples, -1),
             time_deltas=generated.time_deltas.view(batch_size, num_samples, -1),
             lengths=generated.lengths.view(batch_size, num_samples),
         )
