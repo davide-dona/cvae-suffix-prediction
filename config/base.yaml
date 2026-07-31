@@ -2,75 +2,73 @@ seed: 42
 experiment_name: cvae_suffix_baseline
 output_dir: outputs
 
+# Denominated in optimizer steps, not epochs, so one value holds for every log; a dataset file
+# then needs nothing but its `data:` section.
 model:
+  # The size of the embedding space
+  d_model: 64
+
+  # Activity/resource lookup widths, concatenated with the time delta and projected to d_model.
   embeddings:
-    activity_dim: 32
+    activity_dim: 16
     resource_dim: 16
 
+  # Encodes the prefix; its CLS summary feeds both the prior and the decoder's cross-attention.
   prefix_encoder:
-    hidden_dim: 200  # per direction: the summary is twice this wide
-    num_layers: 1
-    dropout: 0.05
+    num_layers: 2
+    num_heads: 4
+    feedforward_dim: 256
+    dropout: 0.1
 
+  # Encodes the ground-truth suffix for the posterior, training only; shallower on purpose.
   suffix_encoder:
-    hidden_dim: 200
     num_layers: 1
-    dropout: 0.05
+    num_heads: 4
+    feedforward_dim: 256
+    dropout: 0.1
 
+  # MLP mapping the prefix summary to p(z|prefix), sampled from at inference.
   prior:
-    hidden_dims: [200]  # empty for a linear prior
-    dropout: 0.05
+    hidden_dims: [64]  # empty for a linear prior
+    dropout: 0.1
 
   latent:
-    latent_dim: 32
+    latent_dim: 16  # z only carries what the prefix leaves undetermined
 
-  attention:
-    dim: 200
-    dropout: 0.05
-
+  # Causal self-attention over the suffix, cross-attention over the encoded prefix.
   decoder:
-    hidden_dim: 200
-    num_layers: 1
-    dropout: 0.05
-    head_hidden_dim: 100
+    num_layers: 2
+    num_heads: 4
+    feedforward_dim: 256
+    dropout: 0.1
+    head_hidden_dim: 64
 
 loss:
-  kl_annealing_cycles: 8
-  kl_annealing_ratio: 0.5
+  # Cyclical weight ramp over training steps, held at full weight between ramps.
+  kl_annealing_cycles: 5
+  kl_annealing_ratio: 0.3
   kl_annealing_start_weight: 0.0
   kl_annealing_full_weight: 1.0
+  free_bits: 0.15  # nats/dimension floor below which KL is not penalized; keeps z from collapsing
 
 optimizer:
   lr: 0.0003
   weight_decay: 0.0
 
 training:
-  # An epoch is one pass over every (prefix, suffix) pair of the split, so a dataset of few
-  # long traces needs far fewer epochs than its trace count suggests. Each dataset overrides
-  # this with a budget of its own.
-  max_num_epochs: 1000
+  max_steps: 100000 
   grad_clip_norm: 5.0  # null to leave gradients unclipped
-  # "mps" is the Apple-silicon GPU. It beats "cpu" here, but only because the per-step decoder
-  # is launch-bound rather than compute-bound: the margin grows with the batch size, so a
-  # smaller batch than this one narrows it. A dataset file overrides this with "cuda" or "cpu".
-  device: mps
-  # A run's best epoch is kept under `best_model_dir` as the single file `<run name>.pt`,
-  # overwritten every time the validation loss improves.
-  best_model_dir: outputs/best-models
+  device: mps  # Apple-silicon GPU; ['cpu', 'cuda', 'mps']
+  best_model_dir: outputs/best-models  # one file per run, overwritten on improvement
   log_dir: outputs/tensorboard
-  val_every_n_epochs: 1
+  val_every_n_steps: 400 
+
+early_stopping:
+  patience: 20   # number of validation checks with no improvement after which training will be stopped
+  min_delta_perc: 0.005  # z is sampled, so that loss is noisy; keeps a plateau from resetting it
 
 inference:
-  # Every sample of a prefix is a row of its own in the decoder, so the batch it actually runs
-  # is `data.batch_size * num_samples`. The k suffixes of one prefix differ only in the latent
-  # drawn from p(z | prefix): the heads are read greedily, so what varies across them is what
-  # the model claims the prefix leaves undetermined.
+  # k suffixes per prefix differ only in z ~ p(z|prefix); heads are read greedily.
   num_samples: 10
   predictions_dir: outputs/predictions
 
-early_stopping:
-  # The counter only runs while the KL weight is at its full value and resets when it drops,
-  # so patience has to stay below the length of one full-weight stretch: with 8 cycles at
-  # ratio 0.5 that is `max_num_epochs / 16`.
-  patience: 50
-  min_delta_perc: 0.0

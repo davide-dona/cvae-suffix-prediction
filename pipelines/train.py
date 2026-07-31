@@ -9,7 +9,7 @@ from pipelines.preprocess import ensure_dataset
 from src.configs import DatasetInfo, ExperimentConfig, load_config
 from src.datasets.codec import Codec
 from src.datasets.dataset import SuffixDataset
-from src.model import AttentionCVAE, best_model_path, save_checkpoint
+from src.model import TransformerCVAE, best_model_path, save_checkpoint
 from src.training.train import train
 
 
@@ -51,7 +51,7 @@ def run(config: ExperimentConfig) -> None:
         f'validating on {len(val_loader.dataset)}'
     )
 
-    model = AttentionCVAE(config.model, dataset_info).to(config.training.device)
+    model = TransformerCVAE(config.model, dataset_info).to(config.training.device)
 
     # TensorBoard reads one directory as one run, so every run needs its own or their curves
     # are overlaid into a single unreadable one. The timestamp is what separates two runs of
@@ -62,29 +62,29 @@ def run(config: ExperimentConfig) -> None:
     # a config writes over the first one's epochs.
     run_name = f'{config.data.dir.name}/{config.experiment_name}-{datetime.now():%Y%m%d-%H%M%S}'
 
-    def save_best(epoch: int, val_loss: float) -> None:
+    def save_best(step: int, val_loss: float) -> None:
         """
-        Decorator for train()'s on_best_epoch callback, which saves the model to disk.
+        Decorator for train()'s on_best_step callback, which saves the model to disk.
         Defined here so it can access the config and model objects without passing them through train().
         Args:
-            epoch: The epoch number that just finished.
-            val_loss: The validation loss that just finished.
+            step: The optimizer step that just validated.
+            val_loss: The prior-path validation loss it reached.
         """
         path = save_checkpoint(
             model,
             model_config=config.model.model_dump(),
-            epoch=epoch,
+            step=step,
             val_loss=val_loss,
             path=best_model_path(config.training.best_model_dir, run_name),
         )
-        print(f'New best model (epoch {epoch}, val loss {val_loss:.4f}) saved at {path}')
+        print(f'New best model (step {step}, val loss {val_loss:.4f}) saved at {path}')
 
     train(
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,
         run_name=run_name,
-        on_best_epoch=save_best,
+        on_best_step=save_best,
         loss_config=config.loss,
         optimizer_config=config.optimizer,
         training=config.training,

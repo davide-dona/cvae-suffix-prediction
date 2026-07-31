@@ -1,4 +1,4 @@
-from src.model.attention_cvae import AttentionCVAE, AttentionCVAEOutput
+from src.model.transformer_cvae import TransformerCVAE, TransformerCVAEOutput
 from src.model.checkpoint import (
     best_model_path,
     build_model_from_checkpoint,
@@ -8,8 +8,8 @@ from src.model.checkpoint import (
 )
 
 __all__ = [
-    'AttentionCVAE',
-    'AttentionCVAEOutput',
+    'TransformerCVAE',
+    'TransformerCVAEOutput',
     'best_model_path',
     'build_model_from_checkpoint',
     'latest_best_model_path',

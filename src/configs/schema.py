@@ -65,15 +65,19 @@ class EmbeddingConfig(StrictModel):
 
 
 class TraceEncoderConfig(StrictModel):
-    """Bidirectional LSTM reading a sequence of events.
+    """Transformer encoder reading a sequence of events, every position attending over every other.
 
     Used twice, with its own values each time: once over the prefix, whose summary conditions
     both the prior and the decoder, and once over the ground-truth suffix, which is read on
     the training path only, to give the posterior something to encode.
+
+    The width is absent: an encoder reads the shared event embeddings and, for the prefix, is
+    read back by the decoder's cross-attention, so it runs at `ModelConfig.d_model`.
     """
 
-    hidden_dim: int = Field(..., gt=0, description="Per-direction hidden size; the summary is twice this wide")
     num_layers: int = Field(..., gt=0)
+    num_heads: int = Field(..., gt=0, description="Attention heads per layer; must divide `d_model`")
+    feedforward_dim: int = Field(..., gt=0, description="Width of the feed-forward block inside a layer")
     dropout: float = Field(..., ge=0.0, lt=1.0)
 
 
@@ -94,44 +98,76 @@ class LatentConfig(StrictModel):
     latent_dim: int = Field(..., gt=0)
 
 
-class AttentionConfig(StrictModel):
-    """Single-head scaled dot-product attention over the prefix and the suffix so far."""
-
-    dim: int = Field(..., gt=0, description="Shared width the prefix outputs and decoder states are projected to")
-    dropout: float = Field(..., ge=0.0, lt=1.0)
-
-
 class DecoderConfig(StrictModel):
-    hidden_dim: int = Field(..., gt=0)
+    """Transformer decoder writing the suffix: causal self-attention over the suffix so far,
+    cross-attention over the encoded prefix.
+
+    Like the encoders it runs at `ModelConfig.d_model`, which cross-attention over the prefix
+    requires of it anyway.
+    """
+
     num_layers: int = Field(..., gt=0)
+    num_heads: int = Field(..., gt=0, description="Attention heads per layer; must divide `d_model`")
+    feedforward_dim: int = Field(..., gt=0, description="Width of the feed-forward block inside a layer")
     dropout: float = Field(..., ge=0.0, lt=1.0)
     head_hidden_dim: int = Field(..., gt=0, description="Width of the layer shared by the three output heads")
 
 
 class ModelConfig(StrictModel):
-    """Every hyperparameter of `AttentionCVAE`.
+    """Every hyperparameter of `TransformerCVAE`.
 
     Dimensions derived from the data (vocabulary sizes, special-token indices, sequence
     length) are deliberately absent: they come from `DatasetInfo` at build time, so a
     config cannot disagree with the dataset it is trained on.
     """
 
+    d_model: int = Field(
+        ..., gt=0,
+        description="The one width the embeddings, both encoders and the decoder all run at. "
+        "Cross-attention makes the prefix encoder and the decoder agree on it, and the shared "
+        "event embeddings make the suffix encoder agree with them",
+    )
+
     embeddings: EmbeddingConfig
     prefix_encoder: TraceEncoderConfig
     suffix_encoder: TraceEncoderConfig
     prior: PriorConfig
     latent: LatentConfig
-    attention: AttentionConfig
     decoder: DecoderConfig
+
+    @model_validator(mode="after")
+    def _heads_divide_width(self) -> "ModelConfig":
+        # nn.MultiheadAttention asserts this when the layer is built, halfway through a run's
+        # setup. Checking it here turns a config mistake back into a config error.
+        for name in ("prefix_encoder", "suffix_encoder", "decoder"):
+            num_heads = getattr(self, name).num_heads
+            if self.d_model % num_heads != 0:
+                raise ValueError(
+                    f"model.{name}.num_heads ({num_heads}) must divide model.d_model ({self.d_model})"
+                )
+        return self
 
 
 class LossConfig(StrictModel):
-    """Parameters of the cyclical KL annealing schedule (see `training/annealing.py`)."""
+    """The KL term: how it is weighted over training, and how far it is allowed to fall.
+
+    The annealing schedule (see `training/annealing.py`) is measured in optimizer steps, not
+    epochs: an epoch is a different amount of learning on every log, so a schedule denominated
+    in epochs has to be re-derived per dataset, while one in steps means the same thing
+    everywhere.
+    """
 
     kl_annealing_cycles: int = Field(..., gt=0, description="Number of cycles to fit into training")
     kl_annealing_ratio: float = Field(..., gt=0.0, le=1.0, description="Fraction of each cycle spent ramping up")
     kl_annealing_start_weight: float = Field(..., ge=0.0, description="Weight each cycle ramps up from")
     kl_annealing_full_weight: float = Field(..., ge=0.0, description="Weight each cycle ramps up to, and holds at")
+    free_bits: float = Field(
+        ..., ge=0.0,
+        description="Nats per latent dimension the KL is not penalized below. Unlike the "
+        "annealing weight, which trades the KL off against a reconstruction sum that grows "
+        "with suffix length, this is a floor on the information z carries and so means the "
+        "same thing on every dataset. 0.0 leaves the KL unfloored",
+    )
 
 
 class OptimizerConfig(StrictModel):
@@ -140,14 +176,29 @@ class OptimizerConfig(StrictModel):
 
 
 class TrainingConfig(StrictModel):
-    max_num_epochs: int = Field(..., gt=0)
+    """How long a run goes on for, and how often it looks at the validation split.
+
+    Both are counted in optimizer steps rather than epochs. One epoch is 31 steps on sepsis
+    and 863 on traffic_fines, so an epoch-denominated budget silently means something
+    different on every log; a step is a step everywhere.
+    """
+
+    max_steps: int = Field(
+        ..., gt=0,
+        description="Ceiling on the optimizer steps a run takes. Early stopping is what "
+        "normally ends a run; this is what bounds one that never plateaus",
+    )
     grad_clip_norm: float | None = Field(
         None, gt=0.0, description="Max gradient norm; null or absent leaves gradients unclipped"
     )
     device: Literal["cpu", "cuda", "mps"]
-    best_model_dir: Path = Field(..., description="The best epoch of a run, one file per run")
+    best_model_dir: Path = Field(..., description="The best step of a run, one file per run")
     log_dir: Path = Field(..., description="TensorBoard event directory")
-    val_every_n_epochs: int = Field(..., gt=0)
+    val_every_n_steps: int = Field(
+        ..., gt=0,
+        description="Steps between validations. Also the unit `early_stopping.patience` "
+        "counts in, which is what makes that patience portable across datasets",
+    )
 
 
 class InferenceConfig(StrictModel):
@@ -170,11 +221,11 @@ class InferenceConfig(StrictModel):
 class EarlyStoppingConfig(StrictModel):
     """Stop training once the validation loss plateaus (see `training/early_stopping.py`).
 
-    Only epochs evaluating the full KL weight are compared, since earlier
-    epochs are not comparable to each other while the KL term is annealing.
+    What it watches is the prior-path validation loss, which carries no KL term and is
+    therefore comparable at every point of a run, whatever the annealing weight is doing.
     """
 
-    patience: int = Field(..., gt=0, description="Non-improving evaluations tolerated before stopping")
+    patience: int = Field(..., gt=0, description="Non-improving validations tolerated before stopping")
     min_delta_perc: float = Field(..., ge=0.0, description="Minimum relative improvement to reset the patience counter")
 
 

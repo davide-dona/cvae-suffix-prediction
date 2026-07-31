@@ -1,5 +1,4 @@
-from typing import Callable, Optional
-import numpy as np
+from typing import Callable, Literal
 import torch
 from torch import optim
 from torch.utils.data import DataLoader
@@ -11,69 +10,62 @@ from src.configs.schema import (
     OptimizerConfig,
     TrainingConfig,
 )
-from src.model import AttentionCVAE
-from src.training.annealing import cyclical_linear_weights
+from src.model import TransformerCVAE
+from src.training.annealing import cyclical_linear_weight, validate_schedule
 from src.training.early_stopping import EarlyStopper
 from src.training.loss import compute_loss
 from src.training.metrics import Metrics
 
+# The three namespaces a run logs under, in the order TensorBoard should overlay them.
+LOG_PREFIXES = ('train', 'val', 'val_prior')
 
-def run_epoch(
-    model: AttentionCVAE,
+
+@torch.no_grad()
+def evaluate(
+    model: TransformerCVAE,
     loader: DataLoader,
     *,
     kl_weight: float,
-    is_training: bool,
+    free_bits: float,
+    sample_from: Literal['posterior', 'prior'],
     device: torch.device,
-    optimizer: Optional[optim.Optimizer] = None,
-    grad_clip_norm: Optional[float] = None,
 ) -> Metrics:
     """
-    Run one pass over `loader`, either learning from it or just evaluating on it.
+    Run one pass over `loader` without learning from it.
 
     Args:
-        model: The model to train or evaluate.
+        model: The model to evaluate. Put in evaluation mode here, and left in it.
         loader: The dataloader to iterate over. Its batches are `SuffixItem`s.
-        kl_weight: The weight this epoch's KL term is given, passed straight through to
-            `compute_loss`.
-        is_training: Whether to backpropagate. When False the model is put in evaluation
-            mode and the gradients are not tracked.
+        kl_weight: The weight this step's KL term is given. Ignored on the prior path, which
+            has no KL term at all.
+        free_bits: Passed straight through to `compute_loss`.
+        sample_from: Which distribution z is drawn from. `'posterior'` reproduces the
+            training objective on held-out data; `'prior'` scores the path `generate` runs on
+            and is the one a run is judged by.
         device: The device to run the computations on.
-        optimizer: The optimizer to step. Required when `is_training`.
-        grad_clip_norm: Max gradient norm to clip to. Only applied when `is_training`.
     Returns:
         The metrics of the pass, averaged over the traces of the split.
     """
-    if is_training and optimizer is None:
-        raise ValueError('an optimizer is required to train')
-
-    model.train(is_training)
+    model.eval()
 
     totals = Metrics()
-    with torch.set_grad_enabled(is_training):
-        for batch in loader:
-            batch = batch.to(device)
-            loss, metrics = compute_loss(model, batch, kl_weight)
-            totals += metrics
-
-            # Backpropagate and step the optimizer if training
-            if is_training:
-                optimizer.zero_grad()
-                loss.backward()
-                if grad_clip_norm is not None:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
-                optimizer.step()
+    for batch in loader:
+        batch = batch.to(device)
+        _, metrics = compute_loss(
+            model, batch, kl_weight=kl_weight, free_bits=free_bits, sample_from=sample_from
+        )
+        totals += metrics
 
     return totals / len(loader.dataset)
 
 
 def train(
     *,
-    model: AttentionCVAE,
+    model: TransformerCVAE,
     train_loader: DataLoader,
     val_loader: DataLoader,
     run_name: str,
-    on_best_epoch: Callable[[int, float], None],
+    on_best_step: Callable[[int, float], None],
     loss_config: LossConfig,
     optimizer_config: OptimizerConfig,
     training: TrainingConfig,
@@ -82,25 +74,42 @@ def train(
     """
     Train a model on a dataset, logging to TensorBoard and saving checkpoints.
 
+    The unit throughout is the optimizer step, not the epoch: one pass over the training split
+    is 31 steps on sepsis and 863 on traffic_fines, so a budget, an annealing schedule or a
+    patience denominated in epochs means a different thing on every log. Passes over the
+    loader are made silently, one after another, until the step budget runs out.
+
+    Every validation runs the split twice. The posterior pass is the training objective
+    measured on held-out data, and its KL curve is where posterior collapse shows up. The
+    prior pass draws z from `p(z | prefix)`, which is what `generate` does, and so is the only
+    number that reflects how the model will actually be used; it also carries no KL term,
+    which is what makes it comparable across a run whatever the annealing weight is doing.
+    Early stopping and best-model selection therefore read that one.
+
     Every number a run produces goes to TensorBoard, which is the record of it; nothing is
-    returned. The console gets one line per epoch, so a run can be watched without opening
-    TensorBoard, plus the events TensorBoard cannot express.
+    returned. `train/*` is logged every step, raw and unaveraged, so instability is visible at
+    the step it happens rather than smoothed into whatever interval validation runs on;
+    `val/*` and `val_prior/*` are logged only at validation. The console gets one line per
+    validation, so a run can be watched without opening TensorBoard, plus the events
+    TensorBoard cannot express; its train figure is the interval average; TensorBoard has the
+    per-step one.
 
     Args:
         model: The model to train, already on `training.device`.
         train_loader: Batches to learn from.
-        val_loader: Batches to evaluate on, every `training.val_every_n_epochs` epochs.
+        val_loader: Batches to evaluate on, every `training.val_every_n_steps` steps.
         run_name: Subdirectory of `training.log_dir` this run writes its events to. One
             directory is one TensorBoard run, so a name reused across runs overlays their
             curves instead of listing them side by side; what makes it unique is the
             caller's business. A `/` in it nests the run, which is how TensorBoard groups
             runs under a common prefix.
-        on_best_epoch: Called with the epoch number and its validation loss whenever an
-            epoch improves on the best so far, so that saving a checkpoint stays the
+        on_best_step: Called with the step number and its prior-path validation loss whenever
+            a validation improves on the best so far, so that saving a checkpoint stays the
             caller's business.
-        loss_config: The KL annealing schedule.
+        loss_config: The KL annealing schedule and the free-bits floor.
         optimizer_config: The optimizer hyperparameters.
-        training: Epoch count, gradient clipping, device and the TensorBoard destination.
+        training: Step budget, validation cadence, gradient clipping, device and the
+            TensorBoard destination.
         early_stopping_config: When to give up.
     """
     device = torch.device(training.device)
@@ -109,86 +118,110 @@ def train(
     )
     early_stopper = EarlyStopper(early_stopping_config)
 
-    kl_weights = cyclical_linear_weights(
-        training.max_num_epochs,
+    # Raised before the first step rather than discovered from a run that never trained
+    # against the full KL term.
+    validate_schedule(
+        total_steps=training.max_steps,
         n_cycles=loss_config.kl_annealing_cycles,
         ratio=loss_config.kl_annealing_ratio,
-        start=loss_config.kl_annealing_start_weight,
         stop=loss_config.kl_annealing_full_weight,
     )
-    # While the weight is still ramping, a lower one makes an epoch look better for free, so
-    # only epochs that reached the full weight may be compared for early stopping and
-    # best-model selection.
-    is_comparable = np.isclose(kl_weights, loss_config.kl_annealing_full_weight)
 
     current_best_val_loss = float('inf')
-    last_epoch = 0
-    epoch_width = len(str(training.max_num_epochs))
+    step = 0
+    should_stop = False
+    step_width = len(str(training.max_steps))
+
+    # Accumulated between validations rather than over a pass, since a pass is no longer the
+    # unit anything is reported at. `seen` is what they are averaged by: the interval is a
+    # count of batches, not a whole split, and batches are not equal-sized.
+    interval_totals = Metrics()
+    seen = 0
 
     writer = SummaryWriter(log_dir=training.log_dir / run_name)
-    Metrics.log_layout(writer)
+    Metrics.log_layout(writer, prefixes=LOG_PREFIXES)
     print(f'Logging to {writer.log_dir}')
     try:
-        for epoch in range(training.max_num_epochs):
-            last_epoch = epoch
-            epoch_number = epoch + 1
-            epoch_kl_weight = float(kl_weights[epoch])
-            epoch_is_comparable = bool(is_comparable[epoch])
-
-            train_metrics = run_epoch(
-                model,
-                train_loader,
-                kl_weight=epoch_kl_weight,
-                is_training=True,
-                device=device,
-                optimizer=optimizer,
-                grad_clip_norm=training.grad_clip_norm,
-            )
-            # Log the metrics to TensorBoard
-            train_metrics.log(writer, epoch_number, prefix='train')
-            writer.add_scalar('kl_weight', epoch_kl_weight, epoch_number)
-
-            should_stop = False
-            val_loss = None
-            if epoch % training.val_every_n_epochs == 0:
-                val_metrics = run_epoch(
-                    model,
-                    val_loader,
-                    kl_weight=epoch_kl_weight,
-                    is_training=False,
-                    device=device,
+        while step < training.max_steps and not should_stop:
+            # Another pass over the training split. The loader reshuffles on each one, and
+            # nothing is reported at its boundaries.
+            for batch in train_loader:
+                model.train()
+                batch = batch.to(device)
+                kl_weight = cyclical_linear_weight(
+                    step,
+                    total_steps=training.max_steps,
+                    n_cycles=loss_config.kl_annealing_cycles,
+                    ratio=loss_config.kl_annealing_ratio,
+                    start=loss_config.kl_annealing_start_weight,
+                    stop=loss_config.kl_annealing_full_weight,
                 )
-                val_metrics.log(writer, epoch_number, prefix='val')
-                val_loss = val_metrics.loss
 
-            # The one line of live feedback: enough to see a run is alive and heading down,
-            # while TensorBoard stays the place the numbers are actually read. Printed before
-            # the best-model check so that its message lands under the epoch it belongs to.
-            print(
-                f'Epoch {epoch_number:>{epoch_width}}/{training.max_num_epochs}  '
-                f'kl {epoch_kl_weight:.2f}  train {train_metrics.loss:.4f}  '
-                f'val {"-" if val_loss is None else f"{val_loss:.4f}"}',
-                flush=True,
-            )
+                loss, metrics = compute_loss(
+                    model, batch, kl_weight=kl_weight, free_bits=loss_config.free_bits
+                )
+                optimizer.zero_grad()
+                loss.backward()
+                if training.grad_clip_norm is not None:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), training.grad_clip_norm)
+                optimizer.step()
 
-            if val_loss is not None:
-                # Only epochs evaluating the full loss function are comparable with each other,
-                # since a lower weight makes an epoch look better for free.
-                is_new_best = epoch_is_comparable and val_loss < current_best_val_loss
-                if is_new_best:
-                    current_best_val_loss = val_loss
-                    on_best_epoch(epoch_number, val_loss)
+                batch_size = batch.suffix.activities.size(0)
+                interval_totals += metrics
+                seen += batch_size
+                step += 1
 
-                should_stop = early_stopper.update(val_loss, epoch_is_comparable)
+                # Logged every step and unaveraged beyond the batch itself, so instability
+                # shows up immediately instead of being smoothed into the interval average
+                # below, which stays for the console line only.
+                (metrics / batch_size).log(writer, step, prefix='train')
 
-            if should_stop:
-                break
+                if step % training.val_every_n_steps == 0 or step >= training.max_steps:
+                    train_metrics = interval_totals / seen
+                    interval_totals, seen = Metrics(), 0
+
+                    # The objective, on held-out data: comparable to `train` above, and the
+                    # place the KL is visible at all.
+                    val_metrics = evaluate(
+                        model, val_loader, kl_weight=kl_weight,
+                        free_bits=loss_config.free_bits, sample_from='posterior', device=device,
+                    )
+                    # The path inference runs on, and the one a run is judged by.
+                    val_prior_metrics = evaluate(
+                        model, val_loader, kl_weight=kl_weight,
+                        free_bits=loss_config.free_bits, sample_from='prior', device=device,
+                    )
+
+                    val_metrics.log(writer, step, prefix='val')
+                    val_prior_metrics.log(writer, step, prefix='val_prior')
+                    writer.add_scalar('kl_weight', kl_weight, step)
+
+                    # The one line of live feedback: enough to see a run is alive and heading
+                    # down, while TensorBoard stays the place the numbers are actually read.
+                    # Printed before the best-model check so that its message lands under the
+                    # step it belongs to.
+                    print(
+                        f'Step {step:>{step_width}}/{training.max_steps}  '
+                        f'kl {kl_weight:.2f}  train {train_metrics.loss:.4f}  '
+                        f'val {val_metrics.loss:.4f}  '
+                        f'val_prior {val_prior_metrics.loss:.4f}',
+                        flush=True,
+                    )
+
+                    if val_prior_metrics.loss < current_best_val_loss:
+                        current_best_val_loss = val_prior_metrics.loss
+                        on_best_step(step, val_prior_metrics.loss)
+
+                    should_stop = early_stopper.update(val_prior_metrics.loss)
+
+                if should_stop or step >= training.max_steps:
+                    break
     finally:
         writer.close()
 
     reason = (
-        f'no validation improvement for {early_stopping_config.patience} epochs'
+        f'no validation improvement for {early_stopping_config.patience} validations'
         if should_stop
-        else 'reached max_num_epochs'
+        else 'reached max_steps'
     )
-    print(f'Finished training after {last_epoch + 1} epochs ({reason})')
+    print(f'Finished training after {step} steps ({reason})')

@@ -1,0 +1,44 @@
+data:
+  dir: data/bpic-2017
+
+  case_key: "case:concept:name"
+  activity_key: "concept:name"
+  resource_key: "org:resource"
+  timestamp_key: "time:timestamp"
+  label_key: "N/A"  # no case label in this log; rename target that does not exist, so a no-op
+
+  train_split: 0.65
+  val_split: 0.15
+  test_split: 0.2
+  max_seq_len: 95  # train-split p99 (longest case: 180)
+  condition_features:
+    - case:LoanGoal
+    - case:ApplicationType
+    - case:RequestedAmount
+  attribute_features:  # set only on the offer-subprocess events (~4% of rows), NaN elsewhere
+    - FirstWithdrawalAmount
+    - NumberOfTerms
+    - Accepted
+    - MonthlyCost
+    - Selected
+    - CreditScore
+    - OfferedAmount
+  time_clip_percentile: 99.0
+  batch_size: 256
+  num_workers: 0
+
+# Widest, longest-sequence, richest-vocab log in the suite; scaled up from base.yaml.
+model:
+  d_model: 128
+  embeddings:
+    resource_dim: 32  # 149 resources vs base's 25-50
+  prefix_encoder:
+    feedforward_dim: 512  # keep the 4x d_model ratio
+  suffix_encoder:
+    num_layers: 2  # base's 1 layer summarizes suffixes up to 95 events, not just ~40
+    feedforward_dim: 512
+  prior:
+    hidden_dims: [128]
+  decoder:
+    feedforward_dim: 512
+    head_hidden_dim: 128

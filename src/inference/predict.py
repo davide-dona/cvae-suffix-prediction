@@ -5,10 +5,10 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
-from src.datasets.codec import Codec
+from src.datasets.codec import Codec, EncodedSequence
 from src.datasets.dataset import SuffixDataset, SuffixItem
 from src.inference.prediction import PredictionRow
-from src.model import AttentionCVAE
+from src.model import TransformerCVAE
 from src.model.components.decoder import GeneratedSuffix
 
 
@@ -23,7 +23,7 @@ def predictions_path(predictions_dir: Union[str, Path], run_name: str) -> Path:
 
 
 def generate_predictions(
-    model: AttentionCVAE,
+    model: TransformerCVAE,
     loader: DataLoader,
     codec: Codec,
     *,
@@ -66,14 +66,20 @@ def _batch_rows(
     """Turn one batch of generated suffixes, and the ground truths they were generated against, into rows."""
     pair_indices = batch.pair_index.tolist()
     suffix_lengths = batch.suffix_len.cpu().numpy()
+    lengths = generated.lengths.cpu().numpy()  # [batch_size, num_samples]
 
-    predicted_activities = generated.activities.cpu().numpy()   # [batch_size, num_samples, steps]
-    predicted_resources = generated.resources.cpu().numpy()
-    predicted_timestamps = generated.timestamps.cpu().numpy()   # normalized, [0, 1]
-    lengths = generated.lengths.cpu().numpy()                   # [batch_size, num_samples]
-    true_activities = batch.suffix.activities.cpu().numpy()     # [batch_size, seq_len]
-    true_resources = batch.suffix.resources.cpu().numpy()
-    true_timestamps = batch.suffix.timestamps.cpu().numpy()     # normalized, [0, 1]
+    # The whole batch moved off the device once, in the shape `decode_suffix` reads: indexing
+    # one of these is what picks a single suffix out of it.
+    predicted_suffixes = EncodedSequence(
+        activities=generated.activities.cpu().numpy(),  # [batch_size, num_samples, steps]
+        resources=generated.resources.cpu().numpy(),
+        time_deltas=generated.time_deltas.cpu().numpy(),  # normalized, [0, 1]
+    )
+    true_suffixes = EncodedSequence(
+        activities=batch.suffix.activities.cpu().numpy(),  # [batch_size, seq_len]
+        resources=batch.suffix.resources.cpu().numpy(),
+        time_deltas=batch.suffix.time_deltas.cpu().numpy(),  # normalized, [0, 1]
+    )
 
     rows = []
     for position, pair_index in enumerate(pair_indices):
@@ -81,26 +87,19 @@ def _batch_rows(
         # `suffix_len` counts the EOT token that closes a complete suffix, which is a marker
         # and not an event of the log. A truncated case has none to drop.
         content_len = suffix_lengths[position] - (0 if info.truncated else 1)
-        ground_truth = codec.decode_suffix(
-            true_activities[position],
-            true_resources[position],
-            true_timestamps[position],
-            length=content_len,
-        )
+        ground_truth = codec.decode_suffix(true_suffixes[position], length=content_len)
 
-        for sample in range(lengths.shape[1]):
+        for sample_index in range(lengths.shape[1]):
             predicted = codec.decode_suffix(
-                predicted_activities[position, sample],
-                predicted_resources[position, sample],
-                predicted_timestamps[position, sample],
-                length=lengths[position, sample],
+                predicted_suffixes[position, sample_index],
+                length=lengths[position, sample_index],
             )
             rows.append(
                 PredictionRow(
                     case_id=info.case_id,
                     prefix_len=info.prefix_len,
                     truncated=info.truncated,
-                    sample=sample,
+                    sample_index=sample_index,
                     predicted_activities=predicted.activities,
                     predicted_resources=predicted.resources,
                     predicted_time_deltas_minutes=predicted.time_deltas_minutes,
