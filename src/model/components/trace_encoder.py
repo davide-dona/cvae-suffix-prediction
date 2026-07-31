@@ -36,7 +36,7 @@ class TraceEncoder(nn.Module):
         self,
         activities: torch.Tensor,
         resources: torch.Tensor,
-        timestamps: torch.Tensor,
+        time_deltas: torch.Tensor,
         lengths: torch.Tensor,
     ) -> tuple[PackedSequence, torch.Tensor]:
         """Run the LSTM over a padded batch, in the packed form it produces.
@@ -45,14 +45,14 @@ class TraceEncoder(nn.Module):
         they go on to materialize the per-step outputs.
 
         Args:
-            activities, resources, timestamps: The events to read, `[batch_size, seq_len]` each.
+            activities, resources, time_deltas: The events to read, `[batch_size, seq_len]` each.
             lengths: Number of real events per sequence, `[batch_size]`.
         Returns:
             The packed per-step outputs, and the sequence summary `[batch_size, output_dim]`.
         """
         # One vector per event, then dropout so the LSTM cannot lean on a single feature.
         embedded = self.dropout(
-            self.embeddings(activities=activities, resources=resources, timestamps=timestamps)
+            self.embeddings(activities=activities, resources=resources, time_deltas=time_deltas)
         )  # [batch_size, seq_len, embeddings.output_dim]
 
         # Packing hides the padding from the LSTM: a padded step never updates the state, and
@@ -74,7 +74,7 @@ class TraceEncoder(nn.Module):
         self,
         activities: torch.Tensor,
         resources: torch.Tensor,
-        timestamps: torch.Tensor,
+        time_deltas: torch.Tensor,
         lengths: torch.Tensor,
     ) -> torch.Tensor:
         """Read a sequence for its summary alone.
@@ -85,24 +85,24 @@ class TraceEncoder(nn.Module):
         to be dropped. That is the suffix encoder's whole use, and it runs once per batch.
 
         Args:
-            activities, resources, timestamps: The events to read, `[batch_size, seq_len]` each.
+            activities, resources, time_deltas: The events to read, `[batch_size, seq_len]` each.
             lengths: Number of real events per sequence, `[batch_size]`.
         Returns:
             The sequence summary, `[batch_size, output_dim]`.
         """
-        _, summary = self._read(activities, resources, timestamps, lengths)
+        _, summary = self._read(activities, resources, time_deltas, lengths)
         return summary
 
     def forward(
         self,
         activities: torch.Tensor,
         resources: torch.Tensor,
-        timestamps: torch.Tensor,
+        time_deltas: torch.Tensor,
         lengths: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
-            activities, resources, timestamps: The events to read, `[batch_size, seq_len]` each.
+            activities, resources, time_deltas: The events to read, `[batch_size, seq_len]` each.
             lengths: Number of real events per sequence, `[batch_size]`.
         Returns:
             The per-step outputs `[batch_size, seq_len, output_dim]` (padded positions are
@@ -111,7 +111,7 @@ class TraceEncoder(nn.Module):
         # The padded length, kept so unpacking restores exactly the shape that came in.
         seq_len = activities.size(dim=1)
 
-        packed_outputs, summary = self._read(activities, resources, timestamps, lengths)
+        packed_outputs, summary = self._read(activities, resources, time_deltas, lengths)
         # Unpacking puts the rectangular shape back, with padded steps zeroed.
         outputs, _ = pad_packed_sequence(
             sequence=packed_outputs, batch_first=True, total_length=seq_len

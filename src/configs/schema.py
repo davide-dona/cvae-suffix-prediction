@@ -126,12 +126,25 @@ class ModelConfig(StrictModel):
 
 
 class LossConfig(StrictModel):
-    """Parameters of the cyclical KL annealing schedule (see `training/annealing.py`)."""
+    """The KL term: how it is weighted over training, and how far it is allowed to fall.
+
+    The annealing schedule (see `training/annealing.py`) is measured in optimizer steps, not
+    epochs: an epoch is a different amount of learning on every log, so a schedule denominated
+    in epochs has to be re-derived per dataset, while one in steps means the same thing
+    everywhere.
+    """
 
     kl_annealing_cycles: int = Field(..., gt=0, description="Number of cycles to fit into training")
     kl_annealing_ratio: float = Field(..., gt=0.0, le=1.0, description="Fraction of each cycle spent ramping up")
     kl_annealing_start_weight: float = Field(..., ge=0.0, description="Weight each cycle ramps up from")
     kl_annealing_full_weight: float = Field(..., ge=0.0, description="Weight each cycle ramps up to, and holds at")
+    free_bits: float = Field(
+        ..., ge=0.0,
+        description="Nats per latent dimension the KL is not penalized below. Unlike the "
+        "annealing weight, which trades the KL off against a reconstruction sum that grows "
+        "with suffix length, this is a floor on the information z carries and so means the "
+        "same thing on every dataset. 0.0 leaves the KL unfloored",
+    )
 
 
 class OptimizerConfig(StrictModel):
@@ -140,14 +153,29 @@ class OptimizerConfig(StrictModel):
 
 
 class TrainingConfig(StrictModel):
-    max_num_epochs: int = Field(..., gt=0)
+    """How long a run goes on for, and how often it looks at the validation split.
+
+    Both are counted in optimizer steps rather than epochs. One epoch is 31 steps on sepsis
+    and 863 on traffic_fines, so an epoch-denominated budget silently means something
+    different on every log; a step is a step everywhere.
+    """
+
+    max_steps: int = Field(
+        ..., gt=0,
+        description="Ceiling on the optimizer steps a run takes. Early stopping is what "
+        "normally ends a run; this is what bounds one that never plateaus",
+    )
     grad_clip_norm: float | None = Field(
         None, gt=0.0, description="Max gradient norm; null or absent leaves gradients unclipped"
     )
     device: Literal["cpu", "cuda", "mps"]
-    best_model_dir: Path = Field(..., description="The best epoch of a run, one file per run")
+    best_model_dir: Path = Field(..., description="The best step of a run, one file per run")
     log_dir: Path = Field(..., description="TensorBoard event directory")
-    val_every_n_epochs: int = Field(..., gt=0)
+    val_every_n_steps: int = Field(
+        ..., gt=0,
+        description="Steps between validations. Also the unit `early_stopping.patience` "
+        "counts in, which is what makes that patience portable across datasets",
+    )
 
 
 class InferenceConfig(StrictModel):
@@ -170,11 +198,11 @@ class InferenceConfig(StrictModel):
 class EarlyStoppingConfig(StrictModel):
     """Stop training once the validation loss plateaus (see `training/early_stopping.py`).
 
-    Only epochs evaluating the full KL weight are compared, since earlier
-    epochs are not comparable to each other while the KL term is annealing.
+    What it watches is the prior-path validation loss, which carries no KL term and is
+    therefore comparable at every point of a run, whatever the annealing weight is doing.
     """
 
-    patience: int = Field(..., gt=0, description="Non-improving evaluations tolerated before stopping")
+    patience: int = Field(..., gt=0, description="Non-improving validations tolerated before stopping")
     min_delta_perc: float = Field(..., ge=0.0, description="Minimum relative improvement to reset the patience counter")
 
 

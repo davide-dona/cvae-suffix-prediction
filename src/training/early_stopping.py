@@ -4,8 +4,11 @@ from src.configs.schema import EarlyStoppingConfig
 class EarlyStopper:
     """
     Stop training once its validation loss has stopped improving.
-    Only epochs the caller marks comparable are counted: while the KL weight is still
-    ramping, the validation loss is not comparable from one epoch to the next.
+
+    Every validation counts. What it is handed is the prior-path loss, which carries no KL
+    term and so does not move with the annealing weight, meaning any two validations of a run
+    are comparable with each other.
+
     Parameters:
         config: Early stopping configuration.
     """
@@ -16,13 +19,8 @@ class EarlyStopper:
         self.counter = 0
         self.min_validation_loss = float('inf')
 
-    def update(self, val_loss: float, comparable: bool) -> bool:
-        """Record one epoch's validation result and report whether training should stop."""
-        # An epoch whose loss cannot be compared tells us nothing about a plateau
-        if not comparable:
-            self.counter = 0
-            return False
-
+    def update(self, val_loss: float) -> bool:
+        """Record one validation result and report whether training should stop."""
         # If the validation loss has improved, reset the counter and update the minimum
         if val_loss < self.min_validation_loss:
             self.min_validation_loss = val_loss

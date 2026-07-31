@@ -1,11 +1,11 @@
 from .codec import Codec, DecodedSuffix, EncodedSequence
-from .dataset import PaddedEvents, SuffixDataset, SuffixItem
+from .dataset import EncodedEvents, SuffixDataset, SuffixItem
 
 __all__ = [
     "Codec",
     "DecodedSuffix",
     "EncodedSequence",
-    "PaddedEvents",
+    "EncodedEvents",
     "SuffixDataset",
     "SuffixItem",
 ]

@@ -11,19 +11,23 @@ from src.datasets.codec import Codec, EncodedSequence
 from src.logs.keys import EVENT_DELTA_KEY, ACTIVITY_KEY, CASE_KEY, RESOURCE_KEY
 
 
-class PaddedEvents(NamedTuple):
-    """One sequence of events, encoded and padded to `max_trace_length`: a prefix or suffix
-    cut from a case, or the teacher-forced decoder inputs for a suffix.
+class EncodedEvents(NamedTuple):
+    """One sequence of events as the model reads it: vocabulary indices and normalized time
+    deltas, padded to `max_trace_length`. A prefix or suffix cut from a case, or the
+    teacher-forced decoder inputs for a suffix.
+
+    The same three fields as `codec.EncodedSequence`, one stage on: those are numpy arrays of
+    one trace's real length, these are the padded tensors a batch is collated from.
     """
     activities: torch.Tensor  # int64, [max_trace_length] per item, [batch_size, max_trace_length] batched
     resources: torch.Tensor
-    timestamps: torch.Tensor  # float32 in [0, 1]
+    time_deltas: torch.Tensor  # float32 in [0, 1]
 
-    def to(self, device: torch.device) -> "PaddedEvents":
-        return PaddedEvents(
+    def to(self, device: torch.device) -> "EncodedEvents":
+        return EncodedEvents(
             activities=self.activities.to(device),
             resources=self.resources.to(device),
-            timestamps=self.timestamps.to(device),
+            time_deltas=self.time_deltas.to(device),
         )
 
 
@@ -33,13 +37,13 @@ class SuffixItem(NamedTuple):
     """
     pair_index: torch.Tensor      # which pair of the dataset this is; used to trace a prediction back to its case and cut point
     
-    prefix: PaddedEvents          # the condition: the events before the cut, no EOT
+    prefix: EncodedEvents          # the condition: the events before the cut, no EOT
     prefix_len: torch.Tensor      # real events in `prefix`, the rest being padding
     
-    suffix: PaddedEvents          # what the decoder must produce: content, EOT, then padding
+    suffix: EncodedEvents          # what the decoder must produce: content, EOT, then padding
     suffix_len: torch.Tensor      # real positions in `suffix`, EOT included where there is one
     
-    decoder_input: PaddedEvents   # `suffix` shifted one step behind SOS, for teacher forcing
+    decoder_input: EncodedEvents   # `suffix` shifted one step behind SOS, for teacher forcing
 
     def to(self, device: torch.device) -> "SuffixItem":
         """Move a whole batch in one call"""
@@ -145,28 +149,28 @@ class SuffixDataset(Dataset):
         trace, k = self._get_pair(i)
         return PairInfo(case_id=trace.case_id, prefix_len=k, truncated=trace.truncated)
 
-    def _pad(self, events: EncodedSequence) -> PaddedEvents:
+    def _pad(self, events: EncodedSequence) -> EncodedEvents:
         """Copy a run of events into tensors of `max_trace_length`, padding what it leaves over with PAD."""
         length = len(events)
 
-        # Initialize tensors filled with PAD indices for activities and resources, and zeros for timestamps.
+        # Initialize tensors filled with PAD indices for activities and resources, and zeros for the deltas.
         activities = torch.full(
             size=(self.max_len,), fill_value=self._codec.pad_activity_index, dtype=torch.long
         )
         resources = torch.full(
             size=(self.max_len,), fill_value=self._codec.pad_resource_index, dtype=torch.long
         )
-        timestamps = torch.zeros(size=(self.max_len,), dtype=torch.float32)
+        time_deltas = torch.zeros(size=(self.max_len,), dtype=torch.float32)
 
         # Copy the actual events into the beginning of the tensors, leaving the rest as PAD/zeros.
         activities[:length] = torch.from_numpy(events.activities)
         resources[:length] = torch.from_numpy(events.resources)
-        timestamps[:length] = torch.from_numpy(events.timestamps)
-        return PaddedEvents(activities=activities, resources=resources, timestamps=timestamps)
+        time_deltas[:length] = torch.from_numpy(events.time_deltas)
+        return EncodedEvents(activities=activities, resources=resources, time_deltas=time_deltas)
 
     def _encode_suffix(
         self, suffix: EncodedSequence, truncated: bool
-    ) -> tuple[PaddedEvents, PaddedEvents, torch.Tensor]:
+    ) -> tuple[EncodedEvents, EncodedEvents, torch.Tensor]:
         """Encode the events from the cut on as the padded suffix (content, EOT, PAD), plus the
         teacher-forced decoder inputs, which are that suffix shifted one step right behind a
         SOS token.
@@ -191,7 +195,7 @@ class SuffixDataset(Dataset):
 
         # Positions past `suffix_len` are masked out of the loss, so whatever the shift
         # leaves there does not matter.
-        decoder_input = PaddedEvents(
+        decoder_input = EncodedEvents(
             activities=torch.cat(tensors=(
                 torch.tensor(data=[self._codec.sos_activity_index], dtype=torch.long),
                 padded_suffix.activities[:-1],
@@ -200,8 +204,8 @@ class SuffixDataset(Dataset):
                 torch.tensor(data=[self._codec.sos_resource_index], dtype=torch.long),
                 padded_suffix.resources[:-1],
             )),
-            timestamps=torch.cat(
-                tensors=(torch.zeros(size=(1,), dtype=torch.float32), padded_suffix.timestamps[:-1])
+            time_deltas=torch.cat(
+                tensors=(torch.zeros(size=(1,), dtype=torch.float32), padded_suffix.time_deltas[:-1])
             ),
         )
 
@@ -233,7 +237,7 @@ def _group_traces(split_dataset: pd.DataFrame, max_content_len: int, codec: Code
                 events=EncodedSequence(
                     activities=encoded.activities[positions],
                     resources=encoded.resources[positions],
-                    timestamps=encoded.timestamps[positions],
+                    time_deltas=encoded.time_deltas[positions],
                 ),
             )
         )

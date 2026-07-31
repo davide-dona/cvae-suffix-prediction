@@ -1,0 +1,28 @@
+data:
+  dir: data/bpic-2017
+
+  case_key: "case:concept:name"
+  activity_key: "concept:name"
+  resource_key: "org:resource"
+  timestamp_key: "time:timestamp"
+  label_key: "N/A"  # no case label in this log; rename target that does not exist, so a no-op
+
+  train_split: 0.65
+  val_split: 0.15
+  test_split: 0.2
+  max_seq_len: 95  # train-split p99 (longest case: 180)
+  condition_features:
+    - case:LoanGoal
+    - case:ApplicationType
+    - case:RequestedAmount
+  attribute_features:  # set only on the offer-subprocess events (~4% of rows), NaN elsewhere
+    - FirstWithdrawalAmount
+    - NumberOfTerms
+    - Accepted
+    - MonthlyCost
+    - Selected
+    - CreditScore
+    - OfferedAmount
+  time_clip_percentile: 99.0
+  batch_size: 256
+  num_workers: 0

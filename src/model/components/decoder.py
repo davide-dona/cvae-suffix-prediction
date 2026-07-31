@@ -3,7 +3,7 @@ import torch
 from torch import nn
 
 from src.configs.schema import AttentionConfig, DecoderConfig, LatentConfig
-from src.datasets.dataset import PaddedEvents
+from src.datasets.dataset import EncodedEvents
 from src.model.components.attention import PrefixSuffixAttention
 from src.model.components.embeddings import EventEmbeddings
 
@@ -13,7 +13,7 @@ class DecoderOutput:
     """What the decoder predicts for every suffix position."""
     activity_logits: torch.Tensor  # [batch_size, seq_len, num_activities]
     resource_logits: torch.Tensor  # [batch_size, seq_len, num_resources]
-    timestamps: torch.Tensor       # [batch_size, seq_len], in [0, 1] like the targets
+    time_deltas: torch.Tensor       # [batch_size, seq_len], in [0, 1] like the targets
 
 
 @dataclass
@@ -28,7 +28,7 @@ class GeneratedSuffix:
     """
     activities: torch.Tensor  # [..., steps]
     resources: torch.Tensor   # [..., steps]
-    timestamps: torch.Tensor  # [..., steps], in [0, 1] like the targets
+    time_deltas: torch.Tensor  # [..., steps], in [0, 1] like the targets
     lengths: torch.Tensor     # [...], events emitted before EOT, or `steps` if EOT never came
 
 
@@ -112,14 +112,14 @@ class Decoder(nn.Module):
             nn.ReLU(),
             nn.Dropout(p=config.dropout),
         )
-        # One head per field of an event; the timestamp is a scalar, so its head is width 1.
+        # One head per field of an event; the time_delta is a scalar, so its head is width 1.
         self.activity_head = nn.Linear(
             in_features=config.head_hidden_dim, out_features=num_activities
         )
         self.resource_head = nn.Linear(
             in_features=config.head_hidden_dim, out_features=num_resources
         )
-        self.timestamp_head = nn.Linear(in_features=config.head_hidden_dim, out_features=1)
+        self.time_delta_head = nn.Linear(in_features=config.head_hidden_dim, out_features=1)
 
     def initial_state(self, z: torch.Tensor, prefix_summary: torch.Tensor) -> DecoderState:
         """Open the recurrence for a batch of prefixes.
@@ -251,12 +251,12 @@ class Decoder(nn.Module):
             activity_logits=self.activity_head(features),
             resource_logits=self.resource_head(features),
             # Targets are min-max normalized into [0, 1], so the head is squashed to match.
-            timestamps=self.timestamp_head(features).sigmoid().squeeze(dim=-1),
+            time_deltas=self.time_delta_head(features).sigmoid().squeeze(dim=-1),
         )
 
     def forward(
         self,
-        decoder_input: PaddedEvents,
+        decoder_input: EncodedEvents,
         prefix_len: torch.Tensor,
         z: torch.Tensor,
         prefix_outputs: torch.Tensor,
@@ -280,7 +280,7 @@ class Decoder(nn.Module):
         embedded = self.embeddings(
             activities=decoder_input.activities,
             resources=decoder_input.resources,
-            timestamps=decoder_input.timestamps,
+            time_deltas=decoder_input.time_deltas,
         )  # [batch_size, seq_len, embeddings.output_dim]
 
         prefix_memory, prefix_pad_mask = self._prepare_prefix(
@@ -344,14 +344,14 @@ class Decoder(nn.Module):
         state = self.initial_state(z=z, prefix_summary=prefix_summary)
 
         # The first step reads SOS, exactly as the teacher-forced inputs open on it. Its
-        # timestamp is 0.0, matching how `SuffixDataset` builds that position.
+        # time_delta is 0.0, matching how `SuffixDataset` builds that position.
         activities = torch.full(
             size=(batch_size,), fill_value=self.sos_activity_index, dtype=torch.long, device=z.device
         )
         resources = torch.full(
             size=(batch_size,), fill_value=self.sos_resource_index, dtype=torch.long, device=z.device
         )
-        timestamps = z.new_zeros(size=(batch_size,))
+        time_deltas = z.new_zeros(size=(batch_size,))
 
         # A row that never emits EOT ran to the cap, so that is the length it keeps.
         lengths = torch.full(
@@ -359,11 +359,11 @@ class Decoder(nn.Module):
         )
         finished = torch.zeros(size=(batch_size,), dtype=torch.bool, device=z.device)
 
-        generated_activities, generated_resources, generated_timestamps = [], [], []
+        generated_activities, generated_resources, generated_time_deltas = [], [], []
         for position in range(max_steps):
             representation, state = self.step(
                 embedded_event=self.embeddings(
-                    activities=activities, resources=resources, timestamps=timestamps
+                    activities=activities, resources=resources, time_deltas=time_deltas
                 ),
                 z=z,
                 state=state,
@@ -376,11 +376,11 @@ class Decoder(nn.Module):
 
             activities = prediction.activity_logits.argmax(dim=-1)  # [batch_size]
             resources = prediction.resource_logits.argmax(dim=-1)   # [batch_size]
-            timestamps = prediction.timestamps                      # [batch_size]
+            time_deltas = prediction.time_deltas                      # [batch_size]
 
             generated_activities.append(activities)
             generated_resources.append(resources)
-            generated_timestamps.append(timestamps)
+            generated_time_deltas.append(time_deltas)
 
             # A suffix ends at its first EOT, so a later one cannot move the length back.
             just_finished = ~finished & (activities == self.eot_activity_index)
@@ -395,6 +395,6 @@ class Decoder(nn.Module):
         return GeneratedSuffix(
             activities=torch.stack(tensors=generated_activities, dim=1),  # [batch_size, steps]
             resources=torch.stack(tensors=generated_resources, dim=1),
-            timestamps=torch.stack(tensors=generated_timestamps, dim=1),
+            time_deltas=torch.stack(tensors=generated_time_deltas, dim=1),
             lengths=lengths,
         )

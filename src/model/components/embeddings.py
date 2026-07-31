@@ -31,13 +31,13 @@ class EventEmbeddings(nn.Module):
         self.output_dim = config.activity_dim + config.resource_dim + 1
 
     def forward(
-        self, activities: torch.Tensor, resources: torch.Tensor, timestamps: torch.Tensor
+        self, activities: torch.Tensor, resources: torch.Tensor, time_deltas: torch.Tensor
     ) -> torch.Tensor:
         """
         Args:
             activities: Activity indices, `[batch_size, seq_len]`.
             resources: Resource indices, `[batch_size, seq_len]`.
-            timestamps: Normalized time deltas, `[batch_size, seq_len]`.
+            time_deltas: Normalized time deltas, `[batch_size, seq_len]`.
         Returns:
             The embedded events, `[batch_size, seq_len, output_dim]`.
         """
@@ -46,7 +46,7 @@ class EventEmbeddings(nn.Module):
             tensors=(
                 self.activity_embedding(activities),  # [batch_size, seq_len, activity_dim]
                 self.resource_embedding(resources),   # [batch_size, seq_len, resource_dim]
-                timestamps.unsqueeze(dim=-1),         # [batch_size, seq_len, 1]
+                time_deltas.unsqueeze(dim=-1),        # [batch_size, seq_len, 1]
             ),
             dim=-1,
         )  # [batch_size, seq_len, output_dim]

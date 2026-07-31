@@ -37,7 +37,7 @@ class AttentionCVAE(nn.Module):
         prefix_summary      -> p(z | prefix)
         + suffix_summary    -> q(z | prefix, suffix)      (training only)
         z ~ p(z | prefix)                                 (q(z | prefix, suffix) during training)
-        z, prefix_*, suffix -> activity/resource/timestamp predictions
+        z, prefix_*, suffix -> activity/resource/time_delta predictions
     """
 
     def __init__(self, config: ModelConfig, dataset_info: DatasetInfo):
@@ -98,7 +98,7 @@ class AttentionCVAE(nn.Module):
         prefix_outputs, prefix_summary = self.prefix_encoder(
             activities=item.prefix.activities,
             resources=item.prefix.resources,
-            timestamps=item.prefix.timestamps,
+            time_deltas=item.prefix.time_deltas,
             lengths=item.prefix_len,
         )  # [batch_size, seq_len, prefix_dim], [batch_size, prefix_dim]
 
@@ -113,7 +113,7 @@ class AttentionCVAE(nn.Module):
             suffix_summary = self.suffix_encoder.summarize(
                 activities=item.suffix.activities,
                 resources=item.suffix.resources,
-                timestamps=item.suffix.timestamps,
+                time_deltas=item.suffix.time_deltas,
                 lengths=item.suffix_len,
             )  # [batch_size, suffix_dim]
             # q(z | prefix, suffix): a latent that already describes the suffix being
@@ -165,7 +165,7 @@ class AttentionCVAE(nn.Module):
         prefix_outputs, prefix_summary = self.prefix_encoder(
             activities=item.prefix.activities,
             resources=item.prefix.resources,
-            timestamps=item.prefix.timestamps,
+            time_deltas=item.prefix.time_deltas,
             lengths=item.prefix_len,
         )  # [batch_size, seq_len, prefix_dim], [batch_size, prefix_dim]
 
@@ -190,6 +190,6 @@ class AttentionCVAE(nn.Module):
         return GeneratedSuffix(
             activities=generated.activities.view(batch_size, num_samples, -1),
             resources=generated.resources.view(batch_size, num_samples, -1),
-            timestamps=generated.timestamps.view(batch_size, num_samples, -1),
+            time_deltas=generated.time_deltas.view(batch_size, num_samples, -1),
             lengths=generated.lengths.view(batch_size, num_samples),
         )
