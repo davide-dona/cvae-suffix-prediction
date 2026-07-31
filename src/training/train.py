@@ -11,7 +11,7 @@ from src.configs.schema import (
     TrainingConfig,
 )
 from src.model import TransformerCVAE
-from src.training.annealing import cyclical_linear_weight, validate_schedule
+from src.training.annealing import cyclical_linear_weight
 from src.training.early_stopping import EarlyStopper
 from src.training.loss import compute_loss
 from src.training.metrics import Metrics
@@ -118,15 +118,6 @@ def train(
     )
     early_stopper = EarlyStopper(early_stopping_config)
 
-    # Raised before the first step rather than discovered from a run that never trained
-    # against the full KL term.
-    validate_schedule(
-        total_steps=training.max_steps,
-        n_cycles=loss_config.kl_annealing_cycles,
-        ratio=loss_config.kl_annealing_ratio,
-        stop=loss_config.kl_annealing_full_weight,
-    )
-
     current_best_val_loss = float('inf')
     step = 0
     should_stop = False
@@ -150,8 +141,7 @@ def train(
                 batch = batch.to(device)
                 kl_weight = cyclical_linear_weight(
                     step,
-                    total_steps=training.max_steps,
-                    n_cycles=loss_config.kl_annealing_cycles,
+                    period_steps=loss_config.kl_annealing_period_steps,
                     ratio=loss_config.kl_annealing_ratio,
                     start=loss_config.kl_annealing_start_weight,
                     stop=loss_config.kl_annealing_full_weight,

@@ -44,8 +44,9 @@ model:
     head_hidden_dim: 64
 
 loss:
-  # Cyclical weight ramp over training steps, held at full weight between ramps.
-  kl_annealing_cycles: 5
+  # Cyclical weight ramp over training steps, held at full weight between ramps. The period is
+  # a length, not a fraction of max_steps, so changing the budget leaves the schedule alone.
+  kl_annealing_period_steps: 10000  # 3000-step ramp, then 7000 held at full weight
   kl_annealing_ratio: 0.3
   kl_annealing_start_weight: 0.0
   kl_annealing_full_weight: 1.0
@@ -56,7 +57,7 @@ optimizer:
   weight_decay: 0.0
 
 training:
-  max_steps: 100000 
+  max_steps: 30000  # three whole annealing cycles; ~7h on bpic-2017, the longest log here
   grad_clip_norm: 5.0  # null to leave gradients unclipped
   device: mps  # Apple-silicon GPU; ['cpu', 'cuda', 'mps']
   best_model_dir: outputs/best-models  # one file per run, overwritten on improvement
@@ -64,8 +65,8 @@ training:
   val_every_n_steps: 400 
 
 early_stopping:
-  patience: 20   # number of validation checks with no improvement after which training will be stopped
-  min_delta_perc: 0.005  # z is sampled, so that loss is noisy; keeps a plateau from resetting it
+  patience: 30   # validations with no improvement after which training stops; must outlast one ramp
+  min_delta_perc: 0.005  # z is sampled, so the score is noisy; this is the margin that counts as progress
 
 inference:
   # k suffixes per prefix differ only in z ~ p(z|prefix); heads are read greedily.

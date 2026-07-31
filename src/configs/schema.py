@@ -155,10 +155,14 @@ class LossConfig(StrictModel):
     epochs: an epoch is a different amount of learning on every log, so a schedule denominated
     in epochs has to be re-derived per dataset, while one in steps means the same thing
     everywhere.
+
+    The cycle is given as a length rather than as a count fitted into `training.max_steps`, so
+    that shortening or lengthening a run leaves the shape of the schedule alone. A budget and a
+    schedule are separate decisions, and a run that stops early has still seen whole cycles.
     """
 
-    kl_annealing_cycles: int = Field(..., gt=0, description="Number of cycles to fit into training")
-    kl_annealing_ratio: float = Field(..., gt=0.0, le=1.0, description="Fraction of each cycle spent ramping up")
+    kl_annealing_period_steps: int = Field(..., gt=0, description="Optimizer steps in one cycle")
+    kl_annealing_ratio: float = Field(..., gt=0.0, lt=1.0, description="Fraction of each cycle spent ramping up")
     kl_annealing_start_weight: float = Field(..., ge=0.0, description="Weight each cycle ramps up from")
     kl_annealing_full_weight: float = Field(..., ge=0.0, description="Weight each cycle ramps up to, and holds at")
     free_bits: float = Field(
@@ -229,13 +233,19 @@ class EvaluationConfig(StrictModel):
 
 
 class EarlyStoppingConfig(StrictModel):
-    """Stop training once the validation loss plateaus (see `training/early_stopping.py`).
+    """Stop training once the selection score plateaus (see `training/early_stopping.py`).
 
-    What it watches is the prior-path validation loss, which carries no KL term and is
-    therefore comparable at every point of a run, whatever the annealing weight is doing.
+    What it watches is what best-model selection watches: the free-running generation score,
+    which is comparable at every point of a run whatever the annealing weight is doing, and is
+    the same quantity `pipelines/evaluate.py` reports at the end.
     """
 
-    patience: int = Field(..., gt=0, description="Non-improving validations tolerated before stopping")
+    patience: int = Field(
+        ..., gt=0,
+        description="Non-improving validations tolerated before stopping. Counted in "
+        "validations, so it must outlast a whole `loss.kl_annealing_ratio` ramp, during which "
+        "generation gets worse by design",
+    )
     min_delta_perc: float = Field(..., ge=0.0, description="Minimum relative improvement to reset the patience counter")
 
 
@@ -258,3 +268,4 @@ class ExperimentConfig(StrictModel):
     training: TrainingConfig
     early_stopping: EarlyStoppingConfig
     inference: InferenceConfig
+    evaluation: EvaluationConfig
