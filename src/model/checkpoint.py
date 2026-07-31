@@ -48,7 +48,7 @@ def save_checkpoint(
     *,
     model_config: dict,
     step: int,
-    val_loss: float,
+    selection_score: float,
     path: Union[str, Path],
 ) -> Path:
     """
@@ -68,7 +68,7 @@ def save_checkpoint(
         model_config: Its `ModelConfig`, dumped to plain data.
         step: The optimizer step the weights are from. The best-model filename does not say,
             so the file has to.
-        val_loss: That step's prior-path validation loss.
+        selection_score: That step's generation score, the number it was chosen on.
         path: Where to write, parent directories included.
     Returns:
         The path written to.
@@ -82,7 +82,7 @@ def save_checkpoint(
             'model_config': model_config,
             'model_state_dict': model.state_dict(),
             'step': step,
-            'val_loss': val_loss,
+            'selection_score': selection_score,
         },
         f=temp_path,
     )
@@ -101,8 +101,8 @@ def build_model_from_checkpoint(
     """
     Rebuild the model a checkpoint holds, with its weights loaded.
 
-    Only the config and the weights are read; the `step` and `val_loss` a checkpoint also
-    carries describe the run it came from and say nothing about how to rebuild it.
+    Only the config and the weights are read; the `step` and `selection_score` a checkpoint
+    also carries describe the run it came from and say nothing about how to rebuild it.
 
     Args:
         checkpoint: A checkpoint read by `load_checkpoint`.

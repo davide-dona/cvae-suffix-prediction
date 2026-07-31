@@ -1,7 +1,11 @@
-from typing import Sequence
+from typing import Hashable, Sequence
+
+# The elements are only ever compared for equality, so the same distance is measured over
+# decoded activity names and over the indices they were decoded from. That is what lets the
+# training loop score a generation without carrying a `Codec` around.
 
 
-def damerau_levenshtein_distance(first: Sequence[str], second: Sequence[str]) -> int:
+def damerau_levenshtein_distance(first: Sequence[Hashable], second: Sequence[Hashable]) -> int:
     """
     The number of insertions, deletions, substitutions and transpositions between two sequences.
 
@@ -46,7 +50,7 @@ def damerau_levenshtein_distance(first: Sequence[str], second: Sequence[str]) ->
     return distances[len(first)][len(second)]
 
 
-def sequence_similarity(predicted: Sequence[str], true: Sequence[str]) -> float:
+def sequence_similarity(predicted: Sequence[Hashable], true: Sequence[Hashable]) -> float:
     """
     Damerau-Levenshtein similarity, the distance normalized into `[0, 1]`.
 
