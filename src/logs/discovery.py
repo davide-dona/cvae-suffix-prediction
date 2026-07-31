@@ -47,3 +47,23 @@ def write_process_model(
     dir.mkdir(parents=True, exist_ok=True)
     pm4py.write_pnml(net, initial_marking, final_marking, str(dir / 'model.pnml'))
     pm4py.save_vis_petri_net(net, initial_marking, final_marking, str(dir / 'model.png'))
+
+
+def read_process_model(dir: str | Path) -> tuple[PetriNet, Marking, Marking]:
+    """
+    Read back the Petri net `write_process_model` wrote.
+
+    Args:
+        dir: The directory holding `model.pnml`.
+    Returns:
+        `(net, initial_marking, final_marking)`.
+    Raises:
+        FileNotFoundError: If no net has been mined for this dataset yet.
+    """
+    path = Path(dir) / 'model.pnml'
+    if not path.exists():
+        raise FileNotFoundError(
+            f'no process model at {path}. Preprocess the dataset first, which mines one '
+            'from its training split.'
+        )
+    return pm4py.read_pnml(str(path))

@@ -1,5 +1,5 @@
 seed: 42
-experiment_name: cvae_suffix_baseline
+experiment_name: cvae_suffix_transformer
 output_dir: outputs
 
 # Denominated in optimizer steps, not epochs, so one value holds for every log; a dataset file
@@ -71,4 +71,7 @@ inference:
   # k suffixes per prefix differ only in z ~ p(z|prefix); heads are read greedily.
   num_samples: 10
   predictions_dir: outputs/predictions
+
+evaluation:
+  metrics_dir: outputs/evaluation
 

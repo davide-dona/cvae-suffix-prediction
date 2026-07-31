@@ -218,6 +218,16 @@ class InferenceConfig(StrictModel):
     predictions_dir: Path = Field(..., description="One predictions file per run, named after it")
 
 
+class EvaluationConfig(StrictModel):
+    """Scoring a run's generated suffixes, which reads its predictions file and nothing else.
+
+    How many suffixes a prefix has is not repeated here: it is `inference.num_samples`, and the
+    predictions being scored already record it row by row.
+    """
+
+    metrics_dir: Path = Field(..., description="One metrics file per run, named after it")
+
+
 class EarlyStoppingConfig(StrictModel):
     """Stop training once the validation loss plateaus (see `training/early_stopping.py`).
 
