@@ -45,11 +45,14 @@ class EventEmbeddings(nn.Module):
         )
         self.output_dim = d_model
 
-    def forward(self, events: EncodedEvents) -> torch.Tensor:
+    def forward(self, events: EncodedEvents, *, start_position: int = 0) -> torch.Tensor:
         """
         Args:
             events: The events to embed, `[batch_size, seq_len]` per field. This is the one
                 place the three are read apart, each having a table or a width of its own.
+            start_position: Where in its sequence the first of them sits. A whole sequence
+                starts at 0; a decoder generating with a cache hands over one event at a time
+                and has to say which one, or every event would be encoded as the first.
         Returns:
             The embedded events, `[batch_size, seq_len, d_model]`.
         """
@@ -65,7 +68,10 @@ class EventEmbeddings(nn.Module):
         content = self.projection(event) * self.content_scale  # [batch_size, seq_len, d_model]
 
         # Add the fixed positional encoding to event vectors
-        positions = self.positional_encoding[: events.activities.size(dim=1)]  # [seq_len, d_model]
+        length = events.activities.size(dim=1)
+        positions = self.positional_encoding[
+            start_position : start_position + length
+        ]  # [seq_len, d_model]
         return content + positions  # [batch_size, seq_len, d_model]
 
 
