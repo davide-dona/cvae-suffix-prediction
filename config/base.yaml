@@ -2,51 +2,40 @@ seed: 42
 experiment_name: cvae_suffix_baseline
 output_dir: outputs
 
-# Everything below is denominated in optimizer steps, or in units that do not depend on the
-# dataset, so one value means the same thing on every log. A dataset file should then need
-# nothing but its `data:` section; anything it does override is a claim that its log is
-# genuinely different, and belongs with a comment saying how.
+# Denominated in optimizer steps, not epochs, so one value holds for every log; a dataset file
+# then needs nothing but its `data:` section.
 model:
-  # The one width the embeddings, both encoders and the decoder run at. Cross-attention over the
-  # prefix requires the decoder to match the prefix encoder, and the shared event embeddings
-  # require the suffix encoder to match both, so this one number is the main lever on capacity.
-  #
-  # 64 is generous for these logs: the largest alphabet is 36 activities and the longest mean
-  # trace is 40 events. It builds ~305k parameters against ~1.4M at 128, and the smaller model
-  # is what makes sweeping the rest of these numbers affordable.
+  # The size of the embedding space
   d_model: 64
 
+  # Activity/resource lookup widths, concatenated with the time delta and projected to d_model.
   embeddings:
-    # Sized to their vocabularies rather than to `d_model`: an event is these two plus its time
-    # delta, projected up to `d_model` once. Resources are the larger alphabet on every log
-    # here, up to 112 on traffic_fines against at most 36 activities.
     activity_dim: 16
     resource_dim: 16
 
-  # `feedforward_dim` is 4x `d_model` throughout, the usual ratio, and it is where most of a
-  # transformer's capacity lives.
+  # Encodes the prefix; its CLS summary feeds both the prior and the decoder's cross-attention.
   prefix_encoder:
     num_layers: 2
     num_heads: 4
     feedforward_dim: 256
     dropout: 0.1
 
-  # One layer, against the prefix encoder's two. This encoder exists only to give the posterior
-  # something to encode on the training path, and its capacity is exactly what lets the
-  # posterior smuggle a whole suffix into z.
+  # Encodes the ground-truth suffix for the posterior, training only; shallower on purpose.
   suffix_encoder:
     num_layers: 1
     num_heads: 4
     feedforward_dim: 256
     dropout: 0.1
 
+  # MLP mapping the prefix summary to p(z|prefix), sampled from at inference.
   prior:
     hidden_dims: [64]  # empty for a linear prior
     dropout: 0.1
 
   latent:
-    latent_dim: 16  # z only has to carry what the prefix does not already imply
+    latent_dim: 16  # z only carries what the prefix leaves undetermined
 
+  # Causal self-attention over the suffix, cross-attention over the encoded prefix.
   decoder:
     num_layers: 2
     num_heads: 4
@@ -55,55 +44,31 @@ model:
     head_hidden_dim: 64
 
 loss:
-  # 5 cycles over 100k steps: 20k-step cycles, each ramping for 6k steps and holding at full
-  # weight for 14k. The first full-weight step is 6k, so a run is training against the real
-  # objective within its first hour rather than most of a day in.
+  # Cyclical weight ramp over training steps, held at full weight between ramps.
   kl_annealing_cycles: 5
   kl_annealing_ratio: 0.3
   kl_annealing_start_weight: 0.0
   kl_annealing_full_weight: 1.0
-  # The floor that makes the KL term portable, which `kl_annealing_full_weight` cannot be: the
-  # reconstruction it is traded against is summed over suffix positions, and a mean suffix is
-  # ~1.8 events on traffic_fines against ~20 on bpic2012, so one weight is an order of magnitude
-  # more pressure on one log than on the other. A floor in nats per latent dimension is a
-  # statement about z alone and does not move with suffix length.
-  free_bits: 0.15
+  free_bits: 0.15  # nats/dimension floor below which KL is not penalized; keeps z from collapsing
 
 optimizer:
   lr: 0.0003
   weight_decay: 0.0
 
 training:
-  # A ceiling, not a target: early stopping is what normally ends a run. In steps rather than
-  # epochs because one epoch is 31 steps on sepsis and 863 on traffic_fines, so an epoch budget
-  # silently means something different on every log.
-  max_steps: 100000
+  max_steps: 100000 
   grad_clip_norm: 5.0  # null to leave gradients unclipped
-  # "mps" is the Apple-silicon GPU. Training is one parallel pass per batch and generation is a
-  # decoder pass per step, both of which are matmul-bound, so the margin over "cpu" grows with
-  # the batch size and the width. A dataset file overrides this with "cuda" or "cpu".
-  device: mps
-  # A run's best step is kept under `best_model_dir` as the single file `<run name>.pt`,
-  # overwritten every time the prior-path validation loss improves.
-  best_model_dir: outputs/best-models
+  device: mps  # Apple-silicon GPU; ['cpu', 'cuda', 'mps']
+  best_model_dir: outputs/best-models  # one file per run, overwritten on improvement
   log_dir: outputs/tensorboard
-  # 100 validations over a full run. Each one is two forward-only passes over the validation
-  # split, which is ~12% overhead on traffic_fines, the largest of these splits.
-  val_every_n_steps: 1000
+  val_every_n_steps: 400 
+
+early_stopping:
+  patience: 20   # number of validation checks with no improvement after which training will be stopped
+  min_delta_perc: 0.005  # z is sampled, so that loss is noisy; keeps a plateau from resetting it
 
 inference:
-  # Every sample of a prefix is a row of its own in the decoder, so the batch it actually runs
-  # is `data.batch_size * num_samples`. The k suffixes of one prefix differ only in the latent
-  # drawn from p(z | prefix): the heads are read greedily, so what varies across them is what
-  # the model claims the prefix leaves undetermined.
+  # k suffixes per prefix differ only in z ~ p(z|prefix); heads are read greedily.
   num_samples: 10
   predictions_dir: outputs/predictions
 
-early_stopping:
-  # Counted in validations, so 20k steps without improvement. What it watches is the prior-path
-  # loss, which carries no KL term and so is comparable wherever the annealing weight happens
-  # to be; there is no longer a stretch of a run its patience has to fit inside.
-  patience: 20
-  # Above zero because z is sampled, so the prior-path loss carries some noise from one
-  # validation to the next and a plateau should not be reset by it.
-  min_delta_perc: 0.005

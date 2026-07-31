@@ -272,6 +272,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "numpy" },
     { name = "pandas" },
+    { name = "pm4py" },
     { name = "pyarrow" },
     { name = "pydantic" },
     { name = "pyyaml" },
@@ -283,13 +284,13 @@ dependencies = [
 dev = [
     { name = "ipykernel" },
     { name = "matplotlib" },
-    { name = "pm4py" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=2.5.1" },
     { name = "pandas", specifier = ">=2.2.3" },
+    { name = "pm4py", specifier = ">=2.7.23.3" },
     { name = "pyarrow", specifier = ">=25.0.0" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pyyaml", specifier = ">=6.0.3" },
@@ -301,7 +302,6 @@ requires-dist = [
 dev = [
     { name = "ipykernel", specifier = ">=7.3.0" },
     { name = "matplotlib", specifier = ">=3.11.1" },
-    { name = "pm4py", specifier = ">=2.7.23.3" },
 ]
 
 [[package]]

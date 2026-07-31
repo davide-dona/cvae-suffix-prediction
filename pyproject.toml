@@ -6,6 +6,7 @@ requires-python = ">=3.13"
 dependencies = [
     "numpy>=2.5.1",
     "pandas>=2.2.3",
+    "pm4py>=2.7.23.3",
     "pyarrow>=25.0.0",
     "pydantic>=2.13.4",
     "pyyaml>=6.0.3",
@@ -17,5 +18,4 @@ dependencies = [
 dev = [
     "ipykernel>=7.3.0",
     "matplotlib>=3.11.1",
-    "pm4py>=2.7.23.3",
 ]

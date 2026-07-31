@@ -10,7 +10,11 @@ ideas/
 
 # Virtual environments
 .venv
+
 # Preprocessed datasets
 processed/
+# Petri-Net discovery outputs
+data/*/model/
+
 # Figures workspace
 /docs/figures
