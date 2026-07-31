@@ -9,6 +9,7 @@ from pipelines.preprocess import ensure_dataset
 from src.configs import DatasetInfo, ExperimentConfig, load_config
 from src.datasets.codec import Codec
 from src.datasets.dataset import SuffixDataset
+from src.inference import generation_batch_size
 from src.model import TransformerCVAE, best_model_path, save_checkpoint
 from src.training.train import train
 
@@ -66,7 +67,7 @@ def run(config: ExperimentConfig) -> None:
     )
     generation_loader = DataLoader(
         dataset=_fixed_subset(val_dataset, size=GENERATION_PAIRS, generator=generator),
-        batch_size=config.data.batch_size,
+        batch_size=generation_batch_size(config.inference.num_samples, config.data.batch_size),
         shuffle=False,
         num_workers=config.data.num_workers,
     )

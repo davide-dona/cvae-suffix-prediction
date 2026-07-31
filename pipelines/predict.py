@@ -7,7 +7,7 @@ from pipelines.preprocess import ensure_dataset
 from src.configs import DatasetInfo, ExperimentConfig, load_config
 from src.datasets.codec import Codec
 from src.datasets.dataset import SuffixDataset
-from src.inference import generate_predictions, predictions_path
+from src.inference import generate_predictions, generation_batch_size, predictions_path
 from src.model import build_model_from_checkpoint, latest_best_model_path, load_checkpoint
 
 
@@ -31,7 +31,9 @@ def run(config: ExperimentConfig, model_path: Path | None = None) -> None:
 
     test_loader = DataLoader(
         dataset=SuffixDataset(dataset_info.test, dataset_info, codec),
-        batch_size=config.data.batch_size,
+        # Not `data.batch_size`: every prefix is generated for `num_samples` times over, so that
+        # would hand the decoder that many times the rows it was tuned for.
+        batch_size=generation_batch_size(config.inference.num_samples, config.data.batch_size),
         shuffle=False,
         num_workers=config.data.num_workers,
     )

@@ -12,6 +12,33 @@ from src.model import TransformerCVAE
 from src.model.components.decoder import GeneratedSuffix
 
 
+# The most rows `generate` should put through the decoder in one call. A row carries a cached
+# key and value per position, per layer, for both its self-attention and the encoded prefix, so
+# what a call holds grows with this and with `max_seq_len` together: at bpic-2017's 95 positions
+# and d_model 128 a row is about 400 KB of cache, which puts 512 rows at a couple of hundred
+# megabytes and 2560 into the region where this machine starts paging.
+GENERATION_ROWS = 512
+
+
+def generation_batch_size(num_samples: int, upper_bound: int) -> int:
+    """How many prefixes to generate for at once.
+
+    `generate` repeats every prefix once per sample, so a batch of prefixes reaches the decoder
+    as `batch_size * num_samples` rows. Sizing a generation loader by `data.batch_size`, which
+    was chosen for training where a row is one sequence, therefore asks for `num_samples` times
+    the work and the memory it looks like it is asking for.
+
+    Args:
+        num_samples: Suffixes drawn per prefix.
+        upper_bound: Batch size not to exceed anyway, normally `data.batch_size`. Keeps a log
+            generating a single sample per prefix from being handed a larger batch than it
+            trains on.
+    Returns:
+        A batch size of at least 1.
+    """
+    return max(1, min(upper_bound, GENERATION_ROWS // num_samples))
+
+
 def predictions_path(predictions_dir: Union[str, Path], run_name: str) -> Path:
     """
     Where the predictions of one run are kept: `<predictions_dir>/<run_name>.parquet`.
