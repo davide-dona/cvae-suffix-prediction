@@ -3,45 +3,32 @@ from pathlib import Path
 
 import pandas as pd
 
-from pipelines.preprocess import ensure_dataset
-from src.configs import ExperimentConfig, load_config
-from src.evaluation import EvaluationReport, accuracy_metrics, conformance_metrics, evaluation_path
-from src.inference import predictions_path
+from src.evaluation import EvaluationReport, accuracy_metrics, conformance_metrics
 from src.logs.discovery import read_process_model
 from src.logs.io import read_log
-from src.model import latest_best_model_path
 
 
-def run(config: ExperimentConfig, predictions_file: Path | None = None) -> None:
+def run(predictions_file: Path) -> None:
     """
     Score a run's generated suffixes and write the result next to them.
 
     Nothing is generated here: the predictions file is the input, so a metric can be added and
-    every past run rescored without the model being run again.
+    every past run rescored without the model being run again. It is also the only input: the
+    dataset it was predicted from is `predictions_file`'s parent directory name, per
+    `src.inference.predict.predictions_path`, and that dataset's splits and process model live
+    at the fixed `data/<dataset>` convention every `config/*.yaml` follows.
 
     Args:
-        config: The validated experiment config.
-        predictions_file: The predictions to score. Defaults to those of the most recent run of
-            this config, which is what a config alone can identify.
+        predictions_file: The predictions to score, from `python -m pipelines.predict`.
     """
-    # Ensure the dataset is present, so the splits the metrics read can be opened
-    ensure_dataset(config.data)
-
-    dataset = config.data.dir.name
-    if predictions_file is None:
-        # Predictions are named after the checkpoint that produced them, so the newest run
-        # resolves through the checkpoints rather than through a second convention.
-        model_path = latest_best_model_path(
-            config.training.best_model_dir, f'{dataset}/{config.experiment_name}'
-        )
-        predictions_file = predictions_path(
-            config.inference.predictions_dir, f'{dataset}/{model_path.stem}'
-        )
     if not predictions_file.exists():
         raise FileNotFoundError(
-            f'no predictions at {predictions_file}. Run `python -m pipelines.predict` for this '
-            'config first, or name a predictions file explicitly.'
+            f'no predictions at {predictions_file}. Run `python -m pipelines.predict` first, '
+            'or name the right predictions file.'
         )
+
+    dataset = predictions_file.parent.name
+    data_dir = Path('data') / dataset
 
     predictions = pd.read_parquet(path=predictions_file)
     # A truncated pair's ground-truth suffix stops short of the case's real ending, so it is
@@ -57,8 +44,8 @@ def run(config: ExperimentConfig, predictions_file: Path | None = None) -> None:
         flush=True,
     )
 
-    net, initial_marking, final_marking = read_process_model(config.data.dir / 'model')
-    processed_dir = config.data.dir / 'processed'
+    net, initial_marking, final_marking = read_process_model(data_dir / 'model')
+    processed_dir = data_dir / 'processed'
 
     report = EvaluationReport(
         run_name=run_name,
@@ -77,10 +64,11 @@ def run(config: ExperimentConfig, predictions_file: Path | None = None) -> None:
         ),
     )
 
-    path = report.write(evaluation_path(config.evaluation.metrics_dir, run_name))
+    path = report.write(predictions_file.with_suffix('.json'))
     print(
         f'Wrote {path}: activity DLS {report.accuracy.activity_dls_mean:.3f} mean / '
-        f'{report.accuracy.activity_dls_best:.3f} best, replay fitness '
+        f'{report.accuracy.activity_dls_best:.3f} best, diversity '
+        f'{report.accuracy.sample_diversity:.3f}, replay fitness '
         f'{report.conformance.generated.fitness_mean:.3f} against '
         f'{report.conformance.reference.fitness_mean:.3f} for the ground truth'
     )
@@ -96,14 +84,11 @@ def main() -> None:
         description="Score a run's generated test-split suffixes against the log and the "
                     'process model mined from it.'
     )
-    parser.add_argument('-c', '--config', type=Path, required=True,
-                        help="Path to this experiment's config YAML.")
-    parser.add_argument('-p', '--predictions', type=Path,
-                        help='Path to the predictions file to score. Defaults to those of '
-                             "this config's most recent run.")
+    parser.add_argument('-p', '--predictions', type=Path, required=True,
+                        help='Path to the predictions file to score, from `pipelines.predict`.')
     args = parser.parse_args()
 
-    run(load_config(args.config), args.predictions)
+    run(args.predictions)
 
 
 if __name__ == '__main__':

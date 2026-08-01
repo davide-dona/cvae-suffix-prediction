@@ -3,7 +3,7 @@ from src.inference.predict import (
     generation_batch_size,
     predictions_path,
 )
-from src.inference.prediction import PredictionRow
+from src.inference.predict import PredictionRow
 
 __all__ = [
     'PredictionRow',

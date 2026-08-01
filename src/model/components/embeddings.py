@@ -77,12 +77,6 @@ class EventEmbeddings(nn.Module):
 
 def _sinusoidal_encoding(length: int, d_model: int) -> torch.Tensor:
     """Build the fixed position table, `[length, d_model]`.
-
-    Each pair of channels holds a sine and a cosine of the position at a different frequency, the
-    wavelengths running from 2pi up to 10000 * 2pi. A position is therefore a distinct vector, and
-    a fixed offset between two positions is a fixed linear map between their encodings, which is
-    what lets attention read relative order out of them.
-
     Args:
         length: How many positions to build, i.e. the longest sequence the model will see.
         d_model: The width to build them at; an odd width leaves the last channel a sine.

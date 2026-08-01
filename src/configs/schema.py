@@ -43,7 +43,9 @@ class DataConfig(StrictModel):
 
     time_clip_percentile: float = Field(
         ..., gt=0.0, le=100.0,
-        description="Event time-deltas above this train-split percentile are clipped before normalization",
+        description="Minutes above this train-split percentile are clipped before normalization. "
+        "Applied to both time columns, each against its own percentile: the per-event gaps the "
+        "encoders read, and the remaining time the model predicts",
     )
 
     batch_size: int = Field(..., gt=0)
@@ -110,7 +112,7 @@ class DecoderConfig(StrictModel):
     num_heads: int = Field(..., gt=0, description="Attention heads per layer; must divide `d_model`")
     feedforward_dim: int = Field(..., gt=0, description="Width of the feed-forward block inside a layer")
     dropout: float = Field(..., ge=0.0, lt=1.0)
-    head_hidden_dim: int = Field(..., gt=0, description="Width of the layer shared by the three output heads")
+    head_hidden_dim: int = Field(..., gt=0, description="Width of the layer shared by the two output heads")
 
 
 class ModelConfig(StrictModel):
@@ -151,7 +153,7 @@ class ModelConfig(StrictModel):
 class LossConfig(StrictModel):
     """The KL term: how it is weighted over training, and how far it is allowed to fall.
 
-    The annealing schedule (see `training/annealing.py`) is measured in optimizer steps, not
+    The annealing schedule (see `training/kl.py`) is measured in optimizer steps, not
     epochs: an epoch is a different amount of learning on every log, so a schedule denominated
     in epochs has to be re-derived per dataset, while one in steps means the same thing
     everywhere.
@@ -165,6 +167,7 @@ class LossConfig(StrictModel):
     kl_annealing_ratio: float = Field(..., gt=0.0, lt=1.0, description="Fraction of each cycle spent ramping up")
     kl_annealing_start_weight: float = Field(..., ge=0.0, description="Weight each cycle ramps up from")
     kl_annealing_full_weight: float = Field(..., ge=0.0, description="Weight each cycle ramps up to, and holds at")
+
     free_bits: float = Field(
         ..., ge=0.0,
         description="Nats per latent dimension the KL is not penalized below. Unlike the "
@@ -203,15 +206,25 @@ class TrainingConfig(StrictModel):
         description="Steps between validations. Also the unit `early_stopping.patience` "
         "counts in, which is what makes that patience portable across datasets",
     )
+    validation_pairs: int = Field(
+        ..., gt=0,
+        description="Pairs the two teacher-forced passes read, as a fixed slice of the "
+        "validation split, or the whole of it where it is smaller. Validation is on the "
+        "critical path and the whole split is more than the mean needs",
+    )
+    generation_pairs: int = Field(
+        ..., gt=0,
+        description="Prefixes the free-running pass generates for, as a fixed slice of the "
+        "same split. Smaller again, a suffix costing one decoder pass per event rather than "
+        "one per suffix; this is the sample the selection score is computed on",
+    )
 
 
 class InferenceConfig(StrictModel):
     """Generating suffixes for a whole split, which is what evaluation reads.
 
-    The device and the batch size are not repeated here: a run generates on the device it
-    trained on (`training.device`) and in the batches its data section already describes
-    (`data.batch_size`), noting that the decoder actually sees `batch_size * num_samples`
-    rows, since every sample of a prefix is a row of its own.
+    The device is not repeated here: a run generates on the device it trained on
+    (`training.device`).
     """
 
     num_samples: int = Field(
@@ -219,17 +232,13 @@ class InferenceConfig(StrictModel):
         description="Suffixes generated per prefix, all from that prefix's p(z | prefix); the "
         "spread across them is what the latent is claiming the prefix leaves open",
     )
+    generation_rows: int = Field(
+        ..., gt=0,
+        description="Rows `generate` puts through the decoder in one call. A prefix reaches it "
+        "`num_samples` times over, each row holding a key and value cache per position and "
+        "layer, so this and not `data.batch_size` is what bounds the memory a call takes",
+    )
     predictions_dir: Path = Field(..., description="One predictions file per run, named after it")
-
-
-class EvaluationConfig(StrictModel):
-    """Scoring a run's generated suffixes, which reads its predictions file and nothing else.
-
-    How many suffixes a prefix has is not repeated here: it is `inference.num_samples`, and the
-    predictions being scored already record it row by row.
-    """
-
-    metrics_dir: Path = Field(..., description="One metrics file per run, named after it")
 
 
 class EarlyStoppingConfig(StrictModel):
@@ -268,4 +277,3 @@ class ExperimentConfig(StrictModel):
     training: TrainingConfig
     early_stopping: EarlyStoppingConfig
     inference: InferenceConfig
-    evaluation: EvaluationConfig

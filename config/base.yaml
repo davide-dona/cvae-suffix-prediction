@@ -1,9 +1,7 @@
 seed: 42
-experiment_name: cvae_suffix_transformer
+experiment_name: cvae_suffix_transformer_updated_loss
 output_dir: outputs
 
-# Denominated in optimizer steps, not epochs, so one value holds for every log; a dataset file
-# then needs nothing but its `data:` section.
 model:
   # The size of the embedding space
   d_model: 64
@@ -29,7 +27,7 @@ model:
 
   # MLP mapping the prefix summary to p(z|prefix), sampled from at inference.
   prior:
-    hidden_dims: [64]  # empty for a linear prior
+    hidden_dims: [64]  # (empty for a linear prior)
     dropout: 0.1
 
   latent:
@@ -43,36 +41,44 @@ model:
     dropout: 0.1
     head_hidden_dim: 64
 
+# All the hyperparameters below are defined in steps, not epochs, 
+# so that they are independent of the dataset size and batch size.
 loss:
-  # Cyclical weight ramp over training steps, held at full weight between ramps. The period is
-  # a length, not a fraction of max_steps, so changing the budget leaves the schedule alone.
-  kl_annealing_period_steps: 10000  # 3000-step ramp, then 7000 held at full weight
-  kl_annealing_ratio: 0.3
+  # KL annealing: for each period, the KL term is ramped up from 0 to full weight over a fraction of the period, 
+  # then kept at full weight until the end of the period. This helps prevent posterior collapse early in training.
+  kl_annealing_period_steps: 10000
+  kl_annealing_ratio: 0.3   # fraction of the period spent ramping up from 0 to full weight
   kl_annealing_start_weight: 0.0
   kl_annealing_full_weight: 1.0
-  free_bits: 0.15  # nats/dimension floor below which KL is not penalized; keeps z from collapsing
+  free_bits: 0.15  # nats/dimension floor below which the KL is not penalized; keeps z from collapsing
 
 optimizer:
   lr: 0.0003
   weight_decay: 0.0
 
 training:
-  max_steps: 30000  # three whole annealing cycles; ~7h on bpic-2017, the longest log here
+  max_steps: 30000 
   grad_clip_norm: 5.0  # null to leave gradients unclipped
   device: mps  # Apple-silicon GPU; ['cpu', 'cuda', 'mps']
   best_model_dir: outputs/best-models  # one file per run, overwritten on improvement
   log_dir: outputs/tensorboard
-  val_every_n_steps: 400 
+  val_every_n_steps: 400
+  # Fixed slice of the evaluation set used for validation;
+  # Using the full evaluation set for validation would be too slow
+  validation_pairs: 20000
+  generation_pairs: 1024
 
 early_stopping:
-  patience: 30   # validations with no improvement after which training stops; must outlast one ramp
+  patience: 30   # number of validation checks with no improvement after which training will be stopped
   min_delta_perc: 0.005  # z is sampled, so the score is noisy; this is the margin that counts as progress
 
 inference:
   # k suffixes per prefix differ only in z ~ p(z|prefix); heads are read greedily.
   num_samples: 10
+  
+  # Caps decoder memory usage per batch. The decoder receives
+  # num_samples * min(batch_size, upper_bound) rows at once; this bounds
+  # that total regardless of num_samples, which is set independently.
+  generation_rows: 512
   predictions_dir: outputs/predictions
-
-evaluation:
-  metrics_dir: outputs/evaluation
 

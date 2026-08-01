@@ -5,16 +5,17 @@ import pandas as pd
 
 from src.configs.schema import DataConfig
 from src.logs.io import read_log
-from src.logs.keys import EVENT_DELTA_KEY, ACTIVITY_KEY, RESOURCE_KEY
+from src.logs.keys import EVENT_DELTA_KEY, ACTIVITY_KEY, REMAINING_TIME_KEY, RESOURCE_KEY
 
 
 @dataclass(frozen=True)
 class TimeStats:
-    """log1p + min-max normalization stats for the event time-delta, fit on train.
+    """log1p + min-max normalization stats for one column of minutes, fit on train.
 
-    `clip_value` is the raw (pre-log1p), train-split percentile that deltas are clipped
+    `clip_value` is the raw (pre-log1p), train-split percentile that values are clipped
     to before taking the log, so a handful of extreme outliers don't blow out the range
-    the rest of the deltas get normalized into.
+    the rest get normalized into. Both time columns span several orders of magnitude,
+    which is what the log is for.
     """
     clip_value: float
     log_min: float
@@ -38,7 +39,12 @@ class DatasetInfo:
 
     activity_vocab: list[str]
     resource_vocab: list[str]
-    time_stats: TimeStats
+    # Two ranges, because the two columns are not the same quantity: a gap between
+    # consecutive events, which the encoders read, and a whole case's time left to run,
+    # which the model predicts. A sum is far larger than its terms, so one range fit on
+    # the deltas would push every remaining time into the top of [0, 1].
+    delta_stats: TimeStats
+    remaining_time_stats: TimeStats
 
     max_trace_length: int
 
@@ -104,22 +110,37 @@ class DatasetInfo:
         activity_vocab = sorted(train[ACTIVITY_KEY].astype(str).unique().tolist())
         resource_vocab = sorted(train[RESOURCE_KEY].astype(str).unique().tolist())
 
-        time_stats = _fit_time_stats(train, percentile=data_config.time_clip_percentile)
-
         return cls(
             train=train,
             val=val,
             test=test,
             activity_vocab=activity_vocab,
             resource_vocab=resource_vocab,
-            time_stats=time_stats,
+            delta_stats=_fit_time_stats(
+                train, column=EVENT_DELTA_KEY, percentile=data_config.time_clip_percentile
+            ),
+            remaining_time_stats=_fit_time_stats(
+                train, column=REMAINING_TIME_KEY, percentile=data_config.time_clip_percentile
+            ),
             max_trace_length=data_config.max_seq_len,
         )
 
 
-def _fit_time_stats(train: pd.DataFrame, *, percentile: float) -> TimeStats:
-    deltas = train[EVENT_DELTA_KEY].to_numpy(dtype=np.float64)
-    clip_value = float(np.percentile(deltas, percentile))
-    clipped = np.clip(deltas, 0.0, clip_value)
-    log_deltas = np.log1p(clipped)
-    return TimeStats(clip_value=clip_value, log_min=float(log_deltas.min()), log_max=float(log_deltas.max()))
+def _fit_time_stats(train: pd.DataFrame, *, column: str, percentile: float) -> TimeStats:
+    """Fit the log1p + min-max range of one column of minutes on the train split.
+
+    Args:
+        train: The train split, which is the only one any range is ever fit on.
+        column: Which column of minutes to fit, `EVENT_DELTA_KEY` or `REMAINING_TIME_KEY`.
+        percentile: Values above this train-split percentile are clipped before the log.
+    Returns:
+        The range `Codec` normalizes that column into `[0, 1]` with.
+    """
+    minutes = train[column].to_numpy(dtype=np.float64)
+    clip_value = float(np.percentile(minutes, percentile))
+    log_minutes = np.log1p(np.clip(minutes, 0.0, clip_value))
+    return TimeStats(
+        clip_value=clip_value,
+        log_min=float(log_minutes.min()),
+        log_max=float(log_minutes.max()),
+    )

@@ -4,7 +4,7 @@ from typing import NamedTuple
 import numpy as np
 import pandas as pd
 
-from src.configs.dataset_info import DatasetInfo
+from src.configs.dataset_info import DatasetInfo, TimeStats
 from src.logs.keys import (
     EOT_ACTIVITY,
     EOT_RESOURCE,
@@ -21,23 +21,24 @@ class DecodedSuffix(NamedTuple):
     """One suffix's raw values, decoded from indices and cut to its content length.
 
     `resources` is empty for a suffix the model generated, which carries no resource channel
-    to decode.
+    to decode. Neither does it carry a time channel: an event the model writes is an
+    activity, and the time it predicts is the suffix's remaining time, decoded on its own
+    through `Codec.denormalize_remaining_time`.
     """
     activities: list[str]
     resources: list[str]
-    time_deltas_minutes: list[float]
 
 
 @dataclass(frozen=True)
 class EncodedSequence:
     """One run of events, encoded to indices and normalized floats.
 
-    `resources` is None for a sequence the model generated: an event it reads is an activity,
-    a resource and a time delta, but an event it writes is an activity and a time delta.
-    Anything read out of the log carries all three.
+    `resources` and `time_deltas` are both None for a sequence the model generated: an event it
+    reads is an activity, a resource and a time delta, but an event it writes is an activity
+    alone. Anything read out of the log carries all three.
     """
     activities: np.ndarray  # int64, shape [len]
-    time_deltas: np.ndarray  # float32 in [0, 1], shape [len(activities)]
+    time_deltas: np.ndarray | None = None  # float32 in [0, 1], shape [len(activities)]
     resources: np.ndarray | None = None  # int64, shape [len(activities)]
 
     def __len__(self) -> int:
@@ -50,7 +51,7 @@ class EncodedSequence:
         """
         return EncodedSequence(
             activities=self.activities[cut],
-            time_deltas=self.time_deltas[cut],
+            time_deltas=None if self.time_deltas is None else self.time_deltas[cut],
             resources=None if self.resources is None else self.resources[cut],
         )
 
@@ -108,7 +109,8 @@ class Codec:
             self.unk_resource_index: UNK_RESOURCE,
         }
 
-        self._time_stats = dataset_info.time_stats
+        self._delta_stats = dataset_info.delta_stats
+        self._remaining_time_stats = dataset_info.remaining_time_stats
 
     def encode_events(
         self,
@@ -129,12 +131,12 @@ class Codec:
         return EncodedSequence(
             activities=_map_to_index(activities, self.activity_to_index, unk_index=self.unk_activity_index),
             resources=_map_to_index(resources, self.resource_to_index, unk_index=self.unk_resource_index),
-            time_deltas=self.normalize_time(time_deltas_minutes),
+            time_deltas=_normalize(time_deltas_minutes, self._delta_stats),
         )
 
     def decode_suffix(self, suffix: EncodedSequence, *, length: int) -> DecodedSuffix:
-        """Read one suffix's indices and normalized deltas back to raw values: the inverse of
-        `encode_events`, and so taking back the `EncodedSequence` that one returns.
+        """Read one suffix's indices back to raw values: the inverse of `encode_events`, and so
+        taking back the `EncodedSequence` that one returns.
 
         Args:
             suffix: One suffix as the model holds it, `[seq_len]` per field. A generated one
@@ -143,7 +145,7 @@ class Codec:
                 on and the padding behind it, so what comes back holds events and nothing else.
 
         Returns:
-            The suffix's raw activities, resources and time deltas (in minutes), cut to `length`.
+            The suffix's raw activities and resources, cut to `length`.
         """
         return DecodedSuffix(
             activities=[self.index_to_activity[int(i)] for i in suffix.activities[:length]],
@@ -152,28 +154,40 @@ class Codec:
                 if suffix.resources is None
                 else [self.index_to_resource[int(i)] for i in suffix.resources[:length]]
             ),
-            time_deltas_minutes=self.denormalize_time(suffix.time_deltas[:length]).tolist(),
         )
 
-    def normalize_time(self, delta_minutes: np.ndarray) -> np.ndarray:
-        """log1p + min-max into `[0, 1]`, clipping to the range fit on the train split."""
-        stats = self._time_stats
-        # Clipping bounds the outliers, and log1p then pulls in the long tail, so the bulk of
-        # the deltas do not all end up squeezed into the bottom of the range.
-        clipped = np.clip(delta_minutes, 0.0, stats.clip_value)
-        log_delta = np.log1p(clipped)
-        span = stats.log_max - stats.log_min
-        # A split where every delta is identical would divide by zero here.
-        if span <= 0:
-            return np.zeros_like(log_delta, dtype=np.float32)
-        return np.clip((log_delta - stats.log_min) / span, 0.0, 1.0).astype(np.float32)
+    def normalize_remaining_time(self, minutes: np.ndarray) -> np.ndarray:
+        """Map a case's time left to run into `[0, 1]`, the range the model predicts in."""
+        return _normalize(minutes, self._remaining_time_stats)
 
-    def denormalize_time(self, normalized: np.ndarray) -> np.ndarray:
-        """Invert `normalize_time`, back to minutes. Approximate for deltas that were clipped
-        on the way in: clipping is lossy, so anything above `clip_value` comes back as
-        `clip_value`.
+    def denormalize_remaining_time(self, normalized: np.ndarray) -> np.ndarray:
+        """Read the model's remaining-time prediction back as minutes, which is what the
+        evaluation reports and the log can be compared against.
+
+        Approximate at the top of the range: clipping is lossy, so anything that was above
+        `clip_value` on the way in comes back as `clip_value`.
         """
-        stats = self._time_stats
+        stats = self._remaining_time_stats
         span = stats.log_max - stats.log_min
-        log_delta = np.asarray(normalized, dtype=np.float64) * span + stats.log_min
-        return np.expm1(log_delta)
+        return np.expm1(np.asarray(normalized, dtype=np.float64) * span + stats.log_min)
+
+
+def _normalize(minutes: np.ndarray, stats: TimeStats) -> np.ndarray:
+    """log1p + min-max into `[0, 1]`, clipping to a range fit on the train split.
+
+    Clipping bounds the outliers and log1p then pulls in the long tail, so the bulk of the
+    values do not all end up squeezed into the bottom of the range: both columns here span
+    several orders of magnitude.
+
+    Args:
+        minutes: The raw values to normalize.
+        stats: The range to normalize into, fit on train by `DatasetInfo`.
+    Returns:
+        The same values in `[0, 1]`, as float32.
+    """
+    log_minutes = np.log1p(np.clip(minutes, 0.0, stats.clip_value))
+    span = stats.log_max - stats.log_min
+    # A split where every value is identical would divide by zero here.
+    if span <= 0:
+        return np.zeros_like(log_minutes, dtype=np.float32)
+    return np.clip((log_minutes - stats.log_min) / span, 0.0, 1.0).astype(np.float32)

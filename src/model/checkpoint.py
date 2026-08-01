@@ -3,9 +3,6 @@ from typing import Union
 import torch
 from torch import nn
 
-from src.configs.dataset_info import DatasetInfo
-from src.configs.schema import ModelConfig
-from src.model.transformer_cvae import TransformerCVAE
 
 def best_model_path(best_model_dir: Union[str, Path], run_name: str) -> Path:
     """
@@ -52,17 +49,11 @@ def save_checkpoint(
     path: Union[str, Path],
 ) -> Path:
     """
-    Save a model checkpoint in the schema `build_model_from_checkpoint` expects.
+    Save a model checkpoint in the schema `TransformerCVAE.from_checkpoint` expects.
 
     The full config travels with the weights, so the same model can be rebuilt later without
-    being told a single hyperparameter. The data-derived dimensions are deliberately not
-    stored: they come from the `DatasetInfo` of the dataset the model is being used on, which
-    cannot then drift from the weights.
-
-    The write goes to a temporary file and is then moved onto `path`, which is atomic within a
-    directory. A best-model file is overwritten every time the best improves, so a run killed
-    mid-write would otherwise leave a truncated file where the only copy of the best model was.
-
+    being told a single hyperparameter.
+    
     Args:
         model: The model whose weights to save.
         model_config: Its `ModelConfig`, dumped to plain data.
@@ -93,32 +84,3 @@ def save_checkpoint(
 def load_checkpoint(model_path: Union[str, Path]) -> dict:
     """Read a checkpoint file written by `save_checkpoint`."""
     return torch.load(f=Path(model_path), map_location='cpu', weights_only=False)
-
-
-def build_model_from_checkpoint(
-    checkpoint: dict, dataset_info: DatasetInfo, *, device: str = 'cpu'
-) -> TransformerCVAE:
-    """
-    Rebuild the model a checkpoint holds, with its weights loaded.
-
-    Only the config and the weights are read; the `step` and `selection_score` a checkpoint
-    also carries describe the run it came from and say nothing about how to rebuild it.
-
-    Args:
-        checkpoint: A checkpoint read by `load_checkpoint`.
-        dataset_info: The dataset the model is to be used on, supplying the vocabulary
-            sizes and sequence length it was built against.
-        device: Where to place the model.
-    Returns:
-        The model, in evaluation mode.
-    """
-    missing = {'model_config', 'model_state_dict'} - checkpoint.keys()
-    if missing:
-        raise ValueError(f'checkpoint is missing {sorted(missing)}. Train the model again.')
-
-    config = ModelConfig.model_validate(checkpoint['model_config'])
-
-    model = TransformerCVAE(config=config, dataset_info=dataset_info).to(device=device)
-    model.load_state_dict(state_dict=checkpoint['model_state_dict'])
-    model.eval()
-    return model

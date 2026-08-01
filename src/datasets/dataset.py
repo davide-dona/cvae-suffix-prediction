@@ -4,11 +4,11 @@ from typing import NamedTuple
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Subset
 
 from src.configs.dataset_info import DatasetInfo
 from src.datasets.codec import Codec, EncodedSequence
-from src.logs.keys import EVENT_DELTA_KEY, ACTIVITY_KEY, CASE_KEY, RESOURCE_KEY
+from src.logs.keys import EVENT_DELTA_KEY, ACTIVITY_KEY, CASE_KEY, REMAINING_TIME_KEY, RESOURCE_KEY
 
 
 class EncodedEvents(NamedTuple):
@@ -36,14 +36,19 @@ class SuffixItem(NamedTuple):
     model for one pair, or one batch of pairs.
     """
     pair_index: torch.Tensor      # which pair of the dataset this is; used to trace a prediction back to its case and cut point
-    
+
     prefix: EncodedEvents          # the condition: the events before the cut, no EOT
     prefix_len: torch.Tensor      # real events in `prefix`, the rest being padding
-    
+
     suffix: EncodedEvents          # what the decoder must produce: content, EOT, then padding
     suffix_len: torch.Tensor      # real positions in `suffix`, EOT included where there is one
-    
+
     decoder_input: EncodedEvents   # `suffix` shifted one step behind SOS, for teacher forcing
+
+    # The other half of what the model predicts: minutes from the last prefix event to the end
+    # of the case, normalized into [0, 1]. One scalar for the whole pair, measured against the
+    # case's real ending even where the suffix above was truncated.
+    remaining_time: torch.Tensor  # float32, [] per item, [batch_size] batched
 
     def to(self, device: torch.device) -> "SuffixItem":
         """Move a whole batch in one call"""
@@ -54,6 +59,7 @@ class SuffixItem(NamedTuple):
             decoder_input=self.decoder_input.to(device),
             suffix=self.suffix.to(device),
             suffix_len=self.suffix_len.to(device),
+            remaining_time=self.remaining_time.to(device),
         )
 
 
@@ -68,6 +74,10 @@ class _Trace:
     # continuation was cut away and no suffix cut from it actually ends. See
     # `SuffixDataset._encode_suffix`.
     events: EncodedSequence
+    # Normalized minutes from each event to the case's real ending, one per event of
+    # `events`. Cutting after `k` events leaves `remaining_time[k - 1]` still to run, so a
+    # truncated case still carries the true value at every event that survived the cut.
+    remaining_time: np.ndarray  # float32 in [0, 1], shape [len(events)]
 
 
 @dataclass(frozen=True)
@@ -142,6 +152,8 @@ class SuffixDataset(Dataset):
             decoder_input=decoder_input,
             suffix=suffix,
             suffix_len=suffix_len,
+            # Read at the last prefix event: what is left to run once the condition has played out.
+            remaining_time=torch.tensor(data=trace.remaining_time[k - 1], dtype=torch.float32),
         )
 
     def pair_info(self, i: int) -> PairInfo:
@@ -212,6 +224,27 @@ class SuffixDataset(Dataset):
         return decoder_input, padded_suffix, torch.tensor(data=suffix_len, dtype=torch.long)
 
 
+def fixed_subset(dataset: Dataset, *, size: int, generator: torch.Generator) -> Dataset:
+    """A random slice of `dataset`, or the whole of it if it is already no bigger.
+
+    Drawn once, so every validation of a run reads the same pairs and two of its points differ
+    because the model moved rather than because the sample did.
+
+    Args:
+        dataset: The split to take from.
+        size: How many items to keep.
+        generator: The run's seeded generator.
+    Returns:
+        The slice, as a `Subset` the loaders can be built on directly.
+    """
+    # If the dataset is smaller than the requested size, just return it whole
+    if len(dataset) <= size:
+        return dataset
+    # Otherwise, draw a random slice of the requested size and return it as a Subset
+    indices = torch.randperm(n=len(dataset), generator=generator)[:size]
+    return Subset(dataset=dataset, indices=indices.tolist())
+
+
 def _group_traces(split_dataset: pd.DataFrame, max_content_len: int, codec: Codec) -> list[_Trace]:
     """Group a split into per-case traces, truncated to `max_content_len` events, with their
     content already mapped to indices and normalized floats."""
@@ -222,6 +255,9 @@ def _group_traces(split_dataset: pd.DataFrame, max_content_len: int, codec: Code
         activities=split_dataset[ACTIVITY_KEY].astype(str),
         resources=split_dataset[RESOURCE_KEY].astype(str),
         time_deltas_minutes=split_dataset[EVENT_DELTA_KEY].to_numpy(dtype=np.float32),
+    )
+    remaining_time = codec.normalize_remaining_time(
+        split_dataset[REMAINING_TIME_KEY].to_numpy(dtype=np.float32)
     )
 
     traces = []
@@ -239,6 +275,7 @@ def _group_traces(split_dataset: pd.DataFrame, max_content_len: int, codec: Code
                     resources=encoded.resources[positions],
                     time_deltas=encoded.time_deltas[positions],
                 ),
+                remaining_time=remaining_time[positions],
             )
         )
     return traces

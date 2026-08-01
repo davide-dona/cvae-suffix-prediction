@@ -3,17 +3,9 @@ from src.configs.schema import EarlyStoppingConfig
 
 class EarlyStopper:
     """
-    Stop training once its validation loss has stopped improving.
-
-    Every validation counts. What it is handed is the run's selection score, which is derived
-    from free-running generation rather than from a teacher-forced loss, and so does not move
-    with the annealing weight: any two validations of a run are comparable with each other.
-
-    A validation counts as an improvement only if it beats the best so far by `min_delta_perc`.
-    Anything else, a plateau included, spends patience. Requiring the margin on the improving
-    side rather than on the worsening side is what leaves no band of scores that neither resets
-    the counter nor advances it, which would let a run sitting exactly on its best go on for
-    ever.
+    Stop training once its validation loss has stopped improving. Every validation counts.
+    What it is handed is the run's selection score, which is derived from free-running generation,
+    making it independent from the KL annealing weights.
 
     Parameters:
         config: Early stopping configuration.

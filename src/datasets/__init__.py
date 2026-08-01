@@ -1,5 +1,5 @@
 from .codec import Codec, DecodedSuffix, EncodedSequence
-from .dataset import EncodedEvents, SuffixDataset, SuffixItem
+from .dataset import EncodedEvents, SuffixDataset, SuffixItem, fixed_subset
 
 __all__ = [
     "Codec",
@@ -8,4 +8,5 @@ __all__ = [
     "EncodedEvents",
     "SuffixDataset",
     "SuffixItem",
+    "fixed_subset",
 ]

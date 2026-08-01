@@ -1,14 +1,14 @@
 from dataclasses import dataclass
-from typing import Literal
 import torch
 from torch import nn
 
 from src.configs.dataset_info import DatasetInfo
 from src.configs.schema import ModelConfig
 from src.datasets.dataset import SuffixItem
+from src.distributions.gaussian import Gaussian
 from src.model.components.decoder import Decoder, DecoderOutput, GeneratedSuffix
 from src.model.components.embeddings import EventEmbeddings
-from src.model.components.latent import Gaussian, PosteriorNetwork, PriorNetwork
+from src.model.components.latent import PosteriorNetwork, PriorNetwork
 from src.model.components.trace_encoder import TraceEncoder, padding_mask
 
 
@@ -16,8 +16,7 @@ from src.model.components.trace_encoder import TraceEncoder, padding_mask
 class TransformerCVAEOutput:
     decoder: DecoderOutput
     prior: Gaussian
-    # None when sampling from the prior, since the suffix is then not read at all.
-    posterior: Gaussian | None
+    posterior: Gaussian
 
 
 class TransformerCVAE(nn.Module):
@@ -26,18 +25,16 @@ class TransformerCVAE(nn.Module):
 
     The prefix is the condition, and the decoder cross-attends over it at every position and
     in every layer: over each of its events, and over the CLS row summarizing the whole of it.
+    
     Because the decoder can read the prefix directly and the prior is conditioned on it too, the
     latent z is left encoding only what the prefix does not determine.
 
     Flow, with `prefix` and `suffix` both padded to `max_seq_len`:
         prefix              -> prefix_encoded (a row per event, plus a CLS summary row)
-        prefix summary      -> p(z | prefix)
-        + suffix summary    -> q(z | prefix, suffix)      (training only)
-        z ~ p(z | prefix)                                 (q(z | prefix, suffix) during training)
-        z, prefix_encoded, suffix -> activity/timestamp predictions
-
-    An event the model reads is (activity, resource, time delta); an event it writes is
-    (activity, time delta). The resource is condition-only: see `Decoder`.
+        prefix summary      -> p(z | prefix)               (scored by the KL term only)
+        + suffix summary    -> q(z | prefix, suffix)
+        z ~ q(z | prefix, suffix)
+        z, prefix_encoded, suffix -> activity predictions, and the case's remaining time
     """
 
     def __init__(self, config: ModelConfig, dataset_info: DatasetInfo):
@@ -76,19 +73,38 @@ class TransformerCVAE(nn.Module):
         self.pad_activity_index = dataset_info.pad_activity_index
         self.eot_activity_index = dataset_info.eot_activity_index
 
-    def forward(
-        self,
-        item: SuffixItem,
-        *,
-        sample_from: Literal['posterior', 'prior'] = 'posterior',
-    ) -> TransformerCVAEOutput:
+    @classmethod
+    def from_checkpoint(
+        cls, checkpoint: dict, dataset_info: DatasetInfo, *, device: str = 'cpu'
+    ) -> 'TransformerCVAE':
+        """
+        Rebuild the model a checkpoint holds, with its weights loaded.
+        
+        Args:
+            checkpoint: A checkpoint read by `load_checkpoint`.
+            dataset_info: The dataset the model is to be used on, supplying the vocabulary
+                sizes and sequence length it was built against.
+            device: Where to place the model.
+        Returns:
+            The model, in evaluation mode.
+        Raises:
+            ValueError: If the checkpoint does not carry a config and weights.
+        """
+        missing = {'model_config', 'model_state_dict'} - checkpoint.keys()
+        if missing:
+            raise ValueError(f'checkpoint is missing {sorted(missing)}. Train the model again.')
+
+        config = ModelConfig.model_validate(checkpoint['model_config'])
+
+        model = cls(config=config, dataset_info=dataset_info).to(device=device)
+        model.load_state_dict(state_dict=checkpoint['model_state_dict'])
+        model.eval()
+        return model
+
+    def forward(self, item: SuffixItem) -> TransformerCVAEOutput:
         """
         Args:
-            item: A batch from `SuffixDataset`.
-            sample_from: Which distribution z is drawn from. Training uses the posterior,
-                the only path on which the ground-truth suffix is read at all. Generating a
-                suffix for an unseen prefix uses the prior, which the KL term has spent
-                training pulling the posterior towards.
+            item: A batch from `SuffixDataset`, read for both its prefix and its suffix.
         Returns:
             The decoder's predictions and the latent distributions the loss compares.
         """
@@ -97,39 +113,28 @@ class TransformerCVAE(nn.Module):
             lengths=item.prefix_len, seq_len=item.prefix.activities.size(dim=1)
         )  # [batch_size, 1 + seq_len]
 
-        # Encode the prefix, producing a row per event for the decoder to attend over, 
+        # Encode the prefix, producing a row per event for the decoder to attend over,
         # and a CLS row summarizing the whole of it for the latent networks to read
         prefix_encoded = self.prefix_encoder(
             events=item.prefix, pad_mask=prefix_pad_mask
         )  # [batch_size, 1 + seq_len, d_model]
         prefix_CLS = prefix_encoded[:, 0]  # [batch_size, d_model], CLS row summarizing the whole prefix
 
-        # Always computed: used for the KL term during training, and for sampling z during inference.
-        # The prior is conditioned on the prefix, so it is a distribution over what the suffix can be given the prefix.
+        # Encode the suffix, producing a CLS row summarizing the whole of it for the latent networks to read
+        suffix_CLS = self.suffix_encoder(
+            events=item.suffix,
+            pad_mask=padding_mask(
+                lengths=item.suffix_len, seq_len=item.suffix.activities.size(dim=1)
+            ),
+        )[:, 0]  # [batch_size, d_model]
+
+        # p(z | prefix)
         prior = self.prior(prefix_CLS)  # mean, logvar: [batch_size, 2 * latent_dim]
+        # q(z | prefix, suffix)
+        posterior = self.posterior(prefix_summary=prefix_CLS, suffix_summary=suffix_CLS)
+        # Sample a latent z from the posterior
+        z = posterior.sample()  # [batch_size, latent_dim]
 
-        if sample_from == 'posterior': 
-            # TRAINING: Run the suffix encoder to produce a CLS row summarizing the whole of the suffix.
-            # The per event rows are not used, as the decoder is not allowed to read the suffix at all: it is what the model is trying to predict.
-            suffix_CLS = self.suffix_encoder(
-                events=item.suffix,
-                pad_mask=padding_mask(
-                    lengths=item.suffix_len, seq_len=item.suffix.activities.size(dim=1)
-                ),
-            )[:, 0]  # [batch_size, d_model]
-
-            # q(z | prefix, suffix)
-            posterior = self.posterior(
-                prefix_summary=prefix_CLS, suffix_summary=suffix_CLS
-            )
-            z = posterior.sample()  # [batch_size, latent_dim]
-
-        else:
-            # GENERATION: the suffix is unknown, so the suffix encoder and the posterior are not
-            # run and p(z | prefix) supplies the latent instead.
-            posterior = None
-            z = prior.sample()  # [batch_size, latent_dim]
-        
         # Run the decoder, which reads the prefix and the latent z, and predicts the suffix.
         decoder_output = self.decoder(
             decoder_input=item.decoder_input,
@@ -145,7 +150,6 @@ class TransformerCVAE(nn.Module):
         The suffix is unknown here, so only the prefix is encoded and every latent comes from `p(z | prefix)`. 
         
         The samples of one prefix differ only in that latent, since the decoder reads its heads greedily.
-        The spread across them is a property of the prior rather than of a softmax.
 
         Args:
             item: A batch from `SuffixDataset`, read for its prefix only.
@@ -181,6 +185,6 @@ class TransformerCVAE(nn.Module):
         batch_size = item.prefix_len.size(dim=0)
         return GeneratedSuffix(
             activities=generated.activities.view(batch_size, num_samples, -1),
-            time_deltas=generated.time_deltas.view(batch_size, num_samples, -1),
             lengths=generated.lengths.view(batch_size, num_samples),
+            remaining_time=generated.remaining_time.view(batch_size, num_samples),
         )

@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 from typing import Sequence
-
 import pandas as pd
 from pm4py.objects.petri_net.obj import Marking, PetriNet
 
+from src.evaluation.sequences import mean
 from src.logs.keys import ACTIVITY_KEY, CASE_KEY
 from src.logs.replay import replay_fitness
 
@@ -123,10 +123,8 @@ def _conformance(
     unseen = [bigram for bigram in introduced if bigram not in observed_bigrams]
 
     return TraceConformance(
-        fitness_mean=sum(fitness) / len(fitness) if fitness else 0.0,
-        perfectly_fitting_rate=(
-            sum(1 for f in fitness if f >= 1.0) / len(fitness) if fitness else 0.0
-        ),
+        fitness_mean=mean(fitness),
+        perfectly_fitting_rate=mean([float(f >= 1.0) for f in fitness]),
         # Pooled over pairs rather than averaged over traces, so a long suffix's transitions
         # weigh what they are: one chance each to leave the observed behaviour.
         unseen_bigram_rate=len(unseen) / len(introduced) if introduced else 0.0,

@@ -9,8 +9,8 @@ from src.model.components.embeddings import EventEmbeddings
 def padding_mask(lengths: torch.Tensor, seq_len: int) -> torch.Tensor:
     """Mark the positions of an encoder input that hold padding.
 
-    True means padding, the polarity `nn.Transformer`'s `*_key_padding_mask` arguments take,
-    and the opposite of `loss.real_event_mask`; both names say which way round they are.
+    True means padding, the polarity `nn.Transformer`'s `*_key_padding_mask` arguments take;
+    the name says which way round it is.
     The extra leading column is the CLS token every encoder prepends, which is never padding.
     Args:
         lengths: Number of real events per sequence, `[batch_size]`.

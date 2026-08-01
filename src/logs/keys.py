@@ -21,10 +21,12 @@ UNK_RESOURCE = 'UNK-RES'
 # always fed to the model.
 CASE_OFFSET_KEY = 'relative_timestamp_from_start'
 
-# Per-event attribute added by pipelines/preprocess.py (see add_event_delta):
-# minutes since the previous activity in the same case. This is the timestamp
-# the model actually predicts.
+# Minutes since the previous activity in the same case. Read by the encoders; never predicted
 EVENT_DELTA_KEY = 'relative_timestamp_from_previous_activity'
+
+# minutes from this event to the last event of its case. This is the time quantity the
+# model predicts.
+REMAINING_TIME_KEY = 'remaining_time_to_case_end'
 
 # Separator used by every raw and processed CSV log in this project.
 CSV_SEPARATOR = ';'

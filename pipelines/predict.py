@@ -8,7 +8,7 @@ from src.configs import DatasetInfo, ExperimentConfig, load_config
 from src.datasets.codec import Codec
 from src.datasets.dataset import SuffixDataset
 from src.inference import generate_predictions, generation_batch_size, predictions_path
-from src.model import build_model_from_checkpoint, latest_best_model_path, load_checkpoint
+from src.model import TransformerCVAE, latest_best_model_path, load_checkpoint
 
 
 def run(config: ExperimentConfig, model_path: Path | None = None) -> None:
@@ -28,12 +28,11 @@ def run(config: ExperimentConfig, model_path: Path | None = None) -> None:
     # Build the dataset info and codec, needed to decode the predictions back into event sequences
     dataset_info = DatasetInfo.build(config.data)
     codec = Codec(dataset_info)
+    test_dataset = SuffixDataset(dataset_info.test, dataset_info, codec)
 
     test_loader = DataLoader(
-        dataset=SuffixDataset(dataset_info.test, dataset_info, codec),
-        # Not `data.batch_size`: every prefix is generated for `num_samples` times over, so that
-        # would hand the decoder that many times the rows it was tuned for.
-        batch_size=generation_batch_size(config.inference.num_samples, config.data.batch_size),
+        dataset=test_dataset,
+        batch_size=generation_batch_size(inference=config.inference, upper_bound=config.data.batch_size),
         shuffle=False,
         num_workers=config.data.num_workers,
     )
@@ -43,7 +42,7 @@ def run(config: ExperimentConfig, model_path: Path | None = None) -> None:
         model_path = latest_best_model_path(
             config.training.best_model_dir, f'{config.data.dir.name}/{config.experiment_name}'
         )
-    model = build_model_from_checkpoint(
+    model = TransformerCVAE.from_checkpoint(
         load_checkpoint(model_path), dataset_info, device=config.training.device
     )
 

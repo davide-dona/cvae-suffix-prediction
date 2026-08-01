@@ -1,36 +1,8 @@
-from dataclasses import dataclass
-
 import torch
 from torch import nn
 
 from src.configs.schema import LatentConfig, PriorConfig
-
-# The latent heads emit a log-variance rather than a standard deviation, so the scale stays
-# positive by construction. The range is clamped because `exp` of an unbounded head turns
-# into an inf, and from there into a NaN loss, long before training would recover.
-LOGVAR_MIN, LOGVAR_MAX = -10.0, 10.0
-
-
-@dataclass
-class Gaussian:
-    """A diagonal Gaussian over the latent space, `[batch_size, latent_dim]` per field."""
-    mean: torch.Tensor
-    logvar: torch.Tensor
-
-    @classmethod
-    def from_parameters(cls, parameters: torch.Tensor) -> "Gaussian":
-        """Read a `[batch_size, 2 * latent_dim]` head output as a mean and a log-variance."""
-        # The head emits both halves in one tensor: first the mean, then the log-variance.
-        mean, logvar = parameters.chunk(chunks=2, dim=-1)  # each [batch_size, latent_dim]
-        return cls(mean=mean, logvar=logvar.clamp(min=LOGVAR_MIN, max=LOGVAR_MAX))
-
-    def sample(self) -> torch.Tensor:
-        """Draw one sample through the reparametrization trick, so the gradient reaches
-        `mean` and `logvar`."""
-        # mean + std * noise: the randomness sits in a term with no parameters, which is what
-        # leaves a gradient path through `mean` and `logvar`.
-        std = torch.exp(input=0.5 * self.logvar)                        # [batch_size, latent_dim]
-        return self.mean + std * torch.randn_like(input=self.mean)      # [batch_size, latent_dim]
+from src.distributions.gaussian import Gaussian
 
 
 class PriorNetwork(nn.Module):

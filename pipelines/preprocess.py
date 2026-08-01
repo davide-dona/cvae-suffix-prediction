@@ -1,6 +1,5 @@
 import argparse
 from pathlib import Path
-
 import pandas as pd
 
 from src.configs import DataConfig, load_config
@@ -11,23 +10,24 @@ from src.logs.keys import (
     ACTIVITY_KEY,
     CASE_KEY,
     LABEL_KEY,
+    REMAINING_TIME_KEY,
     RESOURCE_KEY,
     TIMESTAMP_KEY,
 )
 from src.logs.discovery import discover_process_model, write_process_model
 from src.logs.split import temporal_split
-from src.logs.timestamps import add_case_offset, add_event_delta
+from src.logs.timestamps import add_case_offset, add_event_delta, add_remaining_time
 
 
 def preprocess(log: pd.DataFrame) -> pd.DataFrame:
     """
-    Add the relative-timestamp columns the model consumes.
+    Add relative-timestamp columns to an event log.
     Args:
         log: Event log with columns already renamed to canonical names
             (see `src.logs.io.read_log`).
     Returns:
-        A copy of `log` with `CASE_OFFSET_KEY` and
-        `EVENT_DELTA_KEY` added.
+        A copy of `log` with `CASE_OFFSET_KEY`, `EVENT_DELTA_KEY` and
+        `REMAINING_TIME_KEY` added.
     """
     log = add_case_offset(
         log,
@@ -41,6 +41,12 @@ def preprocess(log: pd.DataFrame) -> pd.DataFrame:
         timestamp_key=TIMESTAMP_KEY,
         out_key=EVENT_DELTA_KEY,
     )
+    log = add_remaining_time(
+        log,
+        case_key=CASE_KEY,
+        timestamp_key=TIMESTAMP_KEY,
+        out_key=REMAINING_TIME_KEY,
+    )
     return log
 
 
@@ -48,7 +54,6 @@ def ensure_dataset(data_config: DataConfig) -> None:
     """
     Preprocess the dataset if its splits are not on disk yet, so a training run only ever
     needs the raw log to have been placed in `<dir>/original.csv`.
-
     Args:
         data_config: The `data` section of this dataset's experiment config.
     Raises:
@@ -89,16 +94,14 @@ def run(data_config: DataConfig) -> None:
         data_config.label_key: LABEL_KEY,
     }
 
-    # Read, preprocess and write the full log
+    # Read, preprocess and write the full elaborated log\
     log = read_log(data_config.dir / 'original.csv', column_mapping=column_mapping)
     log = preprocess(log)
-    
     processed_dir = data_config.dir / 'processed'
     write_log(log, processed_dir / 'full.csv')
 
     # Split the log into train/val/test and write them. Test is whatever the first two fractions
-    # leave over, so `data_config.test_split` is not passed: it is validated against the other two
-    # in `DataConfig`, and re-deriving it here could only disagree with the remainder.
+    # leave over, so `data_config.test_split` is not passed
     train, val, test = temporal_split(
         log,
         case_key=CASE_KEY,

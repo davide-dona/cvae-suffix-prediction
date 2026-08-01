@@ -1,9 +1,8 @@
 from dataclasses import dataclass
 from typing import Sequence
-
 import pandas as pd
 
-from src.evaluation.sequences import sequence_similarity
+from src.evaluation.sequences import mean, score_samples
 
 
 @dataclass(frozen=True)
@@ -18,9 +17,12 @@ class AccuracyMetrics:
     """How close the generated suffixes came to the ground truth.
 
     Every field is an average over prefixes of a per-prefix number, which is itself either the
-    mean or the best over that prefix's samples. The two are worth reading together: `_mean` is
-    what one draw is worth, `_best` is whether the model covers the truth at all, and the gap
+    mean or the best over that prefix's samples. The two are worth reading together: `mean` is
+    what one draw is worth, `best` is whether the model covers the truth at all, and the gap
     between them is what the latent is contributing.
+
+    `sample_diversity` stands apart: it is not a mean/best pair, since it needs every sample of a
+    prefix at once rather than reducing over them independently.
     """
     activity_dls_mean: float
     activity_dls_best: float
@@ -28,12 +30,13 @@ class AccuracyMetrics:
     remaining_time_ae_best_minutes: float
     length_ae_mean: float
     length_ae_best: float
+    sample_diversity: float
     by_prefix_length: dict[int, PrefixLengthAccuracy]
 
 
 @dataclass(frozen=True)
 class _PrefixAccuracy:
-    """The same six numbers, for the samples of a single prefix."""
+    """The same numbers, for the samples of a single prefix."""
     prefix_len: int
     activity_dls_mean: float
     activity_dls_best: float
@@ -41,6 +44,7 @@ class _PrefixAccuracy:
     remaining_time_ae_best_minutes: float
     length_ae_mean: float
     length_ae_best: float
+    sample_diversity: float
 
 
 def accuracy_metrics(predictions: pd.DataFrame) -> AccuracyMetrics:
@@ -62,12 +66,13 @@ def accuracy_metrics(predictions: pd.DataFrame) -> AccuracyMetrics:
         for _, samples in predictions.groupby(['case_id', 'prefix_len'], sort=False)
     ]
     return AccuracyMetrics(
-        activity_dls_mean=_mean([p.activity_dls_mean for p in per_prefix]),
-        activity_dls_best=_mean([p.activity_dls_best for p in per_prefix]),
-        remaining_time_ae_mean_minutes=_mean([p.remaining_time_ae_mean_minutes for p in per_prefix]),
-        remaining_time_ae_best_minutes=_mean([p.remaining_time_ae_best_minutes for p in per_prefix]),
-        length_ae_mean=_mean([p.length_ae_mean for p in per_prefix]),
-        length_ae_best=_mean([p.length_ae_best for p in per_prefix]),
+        activity_dls_mean=mean([p.activity_dls_mean for p in per_prefix]),
+        activity_dls_best=mean([p.activity_dls_best for p in per_prefix]),
+        remaining_time_ae_mean_minutes=mean([p.remaining_time_ae_mean_minutes for p in per_prefix]),
+        remaining_time_ae_best_minutes=mean([p.remaining_time_ae_best_minutes for p in per_prefix]),
+        length_ae_mean=mean([p.length_ae_mean for p in per_prefix]),
+        length_ae_best=mean([p.length_ae_best for p in per_prefix]),
+        sample_diversity=mean([p.sample_diversity for p in per_prefix]),
         by_prefix_length=_by_prefix_length(per_prefix),
     )
 
@@ -82,28 +87,30 @@ def _prefix_accuracy(samples: pd.DataFrame) -> _PrefixAccuracy:
         That prefix's contribution to the averages.
     """
     truth = samples.iloc[0]
-    # Suffix deltas are gaps between consecutive events, so their sum is the time left from the
-    # end of the prefix to the end of the case: the remaining cycle time.
-    true_remaining = float(sum(truth.true_time_deltas_minutes))
+    # The remaining cycle time: minutes from the end of the prefix to the end of the case,
+    # which the model predicts directly rather than as a sum of per-event gaps.
+    true_remaining = float(truth.true_remaining_time_minutes)
 
-    activity_dls: list[float] = []
     remaining_time_ae: list[float] = []
     length_ae: list[float] = []
+    predicted_activities: list[list[str]] = []
     for sample in samples.itertuples():
-        activity_dls.append(sequence_similarity(sample.predicted_activities, truth.true_activities))
         remaining_time_ae.append(
-            abs(float(sum(sample.predicted_time_deltas_minutes)) - true_remaining)
+            abs(float(sample.predicted_remaining_time_minutes) - true_remaining)
         )
         length_ae.append(float(abs(len(sample.predicted_activities) - len(truth.true_activities))))
+        predicted_activities.append(sample.predicted_activities)
 
+    activities = score_samples(predicted_activities, truth.true_activities)
     return _PrefixAccuracy(
         prefix_len=int(truth.prefix_len),
-        activity_dls_mean=_mean(activity_dls),
-        activity_dls_best=max(activity_dls),
-        remaining_time_ae_mean_minutes=_mean(remaining_time_ae),
+        activity_dls_mean=activities.dls_mean,
+        activity_dls_best=activities.dls_best,
+        remaining_time_ae_mean_minutes=mean(remaining_time_ae),
         remaining_time_ae_best_minutes=min(remaining_time_ae),
-        length_ae_mean=_mean(length_ae),
+        length_ae_mean=mean(length_ae),
         length_ae_best=min(length_ae),
+        sample_diversity=activities.sample_diversity,
     )
 
 
@@ -119,12 +126,7 @@ def _by_prefix_length(per_prefix: Sequence[_PrefixAccuracy]) -> dict[int, Prefix
 
     return {
         prefix_len: PrefixLengthAccuracy(
-            pairs=len(scores[prefix_len]), activity_dls_mean=_mean(scores[prefix_len])
+            pairs=len(scores[prefix_len]), activity_dls_mean=mean(scores[prefix_len])
         )
         for prefix_len in sorted(scores)
     }
-
-
-def _mean(values: Sequence[float]) -> float:
-    """The mean of `values`, or 0.0 if there are none."""
-    return sum(values) / len(values) if values else 0.0

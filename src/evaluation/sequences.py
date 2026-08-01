@@ -1,8 +1,10 @@
+from dataclasses import dataclass
 from typing import Hashable, Sequence
 
-# The elements are only ever compared for equality, so the same distance is measured over
-# decoded activity names and over the indices they were decoded from. That is what lets the
-# training loop score a generation without carrying a `Codec` around.
+
+def mean(values: Sequence[float]) -> float:
+    """The mean of `values`, or 0.0 if there are none."""
+    return sum(values) / len(values) if values else 0.0
 
 
 def damerau_levenshtein_distance(first: Sequence[Hashable], second: Sequence[Hashable]) -> int:
@@ -69,3 +71,67 @@ def sequence_similarity(predicted: Sequence[Hashable], true: Sequence[Hashable])
     if longest == 0:
         return 1.0
     return 1.0 - damerau_levenshtein_distance(predicted, true) / longest
+
+
+def diversity(samples: Sequence[Sequence[Hashable]]) -> float:
+    """
+    How far apart a set of sequences generated for one prefix are from each other, in `[0, 1]`.
+
+    The mean distance over every pair, which is 0.0 when a prefix's samples are all the same
+    sequence (or there are fewer than two to compare). Comparing samples of one prefix against
+    each other is what measures the spread `p(z | prefix)` claims the prefix leaves open.
+
+    Args:
+        samples: The sequences generated for one prefix, one per draw of z.
+    Returns:
+        0.0 for identical (or singleton) sample sets, up to 1.0 for sequences sharing nothing.
+    """
+    pairs = [
+        1.0 - sequence_similarity(samples[first], samples[second])
+        for first in range(len(samples))
+        for second in range(first + 1, len(samples))
+    ]
+    return mean(pairs)
+
+
+@dataclass(frozen=True)
+class SampleScores:
+    """How one prefix's generated samples compare to the ground truth, and to each other.
+
+    Attributes:
+        dls_mean: The mean similarity to the ground truth, what one draw is worth.
+        dls_best: The closest of the samples, whether the model covers the truth at all.
+        sample_diversity: The spread across the samples, which needs all of them at once
+            rather than reducing over them independently.
+    """
+    dls_mean: float
+    dls_best: float
+    sample_diversity: float
+
+
+def score_samples(
+    samples: Sequence[Sequence[Hashable]],
+    truth: Sequence[Hashable],
+) -> SampleScores:
+    """
+    Score the suffixes generated for one prefix against the ground truth they continue.
+
+    The three numbers a generated set is judged by, in one place: `validate_generation` averages
+    them over a validation slice while training, `accuracy_metrics` over the test split
+    afterwards, so a training curve and a final report measure the same thing rather than
+    agreeing by coincidence.
+
+    Args:
+        samples: The sequences generated for the prefix, one per draw of z. Activity indices
+            while training and decoded activity names when scoring a predictions file, which is
+            why nothing here is named after activities.
+        truth: The ground-truth suffix the samples are compared against.
+    Returns:
+        The prefix's three scores, all 0.0 if no samples were generated for it.
+    """
+    similarities = [sequence_similarity(sample, truth) for sample in samples]
+    return SampleScores(
+        dls_mean=mean(similarities),
+        dls_best=max(similarities) if similarities else 0.0,
+        sample_diversity=diversity(samples),
+    )
