@@ -5,14 +5,21 @@ from pm4py.objects.petri_net.obj import Marking, PetriNet
 
 from src.evaluation.sequences import mean
 from src.logs.keys import ACTIVITY_KEY, CASE_KEY
-from src.logs.replay import replay_fitness
+from src.logs.replay import replay_fitness, replay_precision
 
 
 @dataclass(frozen=True)
 class TraceConformance:
-    """How much of a set of traces the process allows."""
+    """How much of a set of traces the process allows, and how tightly it allows it.
+
+    Fitness alone saturates whenever the net is permissive enough to replay anything built
+    from familiar activities, which the inductive miner's rediscoverability guarantee makes
+    likely; precision is what catches that, since a net that accepts behaviour the traces
+    never take scores lower there even at fitness 1.0.
+    """
     fitness_mean: float
     perfectly_fitting_rate: float
+    precision: float
     unseen_bigram_rate: float
 
 
@@ -114,6 +121,7 @@ def _conformance(
     """
     traces = [list(prefix) + list(suffix) for prefix, suffix in zip(prefixes, suffixes)]
     fitness = replay_fitness(traces, net, initial_marking, final_marking)
+    precision = replay_precision(traces, net, initial_marking, final_marking)
 
     # Only the pairs the suffix introduces, the one joining it to its prefix included. The
     # prefix's own pairs come from the log and are observed by construction.
@@ -125,6 +133,7 @@ def _conformance(
     return TraceConformance(
         fitness_mean=mean(fitness),
         perfectly_fitting_rate=mean([float(f >= 1.0) for f in fitness]),
+        precision=precision,
         # Pooled over pairs rather than averaged over traces, so a long suffix's transitions
         # weigh what they are: one chance each to leave the observed behaviour.
         unseen_bigram_rate=len(unseen) / len(introduced) if introduced else 0.0,

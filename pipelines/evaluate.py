@@ -70,7 +70,9 @@ def run(generations_file: Path) -> None:
         f'{report.accuracy.activity_dls_best:.3f} best, diversity '
         f'{report.accuracy.sample_diversity:.3f}, replay fitness '
         f'{report.conformance.generated.fitness_mean:.3f} against '
-        f'{report.conformance.reference.fitness_mean:.3f} for the ground truth'
+        f'{report.conformance.reference.fitness_mean:.3f} for the ground truth, precision '
+        f'{report.conformance.generated.precision:.3f} against '
+        f'{report.conformance.reference.precision:.3f}'
     )
 
 

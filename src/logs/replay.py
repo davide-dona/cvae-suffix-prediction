@@ -60,19 +60,62 @@ def replay_fitness(
     return fitness
 
 
-def _as_log(variants: Sequence[tuple[str, ...]]) -> pd.DataFrame:
+def replay_precision(
+    traces: Sequence[Sequence[str]],
+    net: PetriNet,
+    initial_marking: Marking,
+    final_marking: Marking,
+) -> float:
+    """ET-Conformance token-based precision of a set of traces against a Petri net.
+
+    Precision is a whole-set measure, not a per-trace one: it is the fraction of transitions
+    the net enables at each prefix the traces actually visit that the traces go on to take,
+    weighted by how often each prefix recurs. A permissive net that still replays every trace
+    at fitness 1.0 (as the inductive miner guarantees for its own training log) shows up here
+    instead, since it keeps offering transitions the traces never use.
+
+    Args:
+        traces: The traces to score, each a sequence of activity names. Not deduplicated:
+            how often a prefix recurs is part of what precision weighs.
+        net: The Petri net to score against.
+        initial_marking: Its initial marking.
+        final_marking: Its final marking.
+    Returns:
+        The precision of the traces naming only activities the net has a transition for, 1.0
+        if none do (pm4py's convention for an empty log, kept so an all-unknown set reads as
+        uninformative rather than as a fitness-like 0.0).
+    """
+    labels = {transition.label for transition in net.transitions}
+    known = [trace for trace in traces if trace and labels.issuperset(trace)]
+    if not known:
+        return 1.0
+
+    return pm4py.precision_token_based_replay(
+        _as_log(known),
+        net,
+        initial_marking,
+        final_marking,
+        activity_key=ACTIVITY_KEY,
+        timestamp_key=TIMESTAMP_KEY,
+        case_id_key=CASE_KEY,
+    )
+
+
+def _as_log(traces: Sequence[Sequence[str]]) -> pd.DataFrame:
     """Turn activity sequences into the flat event log pm4py replays.
 
     Case ids are zero-padded so that sorting them lexicographically, which is what pm4py does
-    when it groups the frame into traces, restores the order the variants came in; the
+    when it groups the frame into traces, restores the order the traces came in; the
     timestamps are synthetic and only serve to order the events within a trace.
 
     Args:
-        variants: The distinct traces, each a tuple of activity names.
+        traces: The traces to convert, each a sequence of activity names. Duplicates are kept
+            as separate cases: callers that want each distinct trace replayed once dedupe
+            before calling.
     Returns:
         One row per event, with the canonical case/activity/timestamp columns.
     """
-    width = len(str(len(variants) - 1))
+    width = len(str(len(traces) - 1))
     epoch = pd.Timestamp(ts_input='2000-01-01')
     events = [
         {
@@ -80,7 +123,7 @@ def _as_log(variants: Sequence[tuple[str, ...]]) -> pd.DataFrame:
             ACTIVITY_KEY: activity,
             TIMESTAMP_KEY: epoch + pd.Timedelta(minutes=position),
         }
-        for index, variant in enumerate(variants)
-        for position, activity in enumerate(variant)
+        for index, trace in enumerate(traces)
+        for position, activity in enumerate(trace)
     ]
     return pd.DataFrame(events)
