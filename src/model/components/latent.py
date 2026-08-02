@@ -33,14 +33,14 @@ class PriorNetwork(nn.Module):
         # With `hidden_dims` empty this collapses to a single linear layer.
         self.net = nn.Sequential(*layers)
 
-    def forward(self, prefix_CLS: torch.Tensor) -> Gaussian:
+    def forward(self, prefix_summary: torch.Tensor) -> Gaussian:
         """
         Args:
-            prefix_CLS: The prefix encoder's CLS token, `[batch_size, d_model]`.
+            prefix_summary: The prefix encoder's summary, `[batch_size, d_model]`.
         Returns:
             `p(z | prefix)`.
         """
-        parameters = self.net(prefix_CLS)  # [batch_size, 2 * latent_dim]
+        parameters = self.net(prefix_summary)  # [batch_size, 2 * latent_dim]
         # The head emits both halves in one tensor: first the mean, then the log-variance.
         mean, logvar = parameters.chunk(chunks=2, dim=-1)  # each [batch_size, latent_dim]
         return Gaussian.create(mean=mean, logvar=logvar)
@@ -63,16 +63,16 @@ class PosteriorNetwork(nn.Module):
             in_features=suffix_dim + prefix_dim, out_features=2 * latent_config.latent_dim
         )
 
-    def forward(self, prefix_CLS: torch.Tensor, suffix_CLS: torch.Tensor) -> Gaussian:
+    def forward(self, prefix_summary: torch.Tensor, suffix_summary: torch.Tensor) -> Gaussian:
         """
         Args:
-            prefix_CLS: The prefix encoder's CLS token, `[batch_size, d_model]`.
-            suffix_CLS: The suffix encoder's CLS token, `[batch_size, d_model]`.
+            prefix_summary: The prefix encoder's summary, `[batch_size, d_model]`.
+            suffix_summary: The suffix encoder's summary, `[batch_size, d_model]`.
         Returns:
             `q(z | prefix, suffix)`.
         """
         summaries = torch.cat(
-            tensors=(suffix_CLS, prefix_CLS), dim=-1
+            tensors=(suffix_summary, prefix_summary), dim=-1
         )  # [batch_size, suffix + prefix]
         parameters = self.head(summaries)  # [batch_size, 2 * latent_dim]
         # The head emits both halves in one tensor: first the mean, then the log-variance.

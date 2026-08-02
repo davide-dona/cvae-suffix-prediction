@@ -51,8 +51,6 @@ class EventEmbeddings(nn.Module):
             ),
             out_features=d_model,
         )
-        # The embeddings are scaled up by the square root of the width.
-        self.content_scale = math.sqrt(d_model)
         # A buffer moves with the model but is not trained.
         self.register_buffer(
             name='positional_encoding',
@@ -87,7 +85,7 @@ class EventEmbeddings(nn.Module):
         
         # Concatenate the channels and project to `d_model`.
         event = torch.cat(tensors=channels, dim=-1)  # [batch_size, seq_len, projection.in_features]
-        content = self.projection(event) * self.content_scale  # [batch_size, seq_len, d_model]
+        content = self.projection(event)  # [batch_size, seq_len, d_model]
 
         # Add the fixed positional encoding to event vectors
         length = events.activities.size(dim=1)

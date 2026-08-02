@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import torch
 from torch import nn
 
@@ -7,18 +8,22 @@ from src.model.components.embeddings import EventEmbeddings
 
 
 def padding_mask(lengths: torch.Tensor, seq_len: int) -> torch.Tensor:
-    """Mark the positions of an encoder input that hold padding.
-    The extra leading column is the CLS token every encoder prepends, which is never padding.
+    """Mark the positions of a padded sequence that hold padding.
     Args:
         lengths: Number of real events per sequence, `[batch_size]`.
         seq_len: The padded width the events come in at.
     Returns:
-        `[batch_size, 1 + seq_len]`, True where the position holds padding.
+        `[batch_size, seq_len]`, True where the position holds padding.
     """
     positions = torch.arange(end=seq_len, device=lengths.device)
-    events = positions.unsqueeze(dim=0) >= lengths.unsqueeze(dim=1)  # [batch_size, seq_len]
-    cls_column = events.new_zeros(size=(lengths.size(dim=0), 1))     # [batch_size, 1]
-    return torch.cat(tensors=(cls_column, events), dim=1)
+    return positions.unsqueeze(dim=0) >= lengths.unsqueeze(dim=1)  # [batch_size, seq_len]
+
+
+@dataclass(frozen=True)
+class EncodedTrace:
+    """What `TraceEncoder` turns a sequence into: a summary of the whole, and a row per event."""
+    summary: torch.Tensor  # [batch_size, d_model]
+    events: torch.Tensor   # [batch_size, seq_len, d_model]
 
 
 class TraceEncoder(nn.Module):
@@ -27,7 +32,8 @@ class TraceEncoder(nn.Module):
 
     A learned CLS token is prepended to the sequence, and the row it comes back as is the
     sequence's summary: the pooling is learned rather than fixed, so what a summary holds is
-    whatever the latent networks reading it turn out to need.
+    whatever the latent networks reading it turn out to need. The token is internal; callers
+    see only the `EncodedTrace` it comes back as.
     """
     def __init__(self, config: TraceEncoderConfig, embeddings: EventEmbeddings, *, d_model: int):
         super().__init__()
@@ -55,23 +61,27 @@ class TraceEncoder(nn.Module):
             enable_nested_tensor=False,
         )
 
-    def forward(self, events: EncodedEvents, pad_mask: torch.Tensor) -> torch.Tensor:
+    def forward(self, events: EncodedEvents, pad_mask: torch.Tensor) -> EncodedTrace:
         """
         Args:
             events: The events to read, `[batch_size, seq_len]` per field.
-            pad_mask: True where a position holds padding, `[batch_size, 1 + seq_len]`, from
+            pad_mask: True where a position holds padding, `[batch_size, seq_len]`, from
                 `padding_mask`.
         Returns:
-            The encoded sequence, `[batch_size, 1 + seq_len, d_model]`, whose row 0 is the CLS
-            summary and whose remaining rows are the events.
+            The sequence's summary and its encoded events.
         """
-        # One vector per event, positions included, then dropout so no single feature can carry
-        # a position on its own.
+        # Apply the embedding and dropout to every event, then prepend the CLS token to the sequence.
         embedded = self.dropout(self.embeddings(events))  # [batch_size, seq_len, d_model]
 
         cls_token = self.cls_token.expand(embedded.size(dim=0), -1, -1)  # [batch_size, 1, d_model]
         sequence = torch.cat(tensors=(cls_token, embedded), dim=1)  # [batch_size, 1 + seq_len, d_model]
+        # The CLS column is never padding, so add a column of False to the pad mask to match the sequence's width.
+        cls_column = pad_mask.new_zeros(size=(pad_mask.size(dim=0), 1))  # [batch_size, 1]
+        full_mask = torch.cat(tensors=(cls_column, pad_mask), dim=1)  # [batch_size, 1 + seq_len]
 
         # Masked positions are dropped from every attention row, so padding contributes nothing
         # to the summary or to any event's representation.
-        return self.encoder(src=sequence, src_key_padding_mask=pad_mask)
+        encoded = self.encoder(
+            src=sequence, src_key_padding_mask=full_mask
+        )  # [batch_size, 1 + seq_len, d_model]
+        return EncodedTrace(summary=encoded[:, 0], events=encoded[:, 1:])

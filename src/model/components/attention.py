@@ -41,10 +41,12 @@ class MultiHeadAttention(nn.Module):
         self.value_projection = nn.Linear(in_features=d_model, out_features=d_model)
         self.output_projection = nn.Linear(in_features=d_model, out_features=d_model)
 
-        # Xavier uniform weights, zero biases.
+        # Matches `nn.MultiheadAttention`: Xavier uniform q/k/v weights, zero biases throughout,
+        # output weights at their default.
         for projection in (self.query_projection, self.key_projection, self.value_projection):
             nn.init.xavier_uniform_(tensor=projection.weight)
             nn.init.zeros_(tensor=projection.bias)
+        nn.init.zeros_(tensor=self.output_projection.bias)
 
     def project(self, source: torch.Tensor) -> ProjectedKeysValues:
         """Turn a sequence into the keys and values attention reads it as.

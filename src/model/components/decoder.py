@@ -189,7 +189,11 @@ class Decoder(nn.Module):
             start_position=0,
             caches=None,
         )  # [batch_size, seq_len, d_model]
-        return self._read_heads(hidden)
+        features = self.shared_layer(hidden)  # [batch_size, seq_len, head_hidden_dim]
+        return DecoderOutput(
+            activity_logits=self.activity_head(features),
+            remaining_time_distr=self._remaining_time_distr(features[:, 0]),
+        )
 
     def _drop_activities(self, activities: torch.Tensor) -> torch.Tensor:
         """Blank a random `activity_dropout` fraction of the teacher-forced activities to PAD.
@@ -247,27 +251,21 @@ class Decoder(nn.Module):
 
         return self.norm(hidden), new_caches
 
-    def _read_heads(self, hidden: torch.Tensor) -> DecoderOutput:
-        """Read the stack's output as an activity per position, and the remaining time off the
-        first position handed in.
+    def _remaining_time_distr(self, feature: torch.Tensor) -> Gaussian:
+        """Read the suffix's remaining time off position 0, the state after SOS.
 
         Args:
-            hidden: `[batch_size, seq_len, d_model]`, however many positions the caller read.
+            feature: The shared trunk's output at position 0, `[batch_size, head_hidden_dim]`.
         Returns:
-            The per-position predictions. The remaining time is the suffix's only when position
-            0, the state after SOS, is the first position read.
+            The remaining-time distribution, `[batch_size]` per field.
         """
-        features = self.shared_layer(hidden)  # [batch_size, seq_len, head_hidden_dim]
-        remaining_time = self.remaining_time_head(features[:, 0])  # [batch_size, 2]
-        return DecoderOutput(
-            activity_logits=self.activity_head(features),
-            # Targets are min-max normalized into [0, 1], so the mean is squashed to match, and
-            # the log-variance floor is tightened to match the target's narrow scale.
-            remaining_time_distr=Gaussian.create(
-                mean=remaining_time[..., 0].sigmoid(),
-                logvar=remaining_time[..., 1],
-                logvar_min=REMAINING_TIME_LOGVAR_MIN,
-            ),
+        parameters = self.remaining_time_head(feature)  # [batch_size, 2]
+        # Targets are min-max normalized into [0, 1], so the mean is squashed to match, and
+        # the log-variance floor is tightened to match the target's narrow scale.
+        return Gaussian.create(
+            mean=parameters[..., 0].sigmoid(),
+            logvar=parameters[..., 1],
+            logvar_min=REMAINING_TIME_LOGVAR_MIN,
         )
 
     def _blank_events(self, activities: torch.Tensor) -> EncodedEvents:
@@ -332,20 +330,18 @@ class Decoder(nn.Module):
         """
         batch_size = z.size(dim=0)
 
-        # What the decoder reads: position 0 is SOS, exactly how `SuffixDataset` builds the
-        # teacher-forced position 0; position `i` is the activity predicted at step `i - 1`.
-        input_activities = torch.full(
-            size=(batch_size, max_steps),
+        # What the decoder reads at each step: SOS first, exactly how `SuffixDataset` builds
+        # the teacher-forced position 0, then the activity the previous step predicted.
+        next_input = torch.full(
+            size=(batch_size, 1),
             fill_value=self.sos_activity_index,
             dtype=torch.long,
             device=z.device,
         )
 
-        # What it produced. The remaining time is filled in by the first step, the only one
-        # that predicts it.
-        generated_activities = torch.zeros_like(input=input_activities)
-        remaining_time = z.new_zeros(size=(batch_size,))
-
+        generated_activities = torch.zeros(
+            size=(batch_size, max_steps), dtype=torch.long, device=z.device
+        )
         # A row that never emits EOT ran to the cap, so that is the length it keeps.
         lengths = torch.full(
             size=(batch_size,), fill_value=max_steps, dtype=torch.long, device=z.device
@@ -357,23 +353,21 @@ class Decoder(nn.Module):
         for position in range(max_steps):
             # Only this one position is new; everything before it is in `caches`.
             hidden, caches = self._run_layers(
-                activities=input_activities[:, position : position + 1],
+                activities=next_input,
                 z=z,
                 prefix_encoded=prefix_encoded,
                 prefix_pad_mask=prefix_pad_mask,
                 start_position=position,
                 caches=caches,
             )
-            output = self._read_heads(hidden)
-            activities = output.activity_logits[:, -1].argmax(dim=-1)  # [batch_size]
-            # Only the step reading position 0 answers for the whole suffix.
+            features = self.shared_layer(hidden[:, 0])  # [batch_size, head_hidden_dim]
+            activities = self.activity_head(features).argmax(dim=-1)  # [batch_size]
+            # Only position 0, the state after SOS, answers for the whole suffix.
             if position == 0:
-                remaining_time = output.remaining_time_distr.mean  # [batch_size]
+                remaining_time = self._remaining_time_distr(features).mean  # [batch_size]
 
             generated_activities[:, position] = activities
-            # The last step has no next position to feed.
-            if position + 1 < max_steps:
-                input_activities[:, position + 1] = activities
+            next_input = activities.unsqueeze(dim=1)  # [batch_size, 1]
 
             # A suffix ends at its first EOT, so a later one cannot move the length back.
             just_finished = ~finished & (activities == self.eot_activity_index)

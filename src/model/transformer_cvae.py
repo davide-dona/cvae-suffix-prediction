@@ -28,7 +28,7 @@ class TransformerCVAE(nn.Module):
     determine.
 
     Flow, with `prefix` and `suffix` both padded to `max_seq_len`:
-        prefix              -> prefix events (for the decoder) + CLS summary (for the latents)
+        prefix              -> prefix events (for the decoder) + summary (for the latents)
         prefix summary      -> p(z | prefix)               (scored by the KL term only)
         + suffix summary    -> q(z | prefix, suffix)
         z ~ q(z | prefix, suffix)
@@ -106,30 +106,26 @@ class TransformerCVAE(nn.Module):
         """
         prefix_pad_mask = padding_mask(
             lengths=item.prefix_len, seq_len=item.prefix.activities.size(dim=1)
-        )  # [batch_size, 1 + seq_len]
-
-        prefix_encoded = self.prefix_encoder(
-            events=item.prefix, pad_mask=prefix_pad_mask
-        )  # [batch_size, 1 + seq_len, d_model]
-        prefix_CLS = prefix_encoded[:, 0]  # [batch_size, d_model], the CLS row
-
-        suffix_CLS = self.suffix_encoder(
+        )  # [batch_size, seq_len]
+        prefix = self.prefix_encoder(events=item.prefix, pad_mask=prefix_pad_mask)
+        
+        suffix_summary = self.suffix_encoder(
             events=item.suffix,
             pad_mask=padding_mask(
                 lengths=item.suffix_len, seq_len=item.suffix.activities.size(dim=1)
             ),
-        )[:, 0]  # [batch_size, d_model]
+        ).summary  # [batch_size, d_model]
 
-        prior = self.prior(prefix_CLS)  # p(z | prefix)
-        posterior = self.posterior(prefix_CLS=prefix_CLS, suffix_CLS=suffix_CLS)
+        prior = self.prior(prefix.summary)  # p(z | prefix)
+        posterior = self.posterior(prefix_summary=prefix.summary, suffix_summary=suffix_summary)
         z = posterior.sample()  # [batch_size, latent_dim]
 
-        # The decoder reads the prefix events only; the CLS row belongs to the latent path.
+        # The decoder reads the prefix events only; the summary belongs to the latent path.
         decoder_output = self.decoder(
             decoder_input=item.decoder_input,
             z=z,
-            prefix_encoded=prefix_encoded[:, 1:],
-            prefix_pad_mask=prefix_pad_mask[:, 1:],
+            prefix_encoded=prefix.events,
+            prefix_pad_mask=prefix_pad_mask,
         )
         return TransformerCVAEOutput(decoder=decoder_output, prior=prior, posterior=posterior)
 
@@ -150,19 +146,17 @@ class TransformerCVAE(nn.Module):
         """
         prefix_pad_mask = padding_mask(
             lengths=item.prefix_len, seq_len=item.prefix.activities.size(dim=1)
-        )
-        prefix_encoded = self.prefix_encoder(
-            events=item.prefix, pad_mask=prefix_pad_mask
-        )  # [batch_size, 1 + seq_len, d_model]
+        )  # [batch_size, seq_len]
+        prefix = self.prefix_encoder(events=item.prefix, pad_mask=prefix_pad_mask)
 
         # Computed once per prefix: every sample of one prefix is drawn from the same
         # p(z | prefix), so running the prior once and repeating its parameters skips
         # num_samples - 1 redundant forward passes over identical rows.
-        prior = self.prior(prefix_encoded[:, 0])
+        prior = self.prior(prefix.summary)
 
-        # Every sample of a prefix gets its own row, adjacent to its siblings, so the flat
-        # result reshapes straight back into [batch_size, num_samples, ...].
-        prefix_encoded = prefix_encoded.repeat_interleave(repeats=num_samples, dim=0)
+        # Repeat the prefix events and pad mask for every sample, so the decoder sees a batch of
+        # size `batch_size * num_samples` and can generate all samples in one forward pass
+        prefix_events = prefix.events.repeat_interleave(repeats=num_samples, dim=0)
         prefix_pad_mask = prefix_pad_mask.repeat_interleave(repeats=num_samples, dim=0)
 
         # One latent per sample: independent noise per draw, `Gaussian.sample()`'s
@@ -175,8 +169,8 @@ class TransformerCVAE(nn.Module):
         # A suffix holds at most `max_seq_len` events, the padded width the batch comes in at.
         generated = self.decoder.generate(
             z=z,
-            prefix_encoded=prefix_encoded[:, 1:],
-            prefix_pad_mask=prefix_pad_mask[:, 1:],
+            prefix_encoded=prefix_events,
+            prefix_pad_mask=prefix_pad_mask,
             max_steps=item.prefix.activities.size(dim=1),
         )
         batch_size = item.prefix_len.size(dim=0)
