@@ -14,8 +14,10 @@ SOS_ACTIVITY = 'SOS'
 UNK_ACTIVITY = 'UNK'
 EOT_RESOURCE = 'EOT-RES'
 PADDING_RESOURCE = 'PAD-RES'
-SOS_RESOURCE = 'SOS-RES'
 UNK_RESOURCE = 'UNK-RES'
+
+# The value a categorical feature channel takes where the log has none
+MISSING_FEATURE = '<MISSING>'
 
 # Case attribute added by pipelines/preprocess.py (see add_case_offset) and
 # always fed to the model.

@@ -3,6 +3,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.evaluation.sequences import score_samples
+from src.inference import generate_batch
 from src.model import TransformerCVAE
 from src.training.loss import Loss, compute_loss
 from src.training.metrics import ScalarMetrics
@@ -81,32 +82,12 @@ def validate_generation(
 
     for batch in loader:
         batch = batch.to(device)
-        # Generate `num_samples` suffixes for each prefix in the batch
-        generated = model.generate(batch, num_samples=num_samples)
+        generation = generate_batch(model, batch, num_samples=num_samples)
 
-        # Get the true lengths of the suffixes, accounting for whether they end with EOT or not
-        last_position = (batch.suffix_len - 1).unsqueeze(dim=1)  # [batch_size, 1]
-        ends_with_eot = (
-            batch.suffix.activities.gather(dim=1, index=last_position).squeeze(dim=1)
-            == model.eot_activity_index
-        )  # [batch_size]
-        true_lengths = (batch.suffix_len - ends_with_eot.long()).tolist()
-        sample_lengths = generated.lengths.cpu().tolist()
-        
-        # Get the true and generated activities as lists of lists, for easier comparison
-        true_activities = batch.suffix.activities.cpu().tolist()
-        sample_activities = generated.activities.cpu().tolist()  # [batch, num_samples, steps]
-        
-
-        scores = []
-        for position, true_length in enumerate(true_lengths):
-            # Get the ground truth suffix and the generated samples for this prefix
-            truth = true_activities[position][:true_length]
-            samples = [
-                sample_activities[position][sample][: sample_lengths[position][sample]]
-                for sample in range(num_samples)
-            ]
-            scores.append(score_samples(samples, truth))
+        scores = [
+            score_samples(generation.samples(position), generation.truth(position))
+            for position in range(len(generation.true_lengths))
+        ]
 
         totals += GenerationMetrics(
             activity_dls_mean=sum(score.dls_mean for score in scores),

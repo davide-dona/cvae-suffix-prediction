@@ -47,7 +47,7 @@ class _PrefixAccuracy:
     sample_diversity: float
 
 
-def accuracy_metrics(predictions: pd.DataFrame) -> AccuracyMetrics:
+def accuracy_metrics(generations: pd.DataFrame) -> AccuracyMetrics:
     """
     Score generated suffixes against the ground truth they were generated for.
 
@@ -55,7 +55,7 @@ def accuracy_metrics(predictions: pd.DataFrame) -> AccuracyMetrics:
     prefixes, not over rows, so a prefix does not count more for having more samples.
 
     Args:
-        predictions: Rows written by `src/inference/predict.py`, with the truncated pairs
+        generations: Rows written by `src/inference/generate.py`, with the truncated pairs
             already dropped (their ground-truth suffix stops short of the real ending, so
             nothing here would be measuring what it claims to).
     Returns:
@@ -63,7 +63,7 @@ def accuracy_metrics(predictions: pd.DataFrame) -> AccuracyMetrics:
     """
     per_prefix = [
         _prefix_accuracy(samples)
-        for _, samples in predictions.groupby(['case_id', 'prefix_len'], sort=False)
+        for _, samples in generations.groupby(['case_id', 'prefix_len'], sort=False)
     ]
     return AccuracyMetrics(
         activity_dls_mean=mean([p.activity_dls_mean for p in per_prefix]),
@@ -93,15 +93,15 @@ def _prefix_accuracy(samples: pd.DataFrame) -> _PrefixAccuracy:
 
     remaining_time_ae: list[float] = []
     length_ae: list[float] = []
-    predicted_activities: list[list[str]] = []
+    generated_activities: list[list[str]] = []
     for sample in samples.itertuples():
         remaining_time_ae.append(
-            abs(float(sample.predicted_remaining_time_minutes) - true_remaining)
+            abs(float(sample.generated_remaining_time_minutes) - true_remaining)
         )
-        length_ae.append(float(abs(len(sample.predicted_activities) - len(truth.true_activities))))
-        predicted_activities.append(sample.predicted_activities)
+        length_ae.append(float(abs(len(sample.generated_activities) - len(truth.true_activities))))
+        generated_activities.append(sample.generated_activities)
 
-    activities = score_samples(predicted_activities, truth.true_activities)
+    activities = score_samples(generated_activities, truth.true_activities)
     return _PrefixAccuracy(
         prefix_len=int(truth.prefix_len),
         activity_dls_mean=activities.dls_mean,

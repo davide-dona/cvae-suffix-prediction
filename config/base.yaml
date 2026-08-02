@@ -6,10 +6,12 @@ model:
   # The size of the embedding space
   d_model: 64
 
-  # Activity/resource lookup widths, concatenated with the time delta and projected to d_model.
+  # Activity/resource lookup widths, concatenated with the time delta, the data section's
+  # event_features and their present flags, and projected to d_model.
   embeddings:
     activity_dim: 16
     resource_dim: 16
+    feature_dim: 8  # per categorical event feature; each one widens the projection's input
 
   # Encodes the prefix; its CLS summary feeds both the prior and the decoder's cross-attention.
   prefix_encoder:
@@ -39,6 +41,7 @@ model:
     num_heads: 4
     feedforward_dim: 256
     dropout: 0.1
+    activity_dropout: 0.3  # teacher-forced activities blanked in training, so the decoder must lean on z
     head_hidden_dim: 64
 
 # All the hyperparameters below are defined in steps, not epochs, 
@@ -49,8 +52,8 @@ loss:
   kl_annealing_period_steps: 10000
   kl_annealing_ratio: 0.3   # fraction of the period spent ramping up from 0 to full weight
   kl_annealing_start_weight: 0.0
-  kl_annealing_full_weight: 1.0
-  free_bits: 0.15  # nats/dimension floor below which the KL is not penalized; keeps z from collapsing
+  kl_annealing_full_weight: 0.5  # below 1 keeps deviating from the prior cheaper than losing reconstruction
+  free_bits: 0.3  # nats/dimension floor below which the KL is not penalized; keeps z from collapsing
 
 optimizer:
   lr: 0.0003
@@ -80,5 +83,5 @@ inference:
   # num_samples * min(batch_size, upper_bound) rows at once; this bounds
   # that total regardless of num_samples, which is set independently.
   generation_rows: 512
-  predictions_dir: outputs/predictions
+  generations_dir: outputs/generations
 

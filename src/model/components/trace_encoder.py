@@ -8,9 +8,6 @@ from src.model.components.embeddings import EventEmbeddings
 
 def padding_mask(lengths: torch.Tensor, seq_len: int) -> torch.Tensor:
     """Mark the positions of an encoder input that hold padding.
-
-    True means padding, the polarity `nn.Transformer`'s `*_key_padding_mask` arguments take;
-    the name says which way round it is.
     The extra leading column is the CLS token every encoder prepends, which is never padding.
     Args:
         lengths: Number of real events per sequence, `[batch_size]`.
@@ -55,11 +52,8 @@ class TraceEncoder(nn.Module):
             # Pre-norm leaves the last layer's residual stream unnormalized, so the stack closes
             # with a norm of its own.
             norm=nn.LayerNorm(normalized_shape=d_model),
-            # The nested-tensor fast path does not apply to pre-norm layers. Saying so here is
-            # what keeps it from being asked for and warned about once per encoder built.
             enable_nested_tensor=False,
         )
-        self.output_dim = d_model
 
     def forward(self, events: EncodedEvents, pad_mask: torch.Tensor) -> torch.Tensor:
         """

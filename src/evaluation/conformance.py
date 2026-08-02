@@ -29,7 +29,7 @@ class ConformanceMetrics:
 
 
 def conformance_metrics(
-    predictions: pd.DataFrame,
+    generations: pd.DataFrame,
     *,
     test_log: pd.DataFrame,
     train_log: pd.DataFrame,
@@ -45,7 +45,7 @@ def conformance_metrics(
     would score the prefix's absence rather than the suffix's quality.
 
     Args:
-        predictions: Rows written by `src/inference/predict.py`, truncated pairs already
+        generations: Rows written by `src/inference/generate.py`, truncated pairs already
             dropped, one per (prefix, sample).
         test_log: The split the prefixes were cut from, supplying the events the rows only
             record a length for.
@@ -61,12 +61,12 @@ def conformance_metrics(
 
     generated_prefixes: list[list[str]] = []
     generated_suffixes: list[list[str]] = []
-    for row in predictions.itertuples():
+    for row in generations.itertuples():
         generated_prefixes.append(prefixes[row.case_id][:row.prefix_len])
-        generated_suffixes.append(list(row.predicted_activities))
+        generated_suffixes.append(list(row.generated_activities))
 
     # One ground truth per prefix, however many samples were drawn from it.
-    truths = predictions.drop_duplicates(subset=['case_id', 'prefix_len'])
+    truths = generations.drop_duplicates(subset=['case_id', 'prefix_len'])
     reference_prefixes: list[list[str]] = []
     reference_suffixes: list[list[str]] = []
     for row in truths.itertuples():

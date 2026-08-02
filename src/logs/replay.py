@@ -1,5 +1,4 @@
 from typing import Sequence
-
 import pandas as pd
 import pm4py
 from pm4py.objects.petri_net.obj import Marking, PetriNet
@@ -13,15 +12,10 @@ def replay_fitness(
     initial_marking: Marking,
     final_marking: Marking,
 ) -> list[float]:
-    """
-    Token-based replay fitness of each trace against a Petri net.
-
-    A fitness of 1.0 means the trace can be replayed from the initial marking to the final one
-    without a token ever being missing or left behind; anything less is behaviour the model
-    does not allow. Traces are activity sequences only: token replay reads nothing else.
-
-    Distinct traces are replayed once each and the result is scattered back, since generated
-    suffixes repeat heavily and replaying is the expensive part of evaluation.
+    """Token-based replay fitness of each trace against a Petri net.
+    A fitness of 1.0 means the trace is perfectly replayable, 0.0 means it is not replayable at all.
+    
+    Each distinct trace is replayed once, and the result is scattered back to every instance of it in the input.
 
     Args:
         traces: The traces to replay, each a sequence of activity names.
@@ -34,9 +28,11 @@ def replay_fitness(
         over such an event as though it were not there, which would score a generated `UNK` as
         a perfect fit.
     """
+    # Retrieve the set of activity labels from the net
     labels = {transition.label for transition in net.transitions}
 
-    variants: dict[tuple[str, ...], list[int]] = {}
+    # Group the traces by their distinct activity sequences, so that each distinct trace is replayed once
+    variants: dict[tuple[str, ...], list[int]] = {}     # (distinct trace, positions in `traces` where it occurs)
     for position, trace in enumerate(traces):
         if trace and labels.issuperset(trace):
             variants.setdefault(tuple(trace), []).append(position)
@@ -45,6 +41,7 @@ def replay_fitness(
     if not variants:
         return fitness
 
+    # Replay the distinct traces
     diagnostics = pm4py.conformance_diagnostics_token_based_replay(
         _as_log(list(variants)),
         net,
@@ -53,10 +50,9 @@ def replay_fitness(
         activity_key=ACTIVITY_KEY,
         timestamp_key=TIMESTAMP_KEY,
         case_id_key=CASE_KEY,
-        # pm4py draws a progress bar per call otherwise, which says nothing a pipeline's own
-        # output does not already say.
         opt_parameters={'show_progress_bar': False},
     )
+    # Scatter the fitness of each distinct trace back to every instance of it in the input
     for diagnosis, positions in zip(diagnostics, variants.values()):
         for position in positions:
             fitness[position] = diagnosis['trace_fitness']

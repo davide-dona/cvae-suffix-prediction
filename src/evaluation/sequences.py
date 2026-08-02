@@ -123,7 +123,7 @@ def score_samples(
 
     Args:
         samples: The sequences generated for the prefix, one per draw of z. Activity indices
-            while training and decoded activity names when scoring a predictions file, which is
+            while training and decoded activity names when scoring a generations file, which is
             why nothing here is named after activities.
         truth: The ground-truth suffix the samples are compared against.
     Returns:

@@ -8,38 +8,38 @@ from src.logs.discovery import read_process_model
 from src.logs.io import read_log
 
 
-def run(predictions_file: Path) -> None:
-    """
-    Score a run's generated suffixes and write the result next to them.
+def run(generations_file: Path) -> None:
+    """Score a run's generated suffixes and write the result under the `eval` sibling of the
+    generations directory.
 
-    Nothing is generated here: the predictions file is the input, so a metric can be added and
+    Nothing is generated here: the generations file is the input, so a metric can be added and
     every past run rescored without the model being run again. It is also the only input: the
-    dataset it was predicted from is `predictions_file`'s parent directory name, per
-    `src.inference.predict.predictions_path`, and that dataset's splits and process model live
+    dataset it was generated from is `generations_file`'s parent directory name, per
+    `src.inference.generate.generations_path`, and that dataset's splits and process model live
     at the fixed `data/<dataset>` convention every `config/*.yaml` follows.
 
     Args:
-        predictions_file: The predictions to score, from `python -m pipelines.predict`.
+        generations_file: The generations to score, from `python -m pipelines.generate`.
     """
-    if not predictions_file.exists():
+    if not generations_file.exists():
         raise FileNotFoundError(
-            f'no predictions at {predictions_file}. Run `python -m pipelines.predict` first, '
-            'or name the right predictions file.'
+            f'no generations at {generations_file}. Run `python -m pipelines.generate` first, '
+            'or name the right generations file.'
         )
 
-    dataset = predictions_file.parent.name
+    dataset = generations_file.parent.name
     data_dir = Path('data') / dataset
 
-    predictions = pd.read_parquet(path=predictions_file)
+    generations = pd.read_parquet(path=generations_file)
     # A truncated pair's ground-truth suffix stops short of the case's real ending, so it is
     # neither a fair target to score against nor a trace that can reach the net's final marking.
     # Dropped once, here, so every number below is measured on the same set of prefixes.
-    scored = predictions[~predictions['truncated']]
-    truncated_pairs = _pair_count(predictions) - _pair_count(scored)
+    scored = generations[~generations['truncated']]
+    truncated_pairs = _pair_count(generations) - _pair_count(scored)
 
-    run_name = f'{dataset}/{predictions_file.stem}'
+    run_name = f'{dataset}/{generations_file.stem}'
     print(
-        f'Scoring {len(scored)} predicted suffixes from {predictions_file}'
+        f'Scoring {len(scored)} generated suffixes from {generations_file}'
         + (f', {truncated_pairs} truncated prefixes left out' if truncated_pairs else ''),
         flush=True,
     )
@@ -64,7 +64,7 @@ def run(predictions_file: Path) -> None:
         ),
     )
 
-    path = report.write(predictions_file.with_suffix('.json'))
+    path = report.write(_eval_path(generations_file))
     print(
         f'Wrote {path}: activity DLS {report.accuracy.activity_dls_mean:.3f} mean / '
         f'{report.accuracy.activity_dls_best:.3f} best, diversity '
@@ -74,9 +74,23 @@ def run(predictions_file: Path) -> None:
     )
 
 
-def _pair_count(predictions: pd.DataFrame) -> int:
-    """How many distinct (case, cut point) prefixes a set of prediction rows covers."""
-    return len(predictions.drop_duplicates(subset=['case_id', 'prefix_len']))
+def _pair_count(generations: pd.DataFrame) -> int:
+    """How many distinct (case, cut point) prefixes a set of generation rows covers."""
+    return len(generations.drop_duplicates(subset=['case_id', 'prefix_len']))
+
+
+def _eval_path(generations_file: Path) -> Path:
+    """Where a run's evaluation report goes: the `eval` sibling of the generations directory,
+    keeping the same `<dataset>/<run_name>.json` layout `generations_path` uses for `.parquet`.
+
+    Args:
+        generations_file: The generations file the report was scored from.
+    Returns:
+        The path to write the report to.
+    """
+    generations_dir = generations_file.parents[1]
+    eval_dir = generations_dir.parent / 'eval'
+    return eval_dir / generations_file.parent.name / f'{generations_file.stem}.json'
 
 
 def main() -> None:
@@ -84,11 +98,11 @@ def main() -> None:
         description="Score a run's generated test-split suffixes against the log and the "
                     'process model mined from it.'
     )
-    parser.add_argument('-p', '--predictions', type=Path, required=True,
-                        help='Path to the predictions file to score, from `pipelines.predict`.')
+    parser.add_argument('-g', '--generations', type=Path, required=True,
+                        help='Path to the generations file to score, from `pipelines.generate`.')
     args = parser.parse_args()
 
-    run(args.predictions)
+    run(args.generations)
 
 
 if __name__ == '__main__':

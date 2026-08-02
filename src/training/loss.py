@@ -46,9 +46,7 @@ def compute_loss(
         ignore_index=pad_activity_index,
         reduction='sum',
     )
-    remaining_time_loss = output.decoder.remaining_time_distr.gaussian_nll(
-        target=batch.remaining_time,
-    )
+    remaining_time_loss = output.decoder.remaining_time_distr.nll(batch.remaining_time)
     reconstruction_loss = activity_loss + remaining_time_loss
 
     # Compute KL divergence, summed over the batch

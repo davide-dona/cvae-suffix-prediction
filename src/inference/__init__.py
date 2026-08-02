@@ -1,13 +1,16 @@
-from src.inference.predict import (
-    generate_predictions,
-    generation_batch_size,
-    predictions_path,
+from src.inference.generate import (
+    BatchGeneration,
+    GenerationRow,
+    generate_suffixes,
+    generations_path,
 )
-from src.inference.predict import PredictionRow
+from src.inference.batch import generate_batch, generation_batch_size
 
 __all__ = [
-    'PredictionRow',
-    'generate_predictions',
+    'BatchGeneration',
+    'GenerationRow',
+    'generate_batch',
+    'generate_suffixes',
     'generation_batch_size',
-    'predictions_path',
+    'generations_path',
 ]

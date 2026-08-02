@@ -1,4 +1,4 @@
-from .dataset_info import DatasetInfo
+from .dataset_info import CategoricalFeature, DatasetInfo, NormalizationRange, NumericFeature
 from .loader import load_config
 from .schema import (
     DataConfig,
@@ -18,6 +18,7 @@ from .schema import (
 
 __all__ = [
     "load_config",
+    "CategoricalFeature",
     "DataConfig",
     "DatasetInfo",
     "DecoderConfig",
@@ -28,6 +29,8 @@ __all__ = [
     "LatentConfig",
     "LossConfig",
     "ModelConfig",
+    "NormalizationRange",
+    "NumericFeature",
     "OptimizerConfig",
     "PriorConfig",
     "TraceEncoderConfig",

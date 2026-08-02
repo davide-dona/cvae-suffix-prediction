@@ -30,22 +30,18 @@ class DataConfig(StrictModel):
         description="Cases are truncated to this many events, which also bounds every prefix and suffix cut "
         "from them; the model's sequence tensors are padded to it",
     )
-    # Neither is read by the data layer or the model: the prefix is the only condition, and an
-    # event is (activity, resource, time delta). They record which columns each dataset offers
-    # for the two roles, and `src/notebooks/exploration.ipynb` reads them.
-    condition_features: list[str] = Field(
-        ..., description="Canonical (post-preprocessing) case-level columns, candidates for the CVAE condition"
-    )
-    attribute_features: list[str] = Field(
-        ..., description="Canonical (post-preprocessing) per-event columns, candidates for reconstruction "
-        "alongside activity/resource/timestamp"
+    
+    event_features: list[str] = Field(
+        ..., description="Canonical (post-preprocessing) columns the encoders read beside the "
+        "activity, resource and time delta. A numeric one becomes a value and a present flag, "
+        "anything else a vocabulary"
     )
 
     time_clip_percentile: float = Field(
         ..., gt=0.0, le=100.0,
-        description="Minutes above this train-split percentile are clipped before normalization. "
-        "Applied to both time columns, each against its own percentile: the per-event gaps the "
-        "encoders read, and the remaining time the model predicts",
+        description="Values above this train-split percentile are clipped before normalization. "
+        "Applied to every numeric channel against its own percentile: the per-event gaps the "
+        "encoders read, the remaining time the model predicts, and each numeric event-feature column",
     )
 
     batch_size: int = Field(..., gt=0)
@@ -64,6 +60,12 @@ class EmbeddingConfig(StrictModel):
 
     activity_dim: int = Field(..., gt=0)
     resource_dim: int = Field(..., gt=0)
+    feature_dim: int = Field(
+        ..., gt=0,
+        description="Width of every categorical feature channel's lookup. One width for all "
+        "of them, since they share a table; each channel widens the projection's input by this "
+        "much, so a log with many of them wants a smaller value, not a bigger one",
+    )
 
 
 class TraceEncoderConfig(StrictModel):
@@ -112,6 +114,12 @@ class DecoderConfig(StrictModel):
     num_heads: int = Field(..., gt=0, description="Attention heads per layer; must divide `d_model`")
     feedforward_dim: int = Field(..., gt=0, description="Width of the feed-forward block inside a layer")
     dropout: float = Field(..., ge=0.0, lt=1.0)
+    activity_dropout: float = Field(
+        ..., ge=0.0, lt=1.0,
+        description="Fraction of teacher-forced input activities blanked to PAD during "
+        "training. An unreliable previous token cannot carry the suffix on its own, which "
+        "pushes that information into z. 0.0 disables it",
+    )
     head_hidden_dim: int = Field(..., gt=0, description="Width of the layer shared by the two output heads")
 
 
@@ -238,7 +246,7 @@ class InferenceConfig(StrictModel):
         "`num_samples` times over, each row holding a key and value cache per position and "
         "layer, so this and not `data.batch_size` is what bounds the memory a call takes",
     )
-    predictions_dir: Path = Field(..., description="One predictions file per run, named after it")
+    generations_dir: Path = Field(..., description="One generations file per run, named after it")
 
 
 class EarlyStoppingConfig(StrictModel):

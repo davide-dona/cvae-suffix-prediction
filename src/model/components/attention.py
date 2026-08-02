@@ -24,28 +24,24 @@ class ProjectedKeysValues:
 
 
 class MultiHeadAttention(nn.Module):
-    """Personalized multi-head attention, allowing for caching of the projected keys (k) and values (v).
-    
-    Standard `nn.MultiheadAttention` does not allow for caching, and re-projects the entire prefix and 
-    suffix at every step of decoding, which is wasteful. This class allows for projecting the keys and 
-    values once, and then reusing them for each step of decoding.
+    """Multi-head attention with cached key/value projections.
+
+    `nn.MultiheadAttention` re-projects the entire source at every decoding step; here `project`
+    runs once and its result is reused for each step.
     """
 
     def __init__(self, *, d_model: int, num_heads: int, dropout: float):
         super().__init__()
         self.num_heads = num_heads
-        # Each head has a dimension of d_model / num_heads. 
-        # This is the dimension of the query, key, and value vectors for each head.
         self.head_dim = d_model // num_heads
         self.dropout = dropout
 
-        # Projections for the query, key, and value vectors
         self.query_projection = nn.Linear(in_features=d_model, out_features=d_model)
         self.key_projection = nn.Linear(in_features=d_model, out_features=d_model)
         self.value_projection = nn.Linear(in_features=d_model, out_features=d_model)
         self.output_projection = nn.Linear(in_features=d_model, out_features=d_model)
 
-        # Initialize the weights of the projections using Xavier uniform initialization for the weights and zeros for the biases.
+        # Xavier uniform weights, zero biases.
         for projection in (self.query_projection, self.key_projection, self.value_projection):
             nn.init.xavier_uniform_(tensor=projection.weight)
             nn.init.zeros_(tensor=projection.bias)
@@ -82,17 +78,14 @@ class MultiHeadAttention(nn.Module):
             `[batch_size, query_len, d_model]`.
         """
         batch_size, query_len, d_model = query.shape
-        # Project the query and split it across heads
         queries = self._split_heads(
             self.query_projection(query)
         )  # [batch_size, num_heads, query_len, head_dim]
 
         attention_mask = None
-        # If a key padding mask is provided, create an attention mask that blocks attention to padding positions.
         if key_padding_mask is not None:
             attention_mask = ~key_padding_mask[:, None, None, :]  # [batch_size, 1, 1, source_len]
 
-        # Apply scaled dot-product attention, which computes the attention scores and applies them to the values
         attended = F.scaled_dot_product_attention(
             query=queries,
             key=keys_values.keys,
@@ -102,15 +95,12 @@ class MultiHeadAttention(nn.Module):
             is_causal=causal,
         )  # [batch_size, num_heads, query_len, head_dim]
 
-        # Merge the heads back together and project the result to the output dimension
         merged = attended.transpose(dim0=1, dim1=2).reshape(batch_size, query_len, d_model)
         return self.output_projection(merged)
 
     def _split_heads(self, projected: torch.Tensor) -> torch.Tensor:
-        """Split the projected keys or values across heads, so that each head has its own slice 
-        of the embedding dimension.
-        `[batch_size, length, d_model]` -> `[batch_size, num_heads, length, head_dim]`.
-        """
+        """`[batch_size, length, d_model]` -> `[batch_size, num_heads, length, head_dim]`,
+        giving each head its own slice of the embedding dimension."""
         batch_size, length, _ = projected.shape
         return projected.view(
             batch_size, length, self.num_heads, self.head_dim

@@ -1,10 +1,9 @@
 from pathlib import Path
-from typing import Union
 import torch
 from torch import nn
 
 
-def best_model_path(best_model_dir: Union[str, Path], run_name: str) -> Path:
+def best_model_path(best_model_dir: str | Path, run_name: str) -> Path:
     """
     Where the best step of a run is kept: `<best_model_dir>/<run_name>.pt`.
 
@@ -14,14 +13,14 @@ def best_model_path(best_model_dir: Union[str, Path], run_name: str) -> Path:
     return Path(best_model_dir) / f'{run_name}.pt'
 
 
-def latest_best_model_path(best_model_dir: Union[str, Path], run_prefix: str) -> Path:
+def latest_best_model_path(best_model_dir: str | Path, run_prefix: str) -> Path:
     """
     The best model of the most recent run of one config.
 
     `pipelines/train.py` names a run `<dataset>/<experiment_name>-<timestamp>`, so every run of
     one config differs from the others only in that timestamp, and the format sorts them in
     start order. The last one is the run most recently started with this config, which is the
-    one worth predicting with unless told otherwise.
+    one worth generating with unless told otherwise.
 
     Args:
         best_model_dir: Where `best_model_path` writes.
@@ -46,14 +45,14 @@ def save_checkpoint(
     model_config: dict,
     step: int,
     selection_score: float,
-    path: Union[str, Path],
+    path: str | Path,
 ) -> Path:
     """
     Save a model checkpoint in the schema `TransformerCVAE.from_checkpoint` expects.
 
     The full config travels with the weights, so the same model can be rebuilt later without
     being told a single hyperparameter.
-    
+
     Args:
         model: The model whose weights to save.
         model_config: Its `ModelConfig`, dumped to plain data.
@@ -81,6 +80,6 @@ def save_checkpoint(
     return path
 
 
-def load_checkpoint(model_path: Union[str, Path]) -> dict:
+def load_checkpoint(model_path: str | Path) -> dict:
     """Read a checkpoint file written by `save_checkpoint`."""
     return torch.load(f=Path(model_path), map_location='cpu', weights_only=False)

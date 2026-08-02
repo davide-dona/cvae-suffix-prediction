@@ -26,7 +26,7 @@ class EvaluationReport:
         Write the report as JSON, creating parent directories.
 
         Args:
-            path: Where to write, e.g. the predictions file's own path with a `.json` suffix.
+            path: Where to write, e.g. the generations file's own path with a `.json` suffix.
         Returns:
             The path written to.
         """
