@@ -34,7 +34,8 @@ class DataConfig(StrictModel):
     event_features: list[str] = Field(
         ..., description="Canonical (post-preprocessing) columns the encoders read beside the "
         "activity, resource and time delta. A numeric one becomes a value and a present flag, "
-        "anything else a vocabulary"
+        "anything else a vocabulary. Read at preprocessing time and fit into the dataset's "
+        "description, so changing this list means preprocessing the dataset again"
     )
 
     time_clip_percentile: float = Field(

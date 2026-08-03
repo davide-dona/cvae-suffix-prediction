@@ -6,8 +6,8 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset, Subset
 
-from src.configs.dataset_info import DatasetInfo
 from src.datasets.codec import Codec, EncodedSequence
+from src.datasets.info import DatasetInfo
 from src.logs.keys import EVENT_DELTA_KEY, ACTIVITY_KEY, CASE_KEY, REMAINING_TIME_KEY, RESOURCE_KEY
 
 
@@ -284,13 +284,16 @@ def fixed_subset(dataset: Dataset, *, size: int, generator: torch.Generator) -> 
 
 def _group_traces(split_dataset: pd.DataFrame, max_content_len: int, codec: Codec) -> list[_Trace]:
     """Group a split into per-case traces, truncated to `max_content_len` events, with their
-    content already mapped to indices and normalized floats."""
+    content already mapped to indices and normalized floats.
+
+    The split must come from `read_split`, which reads every column a vocabulary was fit over
+    as text, so the lookups here can hit that vocabulary.
+    """
     # Whole columns at a time, once per split: the same work done per event in `__getitem__`
     # would be repeated for every cut point of every case.
-    # `.astype(str)` on both, matching how `DatasetInfo.build` fits the two vocabularies.
     encoded = codec.encode_events(
-        activities=split_dataset[ACTIVITY_KEY].astype(str),
-        resources=split_dataset[RESOURCE_KEY].astype(str),
+        activities=split_dataset[ACTIVITY_KEY],
+        resources=split_dataset[RESOURCE_KEY],
         time_deltas_minutes=split_dataset[EVENT_DELTA_KEY].to_numpy(dtype=np.float32),
         log=split_dataset,
     )

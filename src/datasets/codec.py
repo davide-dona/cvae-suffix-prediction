@@ -4,7 +4,7 @@ from typing import NamedTuple
 import numpy as np
 import pandas as pd
 
-from src.configs.dataset_info import DatasetInfo, NormalizationRange, as_categories
+from src.datasets.info import DatasetInfo, NormalizationRange, as_categories
 from src.logs.keys import (
     EOT_ACTIVITY,
     EOT_RESOURCE,

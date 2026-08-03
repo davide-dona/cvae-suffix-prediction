@@ -4,9 +4,10 @@ import torch
 from torch.utils.data import DataLoader
 
 from pipelines.preprocess import ensure_dataset
-from src.configs import DatasetInfo, ExperimentConfig, load_config
+from src.configs import ExperimentConfig, load_config
 from src.datasets.codec import Codec
 from src.datasets.dataset import SuffixDataset
+from src.datasets.info import DatasetInfo, read_split
 from src.inference import generate_suffixes, generation_batch_size, generations_path
 from src.model import TransformerCVAE, latest_best_model_path, load_checkpoint
 
@@ -24,9 +25,11 @@ def run(config: ExperimentConfig, model_path: Path | None = None) -> None:
     torch.manual_seed(config.seed)
 
     # The codec decodes the generations back into event sequences.
-    dataset_info = DatasetInfo.build(config.data)
+    dataset_info = DatasetInfo.load(config.data)
     codec = Codec(dataset_info)
-    test_dataset = SuffixDataset(dataset_info.test, dataset_info, codec)
+    test_dataset = SuffixDataset(
+        read_split(config.data, split='test', info=dataset_info), dataset_info, codec
+    )
 
     test_loader = DataLoader(
         dataset=test_dataset,

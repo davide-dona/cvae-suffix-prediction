@@ -3,6 +3,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.configs import DataConfig, load_config
+from src.datasets.info import DatasetInfo, metadata_path
 from src.logs.io import read_log, write_log
 from src.logs.keys import (
     CASE_OFFSET_KEY,
@@ -52,25 +53,27 @@ def preprocess(log: pd.DataFrame) -> pd.DataFrame:
 
 def ensure_dataset(data_config: DataConfig) -> None:
     """
-    Preprocess the dataset if its splits are not on disk yet, so a training run only ever
-    needs the raw log to have been placed in `<dir>/original.csv`.
+    Preprocess the dataset if its splits and description are not on disk yet, so a training run
+    only ever needs the raw log to have been placed in `<dir>/original.csv`.
     Args:
         data_config: The `data` section of this dataset's experiment config.
     Raises:
-        FileNotFoundError: If the splits are missing and there is no raw log to build them from.
+        FileNotFoundError: If the outputs are missing and there is no raw log to build them from.
     """
     processed_dir = data_config.dir / 'processed'
-    if all((processed_dir / f'{split}.csv').exists() for split in ('train', 'val', 'test')):
+    outputs = [processed_dir / f'{split}.csv' for split in ('train', 'val', 'test')]
+    outputs.append(metadata_path(data_config))
+    if all(output.exists() for output in outputs):
         return
 
     original = data_config.dir / 'original.csv'
     if not original.exists():
         raise FileNotFoundError(
-            f'{processed_dir} has no train/val/test splits and there is no raw log at {original} '
-            'to build them from.'
+            f'{processed_dir} is missing splits or a dataset description, and there is no raw '
+            f'log at {original} to build them from.'
         )
 
-    print(f'Splits missing under "{processed_dir}", preprocessing "{original}" first')
+    print(f'Outputs missing under "{processed_dir}", preprocessing "{original}" first')
     run(data_config)
 
 
@@ -82,6 +85,9 @@ def run(data_config: DataConfig) -> None:
     canonical names used throughout the codebase, adds the relative-timestamp
     columns, writes the result as `<dir>/processed/full.csv`, then splits it by
     case start time into `train.csv`, `val.csv` and `test.csv` in the same folder.
+
+    The vocabularies and normalization ranges the model is built against are fit here too,
+    on the train split alone, and written beside it as `dataset.json`.
 
     Args:
         data_config: The `data` section of this dataset's experiment config.
@@ -113,6 +119,11 @@ def run(data_config: DataConfig) -> None:
     write_log(val, processed_dir / 'val.csv')
     write_log(test, processed_dir / 'test.csv')
 
+    # Fit the vocabularies and normalization ranges on the train split and write them beside it,
+    # so every later run reads one description rather than deriving its own.
+    dataset_info = DatasetInfo.fit(train, data_config=data_config)
+    dataset_info.save(data_config)
+
     # Discover a Petri net of the process and write it to disk. 
     # Done using the inductive miner, only on the training set to avoid data leakage.
     net, initial_marking, final_marking = discover_process_model(
@@ -123,7 +134,13 @@ def run(data_config: DataConfig) -> None:
     )
     write_process_model(net, initial_marking, final_marking, data_config.dir / 'model')
 
-    print(f'Preprocessed "{data_config.dir}": {len(train)} train, {len(val)} val, {len(test)} test events')
+    print(
+        f'Preprocessed "{data_config.dir}": {len(train)} train, {len(val)} val, {len(test)} test '
+        f'events, {len(dataset_info.activity_vocab)} activities, '
+        f'{len(dataset_info.resource_vocab)} resources, '
+        f'{len(dataset_info.categorical_features)} categorical and '
+        f'{len(dataset_info.numeric_features)} numeric feature channels'
+    )
 
 
 def main() -> None:

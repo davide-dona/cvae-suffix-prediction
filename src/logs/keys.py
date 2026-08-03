@@ -5,30 +5,28 @@ ACTIVITY_KEY = 'concept:name'
 RESOURCE_KEY = 'org:resource'
 TIMESTAMP_KEY = 'time:timestamp'
 LABEL_KEY = 'case:label'
-
-# Special tokens appended to the activity and resource vocabularies. They are part of
-# the encoding, not of the data, and are identical for every dataset and every split.
-EOT_ACTIVITY = 'EOT'
-PADDING_ACTIVITY = 'PAD'
-SOS_ACTIVITY = 'SOS'
-UNK_ACTIVITY = 'UNK'
-EOT_RESOURCE = 'EOT-RES'
-PADDING_RESOURCE = 'PAD-RES'
-UNK_RESOURCE = 'UNK-RES'
-
-# The value a categorical feature channel takes where the log has none
-MISSING_FEATURE = '<MISSING>'
-
-# Case attribute added by pipelines/preprocess.py (see add_case_offset) and
-# always fed to the model.
+# Attributes added by pipelines/preprocess.py
+# Minutes since the start of the case. Read by the encoders; never predicted
 CASE_OFFSET_KEY = 'relative_timestamp_from_start'
-
-# Minutes since the previous activity in the same case. Read by the encoders; never predicted
+# Minutes since the previous event of the same case. Read by the encoders; never predicted
 EVENT_DELTA_KEY = 'relative_timestamp_from_previous_activity'
-
-# minutes from this event to the last event of its case. This is the time quantity the
-# model predicts.
+# Minutes until the end of the case. Predicted by the decoder
 REMAINING_TIME_KEY = 'remaining_time_to_case_end'
+
+# Special TOKENS used by the encoders and decoder.
+SOS_ACTIVITY = 'SOS'            # Start Of Suffix
+
+EOT_ACTIVITY = 'EOT'            # End Of Trace Activity
+EOT_RESOURCE = 'EOT-RES'        # End Of Trace Resource
+
+PADDING_ACTIVITY = 'PAD'        # Padding Activity (Used to align sequences to the same length in a batch)
+PADDING_RESOURCE = 'PAD-RES'    # Padding Resource (Used to align sequences to the same length in a batch)
+
+UNK_ACTIVITY = 'UNK'            # Unknown Activity (Used to represent activities not seen during training)
+UNK_RESOURCE = 'UNK-RES'        # Unknown Resource (Used to represent resources not seen during training)
+
+MISSING_FEATURE = '<MISSING>'   # Value used to represent missing features in the input data
+
 
 # Separator used by every raw and processed CSV log in this project.
 CSV_SEPARATOR = ';'

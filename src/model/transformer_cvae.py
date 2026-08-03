@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import torch
 from torch import nn
 
-from src.configs.dataset_info import DatasetInfo
+from src.datasets.info import DatasetInfo
 from src.configs.schema import ModelConfig
 from src.datasets.dataset import SuffixItem
 from src.distributions.gaussian import Gaussian

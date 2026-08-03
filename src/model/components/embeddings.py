@@ -2,7 +2,7 @@ import math
 import torch
 from torch import nn
 
-from src.configs.dataset_info import DatasetInfo
+from src.datasets.info import DatasetInfo
 from src.configs.schema import EmbeddingConfig
 from src.datasets.dataset import EncodedEvents
 
