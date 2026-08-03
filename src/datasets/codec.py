@@ -8,40 +8,26 @@ from src.datasets.description import CategoricalColumn, DatasetDescription
 @dataclass(frozen=True)
 class EncodedSequence:
     """One run of events, encoded to indices and normalized floats."""
-    activities: np.ndarray  # int64, shape [len]
-    time_deltas: np.ndarray | None = None  # float32 in [0, 1], shape [len(activities)]
-    resources: np.ndarray | None = None  # int64, shape [len(activities)]
-    feature_categories: np.ndarray | None = None  # int64, shape [len(activities), num_categorical]
-    feature_values: np.ndarray | None = None      # float32 in [0, 1], shape [len(activities), num_numeric]
-    feature_present: np.ndarray | None = None     # float32 0/1, shape [len(activities), num_numeric]
+    activities: np.ndarray          # int64, shape [len]
+    time_deltas: np.ndarray         # float32 in [0, 1], shape [len(activities)]
+    resources: np.ndarray           # int64, shape [len(activities)]
+    feature_categories: np.ndarray  # int64, shape [len(activities), num_categorical]
+    feature_values: np.ndarray      # float32 in [0, 1], shape [len(activities), num_numeric]
+    feature_present: np.ndarray     # float32 0/1, shape [len(activities), num_numeric]
 
     def __len__(self) -> int:
         return len(self.activities)
 
-    def __getitem__(self, cut: int | slice | tuple) -> "EncodedSequence":
-        """Return a cut of the sequence, the prefix up to `cut` or the slice/tuple selection, with all fields aligned."""
+    def __getitem__(self, cut: int | slice | np.ndarray) -> "EncodedSequence":
+        """Return a cut of the sequence - a slice or an index selection - with all fields aligned."""
         return EncodedSequence(
             activities=self.activities[cut],
-            time_deltas=None if self.time_deltas is None else self.time_deltas[cut],
-            resources=None if self.resources is None else self.resources[cut],
-            feature_categories=(
-                None if self.feature_categories is None else self.feature_categories[cut]
-            ),
-            feature_values=None if self.feature_values is None else self.feature_values[cut],
-            feature_present=(
-                None if self.feature_present is None else self.feature_present[cut]
-            ),
+            time_deltas=self.time_deltas[cut],
+            resources=self.resources[cut],
+            feature_categories=self.feature_categories[cut],
+            feature_values=self.feature_values[cut],
+            feature_present=self.feature_present[cut],
         )
-
-
-@dataclass(frozen=True)
-class DecodedSequence:
-    """One run of events, decoded back to the log's own units."""
-    activities: list[str]
-    remaining_time_minutes: float
-
-    def __len__(self) -> int:
-        return len(self.activities)
 
 
 def encode_events(
@@ -74,10 +60,18 @@ def encode_events(
     )
 
 
+@dataclass(frozen=True)
+class DecodedSequence:
+    """One run of events, decoded back to the log's own units. A channel the model learns to
+    write gains a field here."""
+    activities: list[str]
+    remaining_time_minutes: float
+
+
 def decode_sequence(
     description: DatasetDescription,
-    sequence: EncodedSequence,
     *,
+    activities: np.ndarray,
     length: int,
     remaining_time: float,
 ) -> DecodedSequence:
@@ -87,7 +81,7 @@ def decode_sequence(
     Args:
         description: The dataset's description, holding each written channel's decode map or
             normalization range.
-        sequence: One sequence as the model holds it, `[seq_len]` per field.
+        activities: The activity indices of one sequence, int64, `[seq_len]`.
         length: How many events to keep; the cut is what drops the EOT a generation ended
             on and the padding behind it, so what comes back holds events and nothing else.
         remaining_time: The sequence's remaining time as the model writes it, normalized in
@@ -97,9 +91,7 @@ def decode_sequence(
         The sequence in raw activity names and minutes.
     """
     return DecodedSequence(
-        activities=[
-            description.activity.from_index[int(i)] for i in sequence.activities[:length]
-        ],
+        activities=[description.activity.from_index[int(i)] for i in activities[:length]],
         remaining_time_minutes=float(description.remaining_time.denormalize(remaining_time)),
     )
 

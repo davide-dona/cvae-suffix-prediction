@@ -23,81 +23,48 @@ class EncodedEvents(NamedTuple):
     activities: torch.Tensor  # int64, [max_trace_length] per item, [batch_size, max_trace_length] batched
     resources: torch.Tensor
     time_deltas: torch.Tensor  # float32 in [0, 1]
-    # The log's own columns, one axis wide rather than one field per column. Zero-width on a
-    # dataset whose config names none.
     feature_categories: torch.Tensor  # int64, [max_trace_length, num_categorical] per item
     feature_values: torch.Tensor      # float32 in [0, 1], [max_trace_length, num_numeric] per item
     feature_present: torch.Tensor     # float32 0/1, 0.0 where the log had no value
 
     def to(self, device: torch.device) -> "EncodedEvents":
-        return EncodedEvents(
-            activities=self.activities.to(device),
-            resources=self.resources.to(device),
-            time_deltas=self.time_deltas.to(device),
-            feature_categories=self.feature_categories.to(device),
-            feature_values=self.feature_values.to(device),
-            feature_present=self.feature_present.to(device),
-        )
+        """Move a whole batch in one call"""
+        return EncodedEvents(*(field.to(device) for field in self))
 
 class SuffixItem(NamedTuple):
-    """One (prefix, suffix) example, fully encoded: exactly what the DataLoader hands the
-    model for one pair, or one batch of pairs.
-    """
-    pair_index: torch.Tensor      # which pair of the dataset this is; used to trace a prediction back to its case and cut point
+    """One (prefix, suffix) pair, padded to `max_trace_length` and ready for the model to consume."""
+    pair_index: torch.Tensor       # which pair of the dataset this is; used to trace a prediction back to its case and cut point
 
     prefix: EncodedEvents          # the condition: the events before the cut, no EOT
-    prefix_len: torch.Tensor      # real events in `prefix`, the rest being padding
-
+    prefix_len: torch.Tensor       # real events in `prefix`, the rest being padding
+    
     suffix: EncodedEvents          # what the decoder must produce: content, EOT, then padding
-    suffix_len: torch.Tensor      # real positions in `suffix`, EOT included where there is one
+    suffix_len: torch.Tensor       # real positions in `suffix`, EOT included where there is one
 
-    # `suffix` activities shifted one step behind SOS, for teacher forcing. int64,
-    # [max_trace_length] per item, [batch_size, max_trace_length] batched. Only the
-    # activity channel is needed: `Decoder` reads no other channel of its input.
+    # The decoder input is the suffix's activities shifted one step right, with SOS in position 0. 
+    # Used for teacher forcing, so the decoder sees the ground truth at every step rather than its own predictions.
     decoder_input: torch.Tensor
 
-    # The other half of what the model predicts: minutes from the last prefix event to the end
-    # of the case, normalized into [0, 1]. One scalar for the whole pair, measured against the
-    # case's real ending even where the suffix above was truncated.
+    # The normalized minutes from the last prefix event to the case's real ending, one per item.
     remaining_time: torch.Tensor  # float32, [] per item, [batch_size] batched
 
     def to(self, device: torch.device) -> "SuffixItem":
         """Move a whole batch in one call"""
-        return SuffixItem(
-            pair_index=self.pair_index.to(device),
-            prefix=self.prefix.to(device),
-            prefix_len=self.prefix_len.to(device),
-            decoder_input=self.decoder_input.to(device),
-            suffix=self.suffix.to(device),
-            suffix_len=self.suffix_len.to(device),
-            remaining_time=self.remaining_time.to(device),
-        )
+        return SuffixItem(*(field.to(device) for field in self))
 
 
 @dataclass(frozen=True)
 class _Trace:
-    """One case of the log (one process instance), encoded once and shared by every
-    (prefix, suffix) pair cut from it. `truncated` marks a case longer than
-    `max_trace_length`: none of its cuts end in a real EOT (see `SuffixDataset._encode_suffix`).
-    """
-    case_id: str  # which case of the log this is, kept for `SuffixDataset.pair_info`
-    truncated: bool  # whether the case was longer than `max_trace_length`, so its real
-    # continuation was cut away and no suffix cut from it actually ends. See
-    # `SuffixDataset._encode_suffix`.
-    events: EncodedSequence
-    # Normalized minutes from each event to the case's real ending, one per event of
-    # `events`. Cutting after `k` events leaves `remaining_time[k - 1]` still to run, so a
-    # truncated case still carries the true value at every event that survived the cut.
-    remaining_time: np.ndarray  # float32 in [0, 1], shape [len(events)]
+    """One trace of the log, encoded once and shared by every (prefix, suffix) pair cut from it."""
+    case_id: str                # which case of the log this is
+    truncated: bool             # whether the case was longer than `max_trace_length`, so the suffix cut from it does not actually end
+    events: EncodedSequence     # the events of the case, encoded once and shared by every (prefix, suffix) pair cut from it
+    remaining_time: np.ndarray  # normalized minutes from each event to the case's real ending, shape [len(events)]
 
 
 @dataclass(frozen=True)
 class PairInfo:
-    """The identity of one (prefix, suffix) pair - which case it's from and where it was
-    cut - carried separately from its tensors: training never needs it, and writing
-    generations needs nothing else, since a generated suffix means nothing without the case
-    and cut point it continues.
-    """
+    """The information needed to trace a generated suffix back to its case and cut point, so it can be evaluated against the ground truth."""
     case_id: str
     prefix_len: int
     # Whether the gt case was longer than `max_trace_length`, so the suffix cut from it does not actually end. 
@@ -350,14 +317,7 @@ def _group_traces(
             _Trace(
                 case_id=str(case_id),
                 truncated=len(group) > max_content_len,
-                events=EncodedSequence(
-                    activities=encoded.activities[positions],
-                    resources=encoded.resources[positions],
-                    time_deltas=encoded.time_deltas[positions],
-                    feature_categories=encoded.feature_categories[positions],
-                    feature_values=encoded.feature_values[positions],
-                    feature_present=encoded.feature_present[positions],
-                ),
+                events=encoded[positions],
                 remaining_time=remaining_time[positions],
             )
         )
