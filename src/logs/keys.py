@@ -13,17 +13,15 @@ EVENT_DELTA_KEY = 'relative_timestamp_from_previous_activity'
 # Minutes until the end of the case. Predicted by the decoder
 REMAINING_TIME_KEY = 'remaining_time_to_case_end'
 
-# Special TOKENS used by the encoders and decoder.
-SOS_ACTIVITY = 'SOS'            # Start Of Suffix
+# Special tokens used by the encoders and decoder. Each follows the vocabulary of whichever
+# categorical channel carries it, so the same marker serves activities, resources and features.
+SOS_TOKEN = 'SOS'               # Start Of Suffix
 
-EOT_ACTIVITY = 'EOT'            # End Of Trace Activity
-EOT_RESOURCE = 'EOT-RES'        # End Of Trace Resource
+EOT_TOKEN = 'EOT'               # End Of Trace
 
-PADDING_ACTIVITY = 'PAD'        # Padding Activity (Used to align sequences to the same length in a batch)
-PADDING_RESOURCE = 'PAD-RES'    # Padding Resource (Used to align sequences to the same length in a batch)
+PAD_TOKEN = 'PAD'               # Padding (Used to align sequences to the same length in a batch)
 
-UNK_ACTIVITY = 'UNK'            # Unknown Activity (Used to represent activities not seen during training)
-UNK_RESOURCE = 'UNK-RES'        # Unknown Resource (Used to represent resources not seen during training)
+UNK_TOKEN = 'UNK'               # Unknown (Used to represent values not seen during training)
 
 MISSING_FEATURE = '<MISSING>'   # Value used to represent missing features in the input data
 

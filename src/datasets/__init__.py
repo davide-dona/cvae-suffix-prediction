@@ -1,24 +1,17 @@
-from .codec import Codec, DecodedSuffix, EncodedSequence
+from .codec import DecodedSequence, EncodedSequence, decode_sequence, encode_events
 from .dataset import EncodedEvents, SuffixDataset, SuffixItem, fixed_subset
-from .info import (
-    CategoricalFeature,
-    DatasetInfo,
-    NormalizationRange,
-    NumericFeature,
-    read_split,
-)
+from .description import CategoricalColumn, DatasetDescription, NumericColumn
 
 __all__ = [
-    "CategoricalFeature",
-    "Codec",
-    "DatasetInfo",
-    "DecodedSuffix",
+    "CategoricalColumn",
+    "DatasetDescription",
+    "DecodedSequence",
     "EncodedSequence",
     "EncodedEvents",
-    "NormalizationRange",
-    "NumericFeature",
+    "NumericColumn",
     "SuffixDataset",
     "SuffixItem",
+    "decode_sequence",
+    "encode_events",
     "fixed_subset",
-    "read_split",
 ]

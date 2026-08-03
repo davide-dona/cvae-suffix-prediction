@@ -128,7 +128,7 @@ class ModelConfig(StrictModel):
     """Every hyperparameter of `TransformerCVAE`.
 
     Dimensions derived from the data (vocabulary sizes, special-token indices, sequence
-    length) are deliberately absent: they come from `DatasetInfo` at build time, so a
+    length) are deliberately absent: they come from `DatasetDescription` at build time, so a
     config cannot disagree with the dataset it is trained on.
     """
 

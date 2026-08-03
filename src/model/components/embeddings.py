@@ -2,7 +2,7 @@ import math
 import torch
 from torch import nn
 
-from src.datasets.info import DatasetInfo
+from src.datasets.description import DatasetDescription
 from src.configs.schema import EmbeddingConfig
 from src.datasets.dataset import EncodedEvents
 
@@ -16,24 +16,24 @@ class EventEmbeddings(nn.Module):
     can read the order of events out of the vectors.
     """
 
-    def __init__(self, config: EmbeddingConfig, dataset_info: DatasetInfo, *, d_model: int):
+    def __init__(self, config: EmbeddingConfig, description: DatasetDescription, *, d_model: int):
         super().__init__()
         self.activity_embedding = nn.Embedding(
-            num_embeddings=dataset_info.num_activities,
+            num_embeddings=description.activity.num_rows,
             embedding_dim=config.activity_dim,
-            padding_idx=dataset_info.pad_activity_index,
+            padding_idx=description.activity.pad_index,
         )
         self.resource_embedding = nn.Embedding(
-            num_embeddings=dataset_info.num_resources,
+            num_embeddings=description.resource.num_rows,
             embedding_dim=config.resource_dim,
-            padding_idx=dataset_info.pad_resource_index,
+            padding_idx=description.resource.pad_index,
         )
-        self.num_categorical = len(dataset_info.categorical_features)
-        self.num_numeric = len(dataset_info.numeric_features)
+        self.num_categorical = len(description.categorical_features)
+        self.num_numeric = len(description.numeric_features)
         
         self.feature_embedding = (
             nn.Embedding(
-                num_embeddings=dataset_info.num_feature_categories,
+                num_embeddings=description.num_feature_categories,
                 embedding_dim=config.feature_dim,
                 padding_idx=0,
             )
@@ -54,7 +54,7 @@ class EventEmbeddings(nn.Module):
         # A buffer moves with the model but is not trained.
         self.register_buffer(
             name='positional_encoding',
-            tensor=_sinusoidal_encoding(length=dataset_info.max_trace_length, d_model=d_model),
+            tensor=_sinusoidal_encoding(length=description.max_trace_length, d_model=d_model),
             persistent=False,
         )
 

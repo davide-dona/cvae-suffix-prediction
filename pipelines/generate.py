@@ -5,9 +5,8 @@ from torch.utils.data import DataLoader
 
 from pipelines.preprocess import ensure_dataset
 from src.configs import ExperimentConfig, load_config
-from src.datasets.codec import Codec
 from src.datasets.dataset import SuffixDataset
-from src.datasets.info import DatasetInfo, read_split
+from src.datasets.description import DatasetDescription
 from src.inference import generate_suffixes, generation_batch_size, generations_path
 from src.model import TransformerCVAE, latest_best_model_path, load_checkpoint
 
@@ -24,12 +23,9 @@ def run(config: ExperimentConfig, model_path: Path | None = None) -> None:
     ensure_dataset(config.data)
     torch.manual_seed(config.seed)
 
-    # The codec decodes the generations back into event sequences.
-    dataset_info = DatasetInfo.load(config.data)
-    codec = Codec(dataset_info)
-    test_dataset = SuffixDataset(
-        read_split(config.data, split='test', info=dataset_info), dataset_info, codec
-    )
+    # The description encodes the split and decodes the generations back into event sequences.
+    description = DatasetDescription.load(config.data)
+    test_dataset = SuffixDataset(config.data, split='test', description=description)
 
     test_loader = DataLoader(
         dataset=test_dataset,
@@ -43,7 +39,7 @@ def run(config: ExperimentConfig, model_path: Path | None = None) -> None:
             config.training.best_model_dir, f'{config.data.dir.name}/{config.experiment_name}'
         )
     model = TransformerCVAE.from_checkpoint(
-        load_checkpoint(model_path), dataset_info, device=config.training.device
+        load_checkpoint(model_path), description, device=config.training.device
     )
 
     # The output file is named after the checkpoint's run.
@@ -59,7 +55,7 @@ def run(config: ExperimentConfig, model_path: Path | None = None) -> None:
     generations = generate_suffixes(
         model,
         test_loader,
-        codec,
+        description,
         num_samples=config.inference.num_samples,
         device=torch.device(config.training.device),
     )

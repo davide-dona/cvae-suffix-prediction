@@ -6,9 +6,8 @@ from torch.utils.data import DataLoader
 
 from pipelines.preprocess import ensure_dataset
 from src.configs import ExperimentConfig, load_config
-from src.datasets.codec import Codec
 from src.datasets.dataset import SuffixDataset, fixed_subset
-from src.datasets.info import DatasetInfo, read_split
+from src.datasets.description import DatasetDescription
 from src.inference import generation_batch_size
 from src.model import TransformerCVAE, best_model_path, save_checkpoint
 from src.training.train import train
@@ -29,17 +28,12 @@ def run(config: ExperimentConfig) -> None:
     torch.manual_seed(config.seed)
     generator = torch.Generator().manual_seed(config.seed)
 
-    dataset_info = DatasetInfo.load(config.data)
-    codec = Codec(dataset_info)
+    description = DatasetDescription.load(config.data)
 
     # Build the datasets and loaders. The test split is not read: it is generated for by
     # `pipelines/generate.py` and never seen here.
-    train_dataset = SuffixDataset(
-        read_split(config.data, split='train', info=dataset_info), dataset_info, codec
-    )
-    validation_dataset = SuffixDataset(
-        read_split(config.data, split='val', info=dataset_info), dataset_info, codec
-    )
+    train_dataset = SuffixDataset(config.data, split='train', description=description)
+    validation_dataset = SuffixDataset(config.data, split='val', description=description)
     
     train_loader = DataLoader(
         dataset=train_dataset,
@@ -68,7 +62,7 @@ def run(config: ExperimentConfig) -> None:
         f'generating for {len(generation_loader.dataset)}'
     )
 
-    model = TransformerCVAE(config.model, dataset_info).to(config.training.device)
+    model = TransformerCVAE(config.model, description).to(config.training.device)
 
     # The run name is used to name the best-model checkpoint file and the TensorBoard log directory
     run_name = f'{config.data.dir.name}/{config.experiment_name}-{datetime.now():%Y%m%d-%H%M%S}'

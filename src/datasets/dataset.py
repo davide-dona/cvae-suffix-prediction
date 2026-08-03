@@ -6,9 +6,11 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset, Subset
 
-from src.datasets.codec import Codec, EncodedSequence
-from src.datasets.info import DatasetInfo
-from src.logs.keys import EVENT_DELTA_KEY, ACTIVITY_KEY, CASE_KEY, REMAINING_TIME_KEY, RESOURCE_KEY
+from src.configs.schema import DataConfig
+from src.datasets.codec import EncodedSequence, encode_events
+from src.datasets.description import DatasetDescription
+from src.logs.io import read_log
+from src.logs.keys import CASE_KEY, EVENT_DELTA_KEY, REMAINING_TIME_KEY
 
 
 class EncodedEvents(NamedTuple):
@@ -119,16 +121,30 @@ class SuffixDataset(Dataset):
     `_encode_suffix`).
     """
 
-    def __init__(self, split_dataset: pd.DataFrame, dataset_info: DatasetInfo, codec: Codec):
-        self._codec = codec
-        self.max_len = dataset_info.max_trace_length
-        self._num_categorical = len(dataset_info.categorical_features)
-        self._num_numeric = len(dataset_info.numeric_features)
+    def __init__(
+        self, data_config: DataConfig, *, split: str, description: DatasetDescription
+    ):
+        """Read one preprocessed split and cut every case of it into (prefix, suffix) pairs.
+
+        Args:
+            data_config: The `data` section, naming the dataset directory.
+            split: Which of `train`, `val`, `test` to read.
+            description: The dataset description the split was preprocessed against, which is
+                also what its values are encoded through.
+        """
+        self._description = description
+        self.max_len = description.max_trace_length
+        self._num_categorical = len(description.categorical_features)
+        self._num_numeric = len(description.numeric_features)
 
         # Group the split into per-case traces, truncated to max_len events, with their content
         # mapped to indices once here rather than on every __getitem__ call.
-        self._traces = _group_traces(split_dataset, self.max_len, codec)
-        
+        self._traces = _group_traces(
+            _read_split(data_config, split=split, description=description),
+            self.max_len,
+            description,
+        )
+
         # Build the list of (case index, cut point) pairs once here rather than on every __getitem__ call.
         self._pairs: list[tuple[int, int]] = [
             (trace_idx, k)  # The k-th cut of the trace at trace_idx, yielding prefix[:k] and suffix[k:].
@@ -178,10 +194,10 @@ class SuffixDataset(Dataset):
 
         # Initialize tensors filled with PAD indices for activities and resources, and zeros for the deltas.
         activities = torch.full(
-            size=(self.max_len,), fill_value=self._codec.pad_activity_index, dtype=torch.long
+            size=(self.max_len,), fill_value=self._description.activity.pad_index, dtype=torch.long
         )
         resources = torch.full(
-            size=(self.max_len,), fill_value=self._codec.pad_resource_index, dtype=torch.long
+            size=(self.max_len,), fill_value=self._description.resource.pad_index, dtype=torch.long
         )
         time_deltas = torch.zeros(size=(self.max_len,), dtype=torch.float32)
         # Zeros for the features too, and not by coincidence: row 0 of the shared table is the
@@ -234,15 +250,15 @@ class SuffixDataset(Dataset):
         padded_suffix = self._pad(suffix)
         # One position past the content, which the padding left free.
         if not truncated:
-            padded_suffix.activities[content_len] = self._codec.eot_activity_index
-            padded_suffix.resources[content_len] = self._codec.eot_resource_index
+            padded_suffix.activities[content_len] = self._description.activity.eot_index
+            padded_suffix.resources[content_len] = self._description.resource.eot_index
 
         # Positions past `suffix_len` are masked out of the loss, so whatever the shift
         # leaves there does not matter. `Decoder` reads no channel of its input but the
         # activity, so that is the only one shifted here.
         decoder_input = _shift_behind(
             padded_suffix.activities,
-            first=torch.tensor(data=[self._codec.sos_activity_index], dtype=torch.long),
+            first=torch.tensor(data=[self._description.activity.sos_index], dtype=torch.long),
         )
 
         return decoder_input, padded_suffix, torch.tensor(data=suffix_len, dtype=torch.long)
@@ -282,22 +298,45 @@ def fixed_subset(dataset: Dataset, *, size: int, generator: torch.Generator) -> 
     return Subset(dataset=dataset, indices=indices.tolist())
 
 
-def _group_traces(split_dataset: pd.DataFrame, max_content_len: int, codec: Codec) -> list[_Trace]:
+def _read_split(
+    data_config: DataConfig, *, split: str, description: DatasetDescription
+) -> pd.DataFrame:
+    """Read one preprocessed split as the values its vocabularies were fit over.
+
+    Each split is a file of its own, so pandas would otherwise infer dtypes for each
+    separately and a column of numeric-looking codes could come back as float in one and as
+    str in another. Reading every column a vocabulary was fit over as text is what keeps a
+    split agreeing with that vocabulary.
+
+    Args:
+        data_config: The `data` section, naming the dataset directory.
+        split: Which of `train`, `val`, `test` to read.
+        description: The dataset description, naming every categorical channel's column.
+    Returns:
+        The split, one row per event.
+    """
+    categorical = (description.activity, description.resource, *description.categorical_features)
+    text_columns = {CASE_KEY: str} | {column.column: str for column in categorical}
+    return read_log(data_config.dir / 'processed' / f'{split}.csv', dtype=text_columns)
+
+
+def _group_traces(
+    split_dataset: pd.DataFrame, max_content_len: int, description: DatasetDescription
+) -> list[_Trace]:
     """Group a split into per-case traces, truncated to `max_content_len` events, with their
     content already mapped to indices and normalized floats.
 
-    The split must come from `read_split`, which reads every column a vocabulary was fit over
-    as text, so the lookups here can hit that vocabulary.
+    The split must come from `_read_split`, which is what leaves every column a vocabulary was
+    fit over holding the values that vocabulary was fit over.
     """
     # Whole columns at a time, once per split: the same work done per event in `__getitem__`
     # would be repeated for every cut point of every case.
-    encoded = codec.encode_events(
-        activities=split_dataset[ACTIVITY_KEY],
-        resources=split_dataset[RESOURCE_KEY],
+    encoded = encode_events(
+        description,
         time_deltas_minutes=split_dataset[EVENT_DELTA_KEY].to_numpy(dtype=np.float32),
         log=split_dataset,
     )
-    remaining_time = codec.normalize_remaining_time(
+    remaining_time = description.remaining_time.normalize(
         split_dataset[REMAINING_TIME_KEY].to_numpy(dtype=np.float32)
     )
 
