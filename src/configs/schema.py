@@ -30,20 +30,19 @@ class DataConfig(StrictModel):
         description="Cases are truncated to this many events, which also bounds every prefix and suffix cut "
         "from them; the model's sequence tensors are padded to it",
     )
-    # Neither is read by the data layer or the model: the prefix is the only condition, and an
-    # event is (activity, resource, time delta). They record which columns each dataset offers
-    # for the two roles, and `src/notebooks/exploration.ipynb` reads them.
-    condition_features: list[str] = Field(
-        ..., description="Canonical (post-preprocessing) case-level columns, candidates for the CVAE condition"
-    )
-    attribute_features: list[str] = Field(
-        ..., description="Canonical (post-preprocessing) per-event columns, candidates for reconstruction "
-        "alongside activity/resource/timestamp"
+    
+    event_features: list[str] = Field(
+        ..., description="Canonical (post-preprocessing) columns the encoders read beside the "
+        "activity, resource and time delta. A numeric one becomes a value and a present flag, "
+        "anything else a vocabulary. Read at preprocessing time and fit into the dataset's "
+        "description, so changing this list means preprocessing the dataset again"
     )
 
     time_clip_percentile: float = Field(
         ..., gt=0.0, le=100.0,
-        description="Event time-deltas above this train-split percentile are clipped before normalization",
+        description="Values above this train-split percentile are clipped before normalization. "
+        "Applied to every numeric channel against its own percentile: the per-event gaps the "
+        "encoders read, the remaining time the model predicts, and each numeric event-feature column",
     )
 
     batch_size: int = Field(..., gt=0)
@@ -62,6 +61,12 @@ class EmbeddingConfig(StrictModel):
 
     activity_dim: int = Field(..., gt=0)
     resource_dim: int = Field(..., gt=0)
+    feature_dim: int = Field(
+        ..., gt=0,
+        description="Width of every categorical feature channel's lookup. One width for all "
+        "of them, since they share a table; each channel widens the projection's input by this "
+        "much, so a log with many of them wants a smaller value, not a bigger one",
+    )
 
 
 class TraceEncoderConfig(StrictModel):
@@ -110,14 +115,20 @@ class DecoderConfig(StrictModel):
     num_heads: int = Field(..., gt=0, description="Attention heads per layer; must divide `d_model`")
     feedforward_dim: int = Field(..., gt=0, description="Width of the feed-forward block inside a layer")
     dropout: float = Field(..., ge=0.0, lt=1.0)
-    head_hidden_dim: int = Field(..., gt=0, description="Width of the layer shared by the three output heads")
+    activity_dropout: float = Field(
+        ..., ge=0.0, lt=1.0,
+        description="Fraction of teacher-forced input activities blanked to PAD during "
+        "training. An unreliable previous token cannot carry the suffix on its own, which "
+        "pushes that information into z. 0.0 disables it",
+    )
+    head_hidden_dim: int = Field(..., gt=0, description="Width of the layer shared by the two output heads")
 
 
 class ModelConfig(StrictModel):
     """Every hyperparameter of `TransformerCVAE`.
 
     Dimensions derived from the data (vocabulary sizes, special-token indices, sequence
-    length) are deliberately absent: they come from `DatasetInfo` at build time, so a
+    length) are deliberately absent: they come from `DatasetDescription` at build time, so a
     config cannot disagree with the dataset it is trained on.
     """
 
@@ -151,16 +162,21 @@ class ModelConfig(StrictModel):
 class LossConfig(StrictModel):
     """The KL term: how it is weighted over training, and how far it is allowed to fall.
 
-    The annealing schedule (see `training/annealing.py`) is measured in optimizer steps, not
+    The annealing schedule (see `training/kl.py`) is measured in optimizer steps, not
     epochs: an epoch is a different amount of learning on every log, so a schedule denominated
     in epochs has to be re-derived per dataset, while one in steps means the same thing
     everywhere.
+
+    The cycle is given as a length rather than as a count fitted into `training.max_steps`, so
+    that shortening or lengthening a run leaves the shape of the schedule alone. A budget and a
+    schedule are separate decisions, and a run that stops early has still seen whole cycles.
     """
 
-    kl_annealing_cycles: int = Field(..., gt=0, description="Number of cycles to fit into training")
-    kl_annealing_ratio: float = Field(..., gt=0.0, le=1.0, description="Fraction of each cycle spent ramping up")
+    kl_annealing_period_steps: int = Field(..., gt=0, description="Optimizer steps in one cycle")
+    kl_annealing_ratio: float = Field(..., gt=0.0, lt=1.0, description="Fraction of each cycle spent ramping up")
     kl_annealing_start_weight: float = Field(..., ge=0.0, description="Weight each cycle ramps up from")
     kl_annealing_full_weight: float = Field(..., ge=0.0, description="Weight each cycle ramps up to, and holds at")
+
     free_bits: float = Field(
         ..., ge=0.0,
         description="Nats per latent dimension the KL is not penalized below. Unlike the "
@@ -199,15 +215,25 @@ class TrainingConfig(StrictModel):
         description="Steps between validations. Also the unit `early_stopping.patience` "
         "counts in, which is what makes that patience portable across datasets",
     )
+    validation_pairs: int = Field(
+        ..., gt=0,
+        description="Pairs the two teacher-forced passes read, as a fixed slice of the "
+        "validation split, or the whole of it where it is smaller. Validation is on the "
+        "critical path and the whole split is more than the mean needs",
+    )
+    generation_pairs: int = Field(
+        ..., gt=0,
+        description="Prefixes the free-running pass generates for, as a fixed slice of the "
+        "same split. Smaller again, a suffix costing one decoder pass per event rather than "
+        "one per suffix; this is the sample the selection score is computed on",
+    )
 
 
 class InferenceConfig(StrictModel):
     """Generating suffixes for a whole split, which is what evaluation reads.
 
-    The device and the batch size are not repeated here: a run generates on the device it
-    trained on (`training.device`) and in the batches its data section already describes
-    (`data.batch_size`), noting that the decoder actually sees `batch_size * num_samples`
-    rows, since every sample of a prefix is a row of its own.
+    The device is not repeated here: a run generates on the device it trained on
+    (`training.device`).
     """
 
     num_samples: int = Field(
@@ -215,17 +241,29 @@ class InferenceConfig(StrictModel):
         description="Suffixes generated per prefix, all from that prefix's p(z | prefix); the "
         "spread across them is what the latent is claiming the prefix leaves open",
     )
-    predictions_dir: Path = Field(..., description="One predictions file per run, named after it")
+    generation_rows: int = Field(
+        ..., gt=0,
+        description="Rows `generate` puts through the decoder in one call. A prefix reaches it "
+        "`num_samples` times over, each row holding a key and value cache per position and "
+        "layer, so this and not `data.batch_size` is what bounds the memory a call takes",
+    )
+    generations_dir: Path = Field(..., description="One generations file per run, named after it")
 
 
 class EarlyStoppingConfig(StrictModel):
-    """Stop training once the validation loss plateaus (see `training/early_stopping.py`).
+    """Stop training once the selection score plateaus (see `training/early_stopping.py`).
 
-    What it watches is the prior-path validation loss, which carries no KL term and is
-    therefore comparable at every point of a run, whatever the annealing weight is doing.
+    What it watches is what best-model selection watches: the free-running generation score,
+    which is comparable at every point of a run whatever the annealing weight is doing, and is
+    the same quantity `pipelines/evaluate.py` reports at the end.
     """
 
-    patience: int = Field(..., gt=0, description="Non-improving validations tolerated before stopping")
+    patience: int = Field(
+        ..., gt=0,
+        description="Non-improving validations tolerated before stopping. Counted in "
+        "validations, so it must outlast a whole `loss.kl_annealing_ratio` ramp, during which "
+        "generation gets worse by design",
+    )
     min_delta_perc: float = Field(..., ge=0.0, description="Minimum relative improvement to reset the patience counter")
 
 

@@ -1,4 +1,3 @@
-from .dataset_info import DatasetInfo
 from .loader import load_config
 from .schema import (
     DataConfig,
@@ -19,7 +18,6 @@ from .schema import (
 __all__ = [
     "load_config",
     "DataConfig",
-    "DatasetInfo",
     "DecoderConfig",
     "EarlyStoppingConfig",
     "EmbeddingConfig",

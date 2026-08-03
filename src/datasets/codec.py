@@ -1,165 +1,158 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import NamedTuple
 import numpy as np
 import pandas as pd
 
-from src.configs.dataset_info import DatasetInfo
-from src.logs.keys import (
-    EOT_ACTIVITY,
-    EOT_RESOURCE,
-    PADDING_ACTIVITY,
-    PADDING_RESOURCE,
-    SOS_ACTIVITY,
-    SOS_RESOURCE,
-    UNK_ACTIVITY,
-    UNK_RESOURCE,
-)
-
-
-class DecodedSuffix(NamedTuple):
-    """One suffix's raw values, decoded from indices and cut to its content length."""
-    activities: list[str]
-    resources: list[str]
-    time_deltas_minutes: list[float]
-
+from src.datasets.description import CategoricalColumn, DatasetDescription
 
 @dataclass(frozen=True)
 class EncodedSequence:
-    """One run of events, encoded to indices and normalized floats"""
-    activities: np.ndarray  # int64, shape [len]
-    resources: np.ndarray   # int64, shape [len(activities)]
-    time_deltas: np.ndarray  # float32 in [0, 1], shape [len(activities)]
+    """One run of events, encoded to indices and normalized floats."""
+    activities: np.ndarray          # int64, shape [len]
+    time_deltas: np.ndarray         # float32 in [0, 1], shape [len(activities)]
+    resources: np.ndarray           # int64, shape [len(activities)]
+    feature_categories: np.ndarray  # int64, shape [len(activities), num_categorical]
+    feature_values: np.ndarray      # float32 in [0, 1], shape [len(activities), num_numeric]
+    feature_present: np.ndarray     # float32 0/1, shape [len(activities), num_numeric]
 
     def __len__(self) -> int:
         return len(self.activities)
 
-    def __getitem__(self, cut: int | slice | tuple) -> "EncodedSequence":
-        """Index all three at once, however numpy would: `[k:]` to cut a trace in two, `[i]`
-        or `[i, j]` to pull one sequence out of a batch of them. numpy indexing returns
-        views, so this copies nothing.
-        """
+    def __getitem__(self, cut: int | slice | np.ndarray) -> "EncodedSequence":
+        """Return a cut of the sequence - a slice or an index selection - with all fields aligned."""
         return EncodedSequence(
             activities=self.activities[cut],
-            resources=self.resources[cut],
             time_deltas=self.time_deltas[cut],
+            resources=self.resources[cut],
+            feature_categories=self.feature_categories[cut],
+            feature_values=self.feature_values[cut],
+            feature_present=self.feature_present[cut],
         )
 
 
-def _map_to_index(column: pd.Series, mapping: dict[str, int], *, unk_index: int) -> np.ndarray:
-    """Map a whole column of categorical values to vocabulary indices, sending any value the
-    train split did not contain to `unk_index`.
+def encode_events(
+    description: DatasetDescription,
+    *,
+    time_deltas_minutes: np.ndarray,
+    log: pd.DataFrame,
+) -> EncodedSequence:
+    """Map a run of raw events to the indices and normalized floats the model consumes.
 
-    The splits are temporal, so a val/test case can legitimately name a resource that had not
-    appeared yet when the vocabulary was fit. UNK is what the model is told about those: not
-    which value it was, only that it was none of the ones it was trained on.
+    Args:
+        description: The dataset's description, naming every channel read here and holding the
+            vocabulary or range each is encoded through.
+        time_deltas_minutes: Time deltas in minutes, one per row of `log`.
+        log: The events as a preprocessed split holds them. The whole frame, not a selection of
+            it: which columns each channel reads is the description's answer, and this is where
+            it is asked.
+
+    Returns:
+        The same events as vocabulary indices and normalized columns.
     """
-    # `map` leaves NaN wherever the value is absent from the vocabulary, which is what UNK covers.
-    return column.map(mapping).fillna(unk_index).to_numpy(dtype=np.int64)
+    feature_values, feature_present = _encode_numerics(description, log)
+    return EncodedSequence(
+        activities=_encode_column(description.activity, log),
+        resources=_encode_column(description.resource, log),
+        time_deltas=description.delta.normalize(time_deltas_minutes),
+        feature_categories=_encode_categories(description, log),
+        feature_values=feature_values,
+        feature_present=feature_present,
+    )
 
 
-class Codec:
-    """Two-way mapping between a dataset's raw values and the indices and normalized floats
-    the model consumes.
+@dataclass(frozen=True)
+class DecodedSequence:
+    """One run of events, decoded back to the log's own units. A channel the model learns to
+    write gains a field here."""
+    activities: list[str]
+    remaining_time_minutes: float
 
-    Nothing here is learned: it is lookup tables and a normalization range, all fit on the
-    train split and then applied unchanged to val/test. That is the distinction from the
-    model's `TraceEncoder`, which is what turns these indices into representations.
 
-    The special-token indices are taken from `DatasetInfo`, which owns the vocabulary layout,
-    so the embeddings a model allocates and the indices this produces cannot drift apart.
+def decode_sequence(
+    description: DatasetDescription,
+    *,
+    activities: np.ndarray,
+    length: int,
+    remaining_time: float,
+) -> DecodedSequence:
+    """Read one sequence back into the log's own units, the inverse of `encode_events` over
+    every channel the model writes.
+
+    Args:
+        description: The dataset's description, holding each written channel's decode map or
+            normalization range.
+        activities: The activity indices of one sequence, int64, `[seq_len]`.
+        length: How many events to keep; the cut is what drops the EOT a generation ended
+            on and the padding behind it, so what comes back holds events and nothing else.
+        remaining_time: The sequence's remaining time as the model writes it, normalized in
+            `[0, 1]`.
+
+    Returns:
+        The sequence in raw activity names and minutes.
     """
+    return DecodedSequence(
+        activities=[description.activity.from_index[int(i)] for i in activities[:length]],
+        remaining_time_minutes=float(description.remaining_time.denormalize(remaining_time)),
+    )
 
-    def __init__(self, dataset_info: DatasetInfo):
-        self.activity_to_index = {activity: i for i, activity in enumerate(dataset_info.activity_vocab)}
-        self.eot_activity_index = dataset_info.eot_activity_index
-        self.pad_activity_index = dataset_info.pad_activity_index
-        self.sos_activity_index = dataset_info.sos_activity_index
-        self.unk_activity_index = dataset_info.unk_activity_index
-        # The decode direction, for reading a prediction back as a trace. The special tokens are
-        # added here only: no raw value maps to them, so they have no entry going the other way.
-        # UNK is the exception in spirit - many raw values map to it - but it is still one-way,
-        # since which of them it was is exactly what the encoding threw away.
-        self.index_to_activity = {i: a for a, i in self.activity_to_index.items()} | {
-            self.eot_activity_index: EOT_ACTIVITY,
-            self.pad_activity_index: PADDING_ACTIVITY,
-            self.sos_activity_index: SOS_ACTIVITY,
-            self.unk_activity_index: UNK_ACTIVITY,
-        }
 
-        self.resource_to_index = {resource: i for i, resource in enumerate(dataset_info.resource_vocab)}
-        self.eot_resource_index = dataset_info.eot_resource_index
-        self.pad_resource_index = dataset_info.pad_resource_index
-        self.sos_resource_index = dataset_info.sos_resource_index
-        self.unk_resource_index = dataset_info.unk_resource_index
-        self.index_to_resource = {i: r for r, i in self.resource_to_index.items()} | {
-            self.eot_resource_index: EOT_RESOURCE,
-            self.pad_resource_index: PADDING_RESOURCE,
-            self.sos_resource_index: SOS_RESOURCE,
-            self.unk_resource_index: UNK_RESOURCE,
-        }
+def _encode_column(column: CategoricalColumn, log: pd.DataFrame) -> np.ndarray:
+    """One categorical channel as rows of the table it is embedded with, with an UNK for values
+    the train split did not see.
 
-        self._time_stats = dataset_info.time_stats
+    Returns:
+        `[len(log)]` of int64 rows.
+    """
+    return (
+        log[column.column]
+        .map(column.to_index)
+        .fillna(column.unk_index)
+        .to_numpy(dtype=np.int64)
+    )
 
-    def encode_events(
-        self,
-        activities: pd.Series,
-        resources: pd.Series,
-        time_deltas_minutes: np.ndarray,
-    ) -> EncodedSequence:
-        """Map a run of raw events to the indices and normalized floats the model consumes.
 
-        Args:
-            activities: Raw activity values, one row per event.
-            resources: Raw resource values, one row per event, aligned with `activities`.
-            time_deltas_minutes: Time deltas in minutes, aligned with `activities`.
+def _encode_categories(description: DatasetDescription, log: pd.DataFrame) -> np.ndarray:
+    """Every categorical feature channel of a run of events, packed into one index array.
 
-        Returns:
-            The same events as vocabulary indices and a normalized timestamp column.
-        """
-        return EncodedSequence(
-            activities=_map_to_index(activities, self.activity_to_index, unk_index=self.unk_activity_index),
-            resources=_map_to_index(resources, self.resource_to_index, unk_index=self.unk_resource_index),
-            time_deltas=self.normalize_time(time_deltas_minutes),
-        )
+    Args:
+        description: The dataset's description, holding the feature channels and their blocks
+            of the shared table.
+        log: The events as a preprocessed split holds them, so a gap in a channel already carries
+            the missing token preprocessing gave it.
+    Returns:
+        `[len(log), num_categorical]` of rows of the shared embedding table.
+    """
+    if not description.categorical_features:
+        return np.zeros(shape=(len(log), 0), dtype=np.int64)
+    return np.stack(
+        arrays=[_encode_column(feature, log) for feature in description.categorical_features],
+        axis=1,
+    )
 
-    def decode_suffix(self, suffix: EncodedSequence, *, length: int) -> DecodedSuffix:
-        """Read one suffix's indices and normalized deltas back to raw values: the inverse of
-        `encode_events`, and so taking back the `EncodedSequence` that one returns.
 
-        Args:
-            suffix: One suffix as the model holds it, `[seq_len]` per field.
-            length: How many events to keep; the cut is what drops the EOT a generation ended
-                on and the padding behind it, so what comes back holds events and nothing else.
+def _encode_numerics(
+    description: DatasetDescription, log: pd.DataFrame
+) -> tuple[np.ndarray, np.ndarray]:
+    """Every numeric feature channel's normalized value, and the flag saying it was there.
 
-        Returns:
-            The suffix's raw activities, resources and time deltas (in minutes), cut to `length`.
-        """
-        return DecodedSuffix(
-            activities=[self.index_to_activity[int(i)] for i in suffix.activities[:length]],
-            resources=[self.index_to_resource[int(i)] for i in suffix.resources[:length]],
-            time_deltas_minutes=self.denormalize_time(suffix.time_deltas[:length]).tolist(),
-        )
+    Args:
+        description: The dataset's description, holding the feature channels and their ranges.
+        log: The events as rows of the log.
+    Returns:
+        The values and the flags, `[len(log), num_numeric]` each. A missing value is 0.0 with
+        a 0.0 flag; 0.0 is also a legitimate normalized value, which is what the flag is for.
+    """
+    if not description.numeric_features:
+        empty = np.zeros(shape=(len(log), 0), dtype=np.float32)
+        return empty, empty.copy()
 
-    def normalize_time(self, delta_minutes: np.ndarray) -> np.ndarray:
-        """log1p + min-max into `[0, 1]`, clipping to the range fit on the train split."""
-        stats = self._time_stats
-        # Clipping bounds the outliers, and log1p then pulls in the long tail, so the bulk of
-        # the deltas do not all end up squeezed into the bottom of the range.
-        clipped = np.clip(delta_minutes, 0.0, stats.clip_value)
-        log_delta = np.log1p(clipped)
-        span = stats.log_max - stats.log_min
-        # A split where every delta is identical would divide by zero here.
-        if span <= 0:
-            return np.zeros_like(log_delta, dtype=np.float32)
-        return np.clip((log_delta - stats.log_min) / span, 0.0, 1.0).astype(np.float32)
-
-    def denormalize_time(self, normalized: np.ndarray) -> np.ndarray:
-        """Invert `normalize_time`, back to minutes. Approximate for deltas that were clipped
-        on the way in: clipping is lossy, so anything above `clip_value` comes back as
-        `clip_value`.
-        """
-        stats = self._time_stats
-        span = stats.log_max - stats.log_min
-        log_delta = np.asarray(normalized, dtype=np.float64) * span + stats.log_min
-        return np.expm1(log_delta)
+    values, present = [], []
+    for feature in description.numeric_features:
+        raw = log[feature.column].to_numpy(dtype=np.float64)
+        flags = np.isfinite(raw).astype(np.float32)
+        # The range is fit on the finite values, so the missing ones are zeroed rather than
+        # normalized: multiplying by the flag is what pins them to exactly 0.0.
+        finite = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
+        values.append(feature.normalize(finite) * flags)
+        present.append(flags)
+    return np.stack(arrays=values, axis=1), np.stack(arrays=present, axis=1)

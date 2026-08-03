@@ -11,9 +11,8 @@ data:
   val_split: 0.15
   test_split: 0.2
   max_seq_len: 61  # train-split p99 (longest case: 185)
-  condition_features:
-    - case:label
-  attribute_features:
+
+  event_features:
     - DiagnosticArtAstrup
     - DiagnosticBlood
     - DiagnosticECG
@@ -35,10 +34,16 @@ data:
     - SIRSCritTachypnea
     - SIRSCritTemperature
     - SIRSCriteria2OrMore
-    - Age
+    - Age  
     - CRP
     - LacticAcid
     - Leucocytes
   time_clip_percentile: 99.0
   batch_size: 256
   num_workers: 0  # 0, not 4: macOS spawn overhead measured 2.1x slower end to end
+
+model:
+  embeddings:
+    # 21 ternary channels (TRUE/FALSE/missing). At base's 8 they would be 168 of the 209 inputs
+    # the projection reads, leaving the activity 16 of them.
+    feature_dim: 4

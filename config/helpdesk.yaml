@@ -11,18 +11,8 @@ data:
   val_split: 0.15
   test_split: 0.2
   max_seq_len: 9  # train-split p99 (longest case: 15)
-  # Anonymized ("Value N"), near-constant per case; Variant/Variant index (trace-variant ids)
-  # and seriousness (a single constant value log-wide) are omitted as non-attributes.
-  condition_features:
-    - customer
-    - product
-    - responsible_section
-    - seriousness_2
-    - service_level
-    - service_type
-    - support_section
-    - workgroup
-  attribute_features: []  # no per-event attributes beyond activity/resource/time
+  
+  event_features: []
   time_clip_percentile: 99.0
   batch_size: 256
   num_workers: 0

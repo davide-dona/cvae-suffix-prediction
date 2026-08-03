@@ -11,11 +11,16 @@ data:
   val_split: 0.15
   test_split: 0.2
   max_seq_len: 95  # train-split p99 (longest case: 180)
-  condition_features:
+  
+  event_features:
+    # Case-level: share the same value for every row in a case
     - case:LoanGoal
     - case:ApplicationType
     - case:RequestedAmount
-  attribute_features:  # set only on the offer-subprocess events (~4% of rows), NaN elsewhere
+    # Event-level: vary per row in a case
+    - Action
+    - EventOrigin
+    - lifecycle:transition
     - FirstWithdrawalAmount
     - NumberOfTerms
     - Accepted
