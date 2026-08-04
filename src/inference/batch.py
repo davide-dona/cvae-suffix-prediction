@@ -1,36 +1,11 @@
-from dataclasses import dataclass
-import numpy as np
-
 from src.configs.schema import InferenceConfig
+from src.datasets.codec import decode_sequence
 from src.datasets.dataset import SuffixItem
+from src.datasets.description import DatasetDescription
+from src.inference.prediction import PrefixPrediction
 from src.model import TransformerCVAE
 
 
-@dataclass(frozen=True)
-class BatchGeneration:
-    """One batch's free-running generation, moved to the CPU, with the ground truth beside it.
-
-    `true_lengths` counts events only: the EOT closing a complete suffix is dropped, so a
-    truth compares directly against a sample cut at its length.
-    """
-    activities: np.ndarray           # int64, [batch_size, num_samples, steps]
-    lengths: np.ndarray              # int64, [batch_size, num_samples]
-    remaining_time: np.ndarray       # float32, [batch_size, num_samples], normalized in [0, 1]
-    true_activities: np.ndarray      # int64, [batch_size, seq_len]
-    true_lengths: np.ndarray         # int64, [batch_size], EOT dropped
-    true_remaining_time: np.ndarray  # float32, [batch_size], normalized in [0, 1]
-
-    def samples(self, index: int) -> list[list[int]]:
-        """The generated activity indices of one prefix, each sample cut at its length."""
-        return [
-            self.activities[index, sample, : self.lengths[index, sample]].tolist()
-            for sample in range(self.activities.shape[1])
-        ]
-
-    def truth(self, index: int) -> list[int]:
-        """The ground-truth activity indices of one prefix, EOT dropped."""
-        return self.true_activities[index, : self.true_lengths[index]].tolist()
-    
 def generation_batch_size(inference: InferenceConfig, upper_bound: int) -> int:
     """How many prefixes to hand the decoder at once, to protect its memory.
 
@@ -47,23 +22,33 @@ def generation_batch_size(inference: InferenceConfig, upper_bound: int) -> int:
     return max(1, min(upper_bound, inference.generation_rows // inference.num_samples))
 
 
+def generate_predictions(
+    model: TransformerCVAE,
+    batch: SuffixItem,
+    *,
+    num_samples: int,
+    description: DatasetDescription,
+) -> list[PrefixPrediction]:
+    """Generate `num_samples` suffixes per prefix of one batch, and the point prediction beside them.
 
-def generate_batch(
-    model: TransformerCVAE, batch: SuffixItem, *, num_samples: int
-) -> BatchGeneration:
-    """Generate `num_samples` suffixes per prefix of one batch.
-
-    The one call into the raw `model.generate`: everything downstream (validation scoring and
-    the generations file alike) reads the generation through the lengths resolved here.
+    The one call into the raw `model.generate`. The second pass costs one prefix's worth of
+    decoding against `num_samples`, and it is what lets the report say what the model answers as
+    well as what it draws.
 
     Args:
         model: The model to generate with, already in eval mode.
         batch: A batch from `SuffixDataset`, already on the model's device.
         num_samples: How many suffixes to draw per prefix.
+        description: The description the split was encoded through, read here in the decode
+            direction. Passed rather than read off the dataset, which is a `Subset` wherever only
+            a slice of the split is generated for.
     Returns:
-        The generation and its ground truth, on the CPU.
+        One prediction per prefix of the batch, in the batch's order, decoded into the log's own
+        units. Each sequence is cut at its length, so what comes back holds events and nothing
+        else, the EOT a generation ended on and the padding behind it both dropped.
     """
-    generated = model.generate(batch, num_samples=num_samples)
+    generated = model.generate(item=batch, num_samples=num_samples)
+    point = model.generate(item=batch, num_samples=1, sample_latent=False)
 
     # `suffix_len` counts the EOT closing a complete suffix, which is a marker and not an
     # event; a truncated suffix has none to drop.
@@ -72,13 +57,40 @@ def generate_batch(
         batch.suffix.activities.gather(dim=1, index=last_position).squeeze(dim=1)
         == model.eot_activity_index
     )  # [batch_size]
-    true_lengths = batch.suffix_len - ends_with_eot.long()  # [batch_size]
+    true_lengths = (batch.suffix_len - ends_with_eot.long()).cpu().numpy()  # [batch_size]
 
-    return BatchGeneration(
-        activities=generated.activities.cpu().numpy(),
-        lengths=generated.lengths.cpu().numpy(),
-        remaining_time=generated.remaining_time.cpu().numpy(),
-        true_activities=batch.suffix.activities.cpu().numpy(),
-        true_lengths=true_lengths.cpu().numpy(),
-        true_remaining_time=batch.remaining_time.cpu().numpy(),
-    )
+    activities = generated.activities.cpu().numpy()          # [batch_size, num_samples, steps]
+    lengths = generated.lengths.cpu().numpy()                # [batch_size, num_samples]
+    remaining_time = generated.remaining_time.cpu().numpy()  # [batch_size, num_samples]
+    point_activities = point.activities.squeeze(dim=1).cpu().numpy()          # [batch_size, steps]
+    point_lengths = point.lengths.squeeze(dim=1).cpu().numpy()                # [batch_size]
+    point_remaining_time = point.remaining_time.squeeze(dim=1).cpu().numpy()  # [batch_size]
+    true_activities = batch.suffix.activities.cpu().numpy()  # [batch_size, seq_len]
+    true_remaining_time = batch.remaining_time.cpu().numpy()  # [batch_size]
+
+    return [
+        PrefixPrediction(
+            samples=[
+                decode_sequence(
+                    description,
+                    activities=activities[position, sample],
+                    length=lengths[position, sample],
+                    remaining_time=remaining_time[position, sample],
+                )
+                for sample in range(num_samples)
+            ],
+            point=decode_sequence(
+                description,
+                activities=point_activities[position],
+                length=point_lengths[position],
+                remaining_time=point_remaining_time[position],
+            ),
+            truth=decode_sequence(
+                description,
+                activities=true_activities[position],
+                length=true_lengths[position],
+                remaining_time=true_remaining_time[position],
+            ),
+        )
+        for position in range(len(true_lengths))
+    ]

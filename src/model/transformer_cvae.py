@@ -130,7 +130,9 @@ class TransformerCVAE(nn.Module):
         return TransformerCVAEOutput(decoder=decoder_output, prior=prior, posterior=posterior)
 
     @torch.no_grad()
-    def generate(self, item: SuffixItem, *, num_samples: int) -> GeneratedSuffix:
+    def generate(
+        self, item: SuffixItem, *, num_samples: int, sample_latent: bool = True
+    ) -> GeneratedSuffix:
         """Generate `num_samples` suffixes for every prefix in `item`.
 
         The suffix is unknown here, so only the prefix is encoded and every latent comes from
@@ -140,6 +142,8 @@ class TransformerCVAE(nn.Module):
         Args:
             item: A batch from `SuffixDataset`, read for its prefix only.
             num_samples: How many suffixes to draw per prefix.
+            sample_latent: Whether to draw z from `p(z | prefix)`. False takes its mean instead,
+                making the generation the model's single point prediction.
         Returns:
             The generated suffixes, `[batch_size, num_samples, steps]`, with row `(i, j)` the
             j-th sample for the i-th prefix of the batch.
@@ -161,10 +165,11 @@ class TransformerCVAE(nn.Module):
 
         # One latent per sample: independent noise per draw, `Gaussian.sample()`'s
         # reparameterization trick, on top of the one prior distribution repeated per prefix.
-        z = Gaussian(
+        repeated = Gaussian(
             mean=prior.mean.repeat_interleave(repeats=num_samples, dim=0),
             logvar=prior.logvar.repeat_interleave(repeats=num_samples, dim=0),
-        ).sample()  # [batch_size * num_samples, latent_dim]
+        )
+        z = repeated.sample() if sample_latent else repeated.mean  # [batch_size * num_samples, latent_dim]
 
         # A suffix holds at most `max_seq_len` events, the padded width the batch comes in at.
         generated = self.decoder.generate(

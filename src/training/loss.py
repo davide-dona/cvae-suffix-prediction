@@ -4,8 +4,8 @@ import torch.nn.functional as F
 
 from src.datasets.dataset import SuffixItem
 from src.model import TransformerCVAEOutput
+from src.metrics import ScalarMetrics
 from src.training.kl import free_bits_kl, gaussian_kl
-from src.training.metrics import ScalarMetrics
 
 
 @dataclass(frozen=True)

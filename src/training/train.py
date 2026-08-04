@@ -10,21 +10,12 @@ from src.configs.schema import (
     OptimizerConfig,
     TrainingConfig,
 )
+from src.datasets.description import DatasetDescription
 from src.model import TransformerCVAE
 from src.training.early_stopping import EarlyStopper
 from src.training.kl import cyclical_linear_weight
 from src.training.loss import Loss, compute_loss
-from src.training.validation import GenerationMetrics, validate, validate_generation
-
-
-def _selection_score(gen_metrics: GenerationMetrics) -> float:
-    """The score a step is selected and stopped on: lower is better, like every other loss here.
-
-    `gen_metrics.activity_dls_mean` runs the other way, higher meaning a closer match to the
-    ground truth, so it is inverted once here rather than reversing the comparison in
-    `EarlyStopper` and around `on_best_step`.
-    """
-    return 1.0 - gen_metrics.activity_dls_mean
+from src.training.validation import validate, validate_generation
 
 
 def train(
@@ -34,6 +25,7 @@ def train(
     val_loader: DataLoader,
     generation_loader: DataLoader,
     generation_samples: int,
+    description: DatasetDescription,
     run_name: str,
     on_best_step: Callable[[int, float], None],
     loss_config: LossConfig,
@@ -52,6 +44,8 @@ def train(
         generation_samples: Suffixes to draw per prefix on that pass, normally
             `inference.num_samples`, so that a training curve and the final report describe the
             same number of draws.
+        description: The description the splits were encoded through, passed on to the
+            generation pass so its remaining times are scored in minutes.
         run_name: Subdirectory of `training.log_dir` this run writes its events to. One
             directory is one TensorBoard run, so a name reused across runs overlays their
             curves instead of listing them side by side; what makes it unique is the
@@ -128,7 +122,7 @@ def train(
                     
                     gen_metrics = validate_generation(
                         model, generation_loader,
-                        num_samples=generation_samples, device=device,
+                        num_samples=generation_samples, description=description, device=device,
                     )
                     gen_metrics.log(writer, step, prefix='gen')
 
@@ -139,11 +133,12 @@ def train(
                         f'Step {step:>{len(str(training.max_steps))}}/{training.max_steps}  '
                         f'kl {kl_weight:.2f}  train {train_metrics.loss:.4f}  '
                         f'val {val_metrics.loss:.4f}  '
-                        f'gen_dls {gen_metrics.activity_dls_mean:.4f}  '
-                        f'diversity {gen_metrics.sample_diversity:.4f}',
+                        f'gen_dls {gen_metrics.activity_dls_mean:.4f} mean / '
+                        f'{gen_metrics.activity_dls_point:.4f} point  '
+                        f'energy {gen_metrics.activity_energy_score:.4f}',
                         flush=True,
                     )
-                    selection_score = _selection_score(gen_metrics)
+                    selection_score = gen_metrics.activity_energy_score
 
                     # `early_stopper` already tracks the best score seen for its own patience
                     # count, so reading it here rather than keeping a second one is what a

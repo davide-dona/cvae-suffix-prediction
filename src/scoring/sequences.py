@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import Hashable, Sequence
 
 
@@ -93,45 +92,20 @@ def diversity(samples: Sequence[Sequence[Hashable]]) -> float:
     ]
     return mean(pairs)
 
-
-@dataclass(frozen=True)
-class SampleScores:
-    """How one prefix's generated samples compare to the ground truth, and to each other.
-
-    Attributes:
-        dls_mean: The mean similarity to the ground truth, what one draw is worth.
-        dls_best: The closest of the samples, whether the model covers the truth at all.
-        sample_diversity: The spread across the samples, which needs all of them at once
-            rather than reducing over them independently.
+def energy_score(dls_mean: float, sample_diversity: float) -> float:
     """
-    dls_mean: float
-    dls_best: float
-    sample_diversity: float
+    The samples read as a predictive distribution, lower being better.
 
+    The mean distance to the truth, discounted by half the spread the samples already cover.
+    Spread only pays off where the truth is far from a single guess, which is what makes this a
+    score to minimize rather than a number to read beside `dls_mean`, neither of which having a
+    target value.
 
-def score_samples(
-    samples: Sequence[Sequence[Hashable]],
-    truth: Sequence[Hashable],
-) -> SampleScores:
+    The discount stays below the distance, so the score stays at or above 0.0, only where
+    `1 - DLS` obeys the triangle inequality. Dividing by the longer of two lengths does not
+    guarantee that: `eb` and `bc` are 1.0 apart while both sit 1/3 from `ebc`. Such sequences
+    are rare enough not to show up in a real generation, so this is normalized the way the
+    reported similarity is rather than a second way that would be.
     """
-    Score the suffixes generated for one prefix against the ground truth they continue.
+    return (1.0 - dls_mean) - 0.5 * sample_diversity
 
-    The three numbers a generated set is judged by, in one place: `validate_generation` averages
-    them over a validation slice while training, `accuracy_metrics` over the test split
-    afterwards, so a training curve and a final report measure the same thing rather than
-    agreeing by coincidence.
-
-    Args:
-        samples: The sequences generated for the prefix, one per draw of z. Activity indices
-            while training and decoded activity names when scoring a generations file, which is
-            why nothing here is named after activities.
-        truth: The ground-truth suffix the samples are compared against.
-    Returns:
-        The prefix's three scores, all 0.0 if no samples were generated for it.
-    """
-    similarities = [sequence_similarity(sample, truth) for sample in samples]
-    return SampleScores(
-        dls_mean=mean(similarities),
-        dls_best=max(similarities) if similarities else 0.0,
-        sample_diversity=diversity(samples),
-    )

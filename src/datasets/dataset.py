@@ -99,7 +99,7 @@ class SuffixDataset(Dataset):
             description: The dataset description the split was preprocessed against, which is
                 also what its values are encoded through.
         """
-        self._description = description
+        self.description = description
         self.max_len = description.max_trace_length
         self._num_categorical = len(description.categorical_features)
         self._num_numeric = len(description.numeric_features)
@@ -161,10 +161,10 @@ class SuffixDataset(Dataset):
 
         # Initialize tensors filled with PAD indices for activities and resources, and zeros for the deltas.
         activities = torch.full(
-            size=(self.max_len,), fill_value=self._description.activity.pad_index, dtype=torch.long
+            size=(self.max_len,), fill_value=self.description.activity.pad_index, dtype=torch.long
         )
         resources = torch.full(
-            size=(self.max_len,), fill_value=self._description.resource.pad_index, dtype=torch.long
+            size=(self.max_len,), fill_value=self.description.resource.pad_index, dtype=torch.long
         )
         time_deltas = torch.zeros(size=(self.max_len,), dtype=torch.float32)
         # Zeros for the features too, and not by coincidence: row 0 of the shared table is the
@@ -217,15 +217,15 @@ class SuffixDataset(Dataset):
         padded_suffix = self._pad(suffix)
         # One position past the content, which the padding left free.
         if not truncated:
-            padded_suffix.activities[content_len] = self._description.activity.eot_index
-            padded_suffix.resources[content_len] = self._description.resource.eot_index
+            padded_suffix.activities[content_len] = self.description.activity.eot_index
+            padded_suffix.resources[content_len] = self.description.resource.eot_index
 
         # Positions past `suffix_len` are masked out of the loss, so whatever the shift
         # leaves there does not matter. `Decoder` reads no channel of its input but the
         # activity, so that is the only one shifted here.
         decoder_input = _shift_behind(
             padded_suffix.activities,
-            first=torch.tensor(data=[self._description.activity.sos_index], dtype=torch.long),
+            first=torch.tensor(data=[self.description.activity.sos_index], dtype=torch.long),
         )
 
         return decoder_input, padded_suffix, torch.tensor(data=suffix_len, dtype=torch.long)
