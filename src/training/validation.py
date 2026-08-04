@@ -15,11 +15,16 @@ class GenerationMetrics(ScalarMetrics):
     Attributes:
         activity_dls_mean: The mean similarity of a prefix's samples to the ground truth.
         activity_dls_best: The similarity of its closest sample.
+        activity_energy_score: Its samples read as a predictive distribution, lower being better.
+            The score a checkpoint is selected on.
         sample_diversity: How far apart its samples are from each other.
+        unique_sample_rate: The fraction of its samples that are distinct sequences.
     """
     activity_dls_mean: float = 0.0
     activity_dls_best: float = 0.0
+    activity_energy_score: float = 0.0
     sample_diversity: float = 0.0
+    unique_sample_rate: float = 0.0
 
 
 @torch.no_grad()
@@ -92,7 +97,9 @@ def validate_generation(
         totals += GenerationMetrics(
             activity_dls_mean=sum(score.dls_mean for score in scores),
             activity_dls_best=sum(score.dls_best for score in scores),
+            activity_energy_score=sum(score.energy_score for score in scores),
             sample_diversity=sum(score.sample_diversity for score in scores),
+            unique_sample_rate=sum(score.unique_sample_rate for score in scores),
         )
 
     return totals / len(loader.dataset)

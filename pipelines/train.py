@@ -73,7 +73,7 @@ def run(config: ExperimentConfig) -> None:
         Defined here so it can access the config and model objects without passing them through train().
         Args:
             step: The optimizer step that just validated.
-            selection_score: The generation score it reached, as `1 - activity_dls_mean`.
+            selection_score: The generation score it reached, its `activity_energy_score`.
         """
         path = save_checkpoint(
             model,

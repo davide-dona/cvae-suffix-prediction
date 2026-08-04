@@ -93,6 +93,22 @@ def diversity(samples: Sequence[Sequence[Hashable]]) -> float:
     ]
     return mean(pairs)
 
+def energy_score(dls_mean: float, sample_diversity: float) -> float:
+    """
+    The samples read as a predictive distribution, lower being better.
+
+    The mean distance to the truth, discounted by half the spread the samples already cover.
+    Spread only pays off where the truth is far from a single guess, which is what makes this a
+    score to minimize rather than a number to read beside `dls_mean`, neither of which having a
+    target value.
+
+    The discount stays below the distance, so the score stays at or above 0.0, only where
+    `1 - DLS` obeys the triangle inequality. Dividing by the longer of two lengths does not
+    guarantee that: `eb` and `bc` are 1.0 apart while both sit 1/3 from `ebc`. Such sequences
+    are rare enough not to show up in a real generation, so this is normalized the way the
+    reported similarity is rather than a second way that would be.
+    """
+    return (1.0 - dls_mean) - 0.5 * sample_diversity
 
 @dataclass(frozen=True)
 class SampleScores:
@@ -103,10 +119,14 @@ class SampleScores:
         dls_best: The closest of the samples, whether the model covers the truth at all.
         sample_diversity: The spread across the samples, which needs all of them at once
             rather than reducing over them independently.
+        unique_sample_rate: The fraction of the samples that are distinct sequences.
+        energy_score: The samples read as a predictive distribution, lower being better.
     """
     dls_mean: float
     dls_best: float
     sample_diversity: float
+    unique_sample_rate: float
+    energy_score: float
 
 
 def score_samples(
@@ -127,11 +147,16 @@ def score_samples(
             why nothing here is named after activities.
         truth: The ground-truth suffix the samples are compared against.
     Returns:
-        The prefix's three scores, all 0.0 if no samples were generated for it.
+        The prefix's scores. A prefix with no samples scores 0.0 on everything and 1.0 on
+        `energy_score`, the worst it can be, rather than looking like a perfect prediction.
     """
     similarities = [sequence_similarity(sample, truth) for sample in samples]
+    dls_mean = mean(similarities)
+    sample_diversity = diversity(samples)
     return SampleScores(
-        dls_mean=mean(similarities),
+        dls_mean=dls_mean,
         dls_best=max(similarities) if similarities else 0.0,
-        sample_diversity=diversity(samples),
+        sample_diversity=sample_diversity,
+        unique_sample_rate=len({tuple(sample) for sample in samples}) / len(samples) if samples else 0.0,
+        energy_score=energy_score(dls_mean, sample_diversity) if samples else 1.0,
     )

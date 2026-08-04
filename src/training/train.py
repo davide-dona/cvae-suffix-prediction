@@ -17,16 +17,6 @@ from src.training.loss import Loss, compute_loss
 from src.training.validation import GenerationMetrics, validate, validate_generation
 
 
-def _selection_score(gen_metrics: GenerationMetrics) -> float:
-    """The score a step is selected and stopped on: lower is better, like every other loss here.
-
-    `gen_metrics.activity_dls_mean` runs the other way, higher meaning a closer match to the
-    ground truth, so it is inverted once here rather than reversing the comparison in
-    `EarlyStopper` and around `on_best_step`.
-    """
-    return 1.0 - gen_metrics.activity_dls_mean
-
-
 def train(
     *,
     model: TransformerCVAE,
@@ -140,10 +130,10 @@ def train(
                         f'kl {kl_weight:.2f}  train {train_metrics.loss:.4f}  '
                         f'val {val_metrics.loss:.4f}  '
                         f'gen_dls {gen_metrics.activity_dls_mean:.4f}  '
-                        f'diversity {gen_metrics.sample_diversity:.4f}',
+                        f'energy {gen_metrics.activity_energy_score:.4f}',
                         flush=True,
                     )
-                    selection_score = _selection_score(gen_metrics)
+                    selection_score = gen_metrics.activity_energy_score
 
                     # `early_stopper` already tracks the best score seen for its own patience
                     # count, so reading it here rather than keeping a second one is what a
