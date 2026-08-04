@@ -4,6 +4,8 @@ from src.inference.prediction import PrefixPrediction
 from src.metrics import ScalarMetrics
 from src.scoring.sequences import diversity, energy_score, mean, sequence_similarity
 
+MINUTES_PER_DAY = 1440.0
+
 
 @dataclass(frozen=True)
 class SuffixScores(ScalarMetrics):
@@ -30,11 +32,11 @@ class SuffixScores(ScalarMetrics):
     sample_diversity: float
     unique_sample_rate: float
 
-    # Absolute error (AE) between the predicted and true remaining cycle time, in minutes.
+    # Absolute error (AE) between the predicted and true remaining cycle time, in days.
     # No best since the closest of ten draws of a scalar measures how widely the head scatters
     # rather than how well it predicts.
-    remaining_time_ae_mean_minutes: float
-    remaining_time_ae_point_minutes: float
+    remaining_time_ae_mean_days: float
+    remaining_time_ae_point_days: float
 
     # Absolute error (AE) between the predicted and true suffix length, in events.
     length_ae_mean: float
@@ -77,13 +79,13 @@ def score_prefix(prediction: PrefixPrediction) -> SuffixScores:
             if samples
             else 0.0
         ),
-        remaining_time_ae_mean_minutes=mean([
+        remaining_time_ae_mean_days=mean([
             abs(sample.remaining_time_minutes - truth.remaining_time_minutes)
             for sample in samples
-        ]),
-        remaining_time_ae_point_minutes=abs(
+        ]) / MINUTES_PER_DAY,
+        remaining_time_ae_point_days=abs(
             point.remaining_time_minutes - truth.remaining_time_minutes
-        ),
+        ) / MINUTES_PER_DAY,
         length_ae_mean=mean([float(abs(len(sample) - len(truth))) for sample in samples]),
         length_ae_point=float(abs(len(point) - len(truth))),
         suffix_length=float(len(truth)),
