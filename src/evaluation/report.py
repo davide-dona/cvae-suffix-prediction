@@ -3,7 +3,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from src.evaluation.accuracy import AccuracyMetrics
-from src.evaluation.conformance import ConformanceMetrics
 
 
 @dataclass(frozen=True)
@@ -19,7 +18,6 @@ class EvaluationReport:
     samples_per_prefix: int
     truncated_pairs_excluded: int
     accuracy: AccuracyMetrics
-    conformance: ConformanceMetrics
 
     def write(self, path: str | Path) -> Path:
         """

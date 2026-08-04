@@ -3,9 +3,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.evaluation import EvaluationReport, accuracy_metrics, conformance_metrics
+from src.evaluation import EvaluationReport, accuracy_metrics
 from src.logs.discovery import read_process_model
-from src.logs.io import read_log
 
 
 def run(generations_file: Path) -> None:
@@ -53,15 +52,7 @@ def run(generations_file: Path) -> None:
         cases=int(scored['case_id'].nunique()),
         samples_per_prefix=int(scored['sample_index'].nunique()),
         truncated_pairs_excluded=truncated_pairs,
-        accuracy=accuracy_metrics(scored),
-        conformance=conformance_metrics(
-            scored,
-            test_log=read_log(processed_dir / 'test.csv'),
-            train_log=read_log(processed_dir / 'train.csv'),
-            net=net,
-            initial_marking=initial_marking,
-            final_marking=final_marking,
-        ),
+        accuracy=accuracy_metrics(scored)
     )
 
     path = report.write(_eval_path(generations_file))
