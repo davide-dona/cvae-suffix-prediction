@@ -111,9 +111,11 @@ class DecoderLayer(nn.Module):
 
 class Decoder(nn.Module):
     """Transformer decoder that predicts a suffix of events, given the prefix and a latent z.
-    
-    Applies self-attention over the suffix positions read so far, cross-attention over 
-    the encoded prefix. The latent z is projected and added to every suffix position"""
+
+    Applies self-attention over the suffix positions read so far, cross-attention over
+    the encoded prefix. The latent z is projected into an extra cross-attention token
+    prepended to the prefix, so every position reads it with a content-dependent weight
+    rather than a fixed additive bias."""
 
     def __init__(
         self,
@@ -138,7 +140,7 @@ class Decoder(nn.Module):
         self.pad_resource_index = pad_resource_index
         self.eot_activity_index = eot_activity_index
 
-        # Brings the latent up to the width of the residual stream it is added into.
+        # Brings the latent up to the width of the cross-attention token it becomes.
         self.latent_projection = nn.Linear(
             in_features=latent_config.latent_dim, out_features=d_model
         )
@@ -181,9 +183,11 @@ class Decoder(nn.Module):
         """
         if self.training and self.activity_dropout > 0.0:
             decoder_input = self._drop_activities(decoder_input)
+        prefix_encoded, prefix_pad_mask = self._append_latent_token(
+            z=z, prefix_encoded=prefix_encoded, prefix_pad_mask=prefix_pad_mask
+        )
         hidden, _ = self._run_layers(
             activities=decoder_input,
-            z=z,
             prefix_encoded=prefix_encoded,
             prefix_pad_mask=prefix_pad_mask,
             start_position=0,
@@ -194,6 +198,30 @@ class Decoder(nn.Module):
             activity_logits=self.activity_head(features),
             remaining_time_distr=self._remaining_time_distr(features[:, 0]),
         )
+
+    def _append_latent_token(
+        self, z: torch.Tensor, prefix_encoded: torch.Tensor, prefix_pad_mask: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Prepend the projected latent to the prefix as an extra cross-attention token.
+
+        Args:
+            z: The sampled latent, `[batch_size, latent_dim]`.
+            prefix_encoded: The encoded prefix events, `[batch_size, prefix_seq_len, d_model]`.
+            prefix_pad_mask: True where a prefix position holds padding.
+        Returns:
+            `prefix_encoded` and `prefix_pad_mask`, each one position longer, with the latent
+            token first.
+        """
+        latent_token = self.latent_projection(z).unsqueeze(dim=1)  # [batch_size, 1, d_model]
+        prefix_encoded = torch.cat(
+            tensors=(latent_token, prefix_encoded), dim=1
+        )  # [batch_size, 1 + prefix_seq_len, d_model]
+        # The latent token is never padding, so add a column of False to match the new width.
+        latent_column = prefix_pad_mask.new_zeros(size=(prefix_pad_mask.size(dim=0), 1))
+        prefix_pad_mask = torch.cat(
+            tensors=(latent_column, prefix_pad_mask), dim=1
+        )  # [batch_size, 1 + prefix_seq_len]
+        return prefix_encoded, prefix_pad_mask
 
     def _drop_activities(self, activities: torch.Tensor) -> torch.Tensor:
         """Blank a random `activity_dropout` fraction of the teacher-forced activities to PAD.
@@ -210,7 +238,6 @@ class Decoder(nn.Module):
         self,
         *,
         activities: torch.Tensor,
-        z: torch.Tensor,
         prefix_encoded: torch.Tensor,
         prefix_pad_mask: torch.Tensor,
         start_position: int,
@@ -224,18 +251,16 @@ class Decoder(nn.Module):
 
         Args:
             activities: The decoder input activities to read, `[batch_size, seq_len]`.
-            z: The sampled latent, `[batch_size, latent_dim]`.
-            prefix_encoded: The encoded prefix events, `[batch_size, prefix_seq_len, d_model]`.
+            prefix_encoded: The encoded prefix events, `[batch_size, prefix_seq_len, d_model]`,
+                with the latent token already prepended.
             prefix_pad_mask: True where a prefix position holds padding.
             start_position: Where in the suffix `activities` starts, for the positional encoding.
             caches: One per layer, from a previous call, or None to read from the beginning.
         Returns:
             The stack's output for the positions read, and the caches carrying them.
         """
-        # z is broadcast over positions: the same latent added to every one of them.
         hidden = self.dropout(
             self.embeddings(self._blank_events(activities), start_position=start_position)
-            + self.latent_projection(z).unsqueeze(dim=1)
         )  # [batch_size, seq_len, d_model]
 
         # No suffix padding mask: under the causal mask a padded position is visible only to
@@ -329,6 +354,9 @@ class Decoder(nn.Module):
             The generated suffixes, the length of each, and the remaining time of each.
         """
         batch_size = z.size(dim=0)
+        prefix_encoded, prefix_pad_mask = self._append_latent_token(
+            z=z, prefix_encoded=prefix_encoded, prefix_pad_mask=prefix_pad_mask
+        )
 
         # What the decoder reads at each step: SOS first, exactly how `SuffixDataset` builds
         # the teacher-forced position 0, then the activity the previous step predicted.
@@ -354,7 +382,6 @@ class Decoder(nn.Module):
             # Only this one position is new; everything before it is in `caches`.
             hidden, caches = self._run_layers(
                 activities=next_input,
-                z=z,
                 prefix_encoded=prefix_encoded,
                 prefix_pad_mask=prefix_pad_mask,
                 start_position=position,
