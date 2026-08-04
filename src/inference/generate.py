@@ -19,8 +19,9 @@ class GenerationRow:
     column per side here.
 
     `sample_index` enumerates the generated suffixes of one prefix; it identifies a row rather
-    than describing it. Both remaining times are minutes from the end of the prefix to the end
-    of the case.
+    than describing it. The `point_` and `true_` fields describe the prefix rather than the
+    sample, so they repeat unchanged across its rows. Every remaining time is minutes from the
+    end of the prefix to the end of the case.
     """
     case_id: str
     prefix_len: int
@@ -28,6 +29,10 @@ class GenerationRow:
     sample_index: int   # which of the `num_samples` generated suffixes of this prefix this is
     generated_activities: list[str]
     generated_remaining_time_minutes: float
+    # The suffix written from the mean of `p(z | prefix)`: the model's single answer, drawn once
+    # per prefix and the only column comparable against a model that does not sample.
+    point_activities: list[str]
+    point_remaining_time_minutes: float
     true_activities: list[str]
     true_remaining_time_minutes: float
 
@@ -95,6 +100,12 @@ def _batch_rows(
             length=generation.true_lengths[position],
             remaining_time=generation.true_remaining_time[position],
         )
+        point = decode_sequence(
+            description,
+            activities=generation.point_activities[position],
+            length=generation.point_lengths[position],
+            remaining_time=generation.point_remaining_time[position],
+        )
 
         for sample_index in range(generation.activities.shape[1]):
             generated = decode_sequence(
@@ -111,6 +122,8 @@ def _batch_rows(
                     sample_index=sample_index,
                     generated_activities=generated.activities,
                     generated_remaining_time_minutes=generated.remaining_time_minutes,
+                    point_activities=point.activities,
+                    point_remaining_time_minutes=point.remaining_time_minutes,
                     true_activities=truth.activities,
                     true_remaining_time_minutes=truth.remaining_time_minutes,
                 )

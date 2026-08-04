@@ -92,6 +92,7 @@ def run(config: ExperimentConfig) -> None:
         run_name=run_name,
         on_best_step=save_best,
         generation_samples=config.inference.num_samples,
+        description=description,
         loss_config=config.loss,
         optimizer_config=config.optimizer,
         training=config.training,

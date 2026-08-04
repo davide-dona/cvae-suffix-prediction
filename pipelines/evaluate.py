@@ -65,15 +65,7 @@ def run(generations_file: Path) -> None:
     )
 
     path = report.write(_eval_path(generations_file))
-    print(
-        f'Wrote {path}: activity DLS {report.accuracy.scores.activity_dls_mean:.3f} mean / '
-        f'{report.accuracy.scores.activity_dls_best:.3f} best, energy score '
-        f'{report.accuracy.scores.activity_energy_score:.3f}, replay fitness '
-        f'{report.conformance.generated.fitness_mean:.3f} against '
-        f'{report.conformance.reference.fitness_mean:.3f} for the ground truth, precision '
-        f'{report.conformance.generated.precision:.3f} against '
-        f'{report.conformance.reference.precision:.3f}'
-    )
+    print(f"Wrote evaluation report to {path}")
 
 
 def _pair_count(generations: pd.DataFrame) -> int:
