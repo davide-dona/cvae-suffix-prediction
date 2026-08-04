@@ -67,6 +67,9 @@ class DecodedSequence:
     activities: list[str]
     remaining_time_minutes: float
 
+    def __len__(self) -> int:
+        return len(self.activities)
+
 
 def decode_sequence(
     description: DatasetDescription,

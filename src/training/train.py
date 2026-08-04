@@ -15,7 +15,7 @@ from src.model import TransformerCVAE
 from src.training.early_stopping import EarlyStopper
 from src.training.kl import cyclical_linear_weight
 from src.training.loss import Loss, compute_loss
-from src.training.validation import GenerationMetrics, validate, validate_generation
+from src.training.validation import validate, validate_generation
 
 
 def train(

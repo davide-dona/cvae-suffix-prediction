@@ -1,11 +1,35 @@
 from dataclasses import asdict, fields
-from typing import Self
+from typing import Self, Sequence
 
 from torch.utils.tensorboard import SummaryWriter
 
 
 class ScalarMetrics:
-    """Named scalars of one pass, summed over its traces and divided once at the end."""
+    """Named scalars of one pass, aggregated field by field.
+
+    Two aggregations, because a pass comes in two shapes. A loss is accumulated with `+` as the
+    batches arrive and divided once by the traces it summed over, so a trace weighs the same
+    however the batches fell. A per-prefix score is already reduced when it is produced, so it is
+    averaged with `mean` over the prefixes themselves.
+    """
+
+    @classmethod
+    def mean(cls, values: Sequence[Self]) -> Self:
+        """Average a set of metrics field by field.
+
+        Args:
+            values: The metrics to average, one per unit of the pass.
+        Returns:
+            The mean of every field, all 0.0 if there are none.
+        """
+        return cls(**{
+            field.name: (
+                sum(getattr(value, field.name) for value in values) / len(values)
+                if values
+                else 0.0
+            )
+            for field in fields(cls)
+        })
 
     def __add__(self, other: Self) -> Self:
         return type(self)(**{

@@ -3,7 +3,7 @@ from typing import Sequence
 import pandas as pd
 from pm4py.objects.petri_net.obj import Marking, PetriNet
 
-from src.evaluation.sequences import mean
+from src.scoring.sequences import mean
 from src.logs.keys import ACTIVITY_KEY, CASE_KEY
 from src.logs.replay import replay_fitness, replay_precision
 

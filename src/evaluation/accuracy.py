@@ -1,38 +1,9 @@
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from typing import Sequence
 import pandas as pd
 
-from src.evaluation.sequences import mean, score_samples, sequence_similarity
-
-
-@dataclass(frozen=True)
-class SuffixScores:
-    """The scores of one prefix's generated samples, or their mean over a set of prefixes."""
-    # The Damerau-Levenshtein Similarity (DLS) is the edit distance normalized to [0, 1] and inverted.
-    activity_dls_mean: float        # The mean similarity of a prefix's samples to the ground truth
-    activity_dls_point: float       # z = mean(p(z | prefix), a single greedy answer, scored against the ground truth
-    activity_dls_best: float        # The similarity of the closest sample to the ground truth
-
-    # The samples read as a predictive distribution, lower being better.
-    activity_energy_score: float
-
-    # How far apart the samples of a prefix are, and how many of them are distinct sequences.
-    # Both say how much of the prefix's uncertainty z carries, not how good the model is.
-    sample_diversity: float
-    unique_sample_rate: float
-
-    # Absolute error (AE) between the predicted and true remaining cycle time, in minutes.
-    # No best since the closest of ten draws of a scalar measures how widely the head scatters 
-    # rather than how well it predicts.
-    remaining_time_ae_mean_minutes: float
-    remaining_time_ae_point_minutes: float
-    
-    # Absolute error (AE) between the predicted and true suffix length, in events.
-    length_ae_mean: float
-    length_ae_point: float
-
-    # Events left after the cut point: the scale every error above is read against
-    suffix_length: float
+from src.inference.generate import prediction_from_rows
+from src.scoring import SuffixScores, score_prefix
 
 
 @dataclass(frozen=True)
@@ -70,75 +41,17 @@ def accuracy_metrics(generations: pd.DataFrame) -> AccuracyMetrics:
         prefix weighs the same however many samples were drawn for it, so a prefix is the unit
         the report describes and a row is not.
     """
+    # Each group is scored down to eleven floats and dropped, so a split of millions of rows never
+    # has more than one prefix's objects alive at a time.
     per_prefix = [
-        _prefix_accuracy(samples)
-        for _, samples in generations.groupby(['case_id', 'prefix_len'], sort=False)
+        _PrefixAccuracy(
+            prefix_len=int(prefix_len), scores=score_prefix(prediction_from_rows(group))
+        )
+        for (_, prefix_len), group in generations.groupby(['case_id', 'prefix_len'], sort=False)
     ]
     return AccuracyMetrics(
-        scores=mean_scores([prefix.scores for prefix in per_prefix]),
+        scores=SuffixScores.mean([prefix.scores for prefix in per_prefix]),
         by_prefix_length=_by_prefix_length(per_prefix),
-    )
-
-
-def mean_scores(scores: Sequence[SuffixScores]) -> SuffixScores:
-    """Average a set of prefixes' scores field by field.
-
-    Args:
-        scores: The scores to average, one per prefix.
-    Returns:
-        The mean of every field, all 0.0 if there are no scores.
-    """
-    return SuffixScores(**{
-        field.name: mean([getattr(score, field.name) for score in scores])
-        for field in fields(SuffixScores)
-    })
-
-
-def _prefix_accuracy(samples: pd.DataFrame) -> _PrefixAccuracy:
-    """Reduce the S samples of a single cut point to a single score, by averaging the per-sample scores.
-    Args:
-        samples: The rows of a single (case, cut point), one per generated sample. The ground
-            truth and the point prediction describe the prefix rather than the sample and repeat
-            across the rows, so both are read off the first of them.
-    Returns:
-        That prefix's contribution to the averages.
-    """
-    ground_truth = samples.iloc[0]
-
-    remaining_time_ae: list[float] = []
-    length_ae: list[float] = []
-    generated_activities: list[list[str]] = []
-
-    for sample in samples.itertuples():
-        remaining_time_ae.append(
-            abs(float(sample.generated_remaining_time_minutes) - float(ground_truth.true_remaining_time_minutes))
-        )
-        length_ae.append(float(abs(len(sample.generated_activities) - len(ground_truth.true_activities))))
-        generated_activities.append(sample.generated_activities)
-
-    activities = score_samples(generated_activities, ground_truth.true_activities)
-    return _PrefixAccuracy(
-        prefix_len=int(ground_truth.prefix_len),
-        scores=SuffixScores(
-            activity_dls_mean=activities.dls_mean,
-            activity_dls_point=sequence_similarity(
-                ground_truth.point_activities, ground_truth.true_activities
-            ),
-            activity_dls_best=activities.dls_best,
-            activity_energy_score=activities.energy_score,
-            sample_diversity=activities.sample_diversity,
-            unique_sample_rate=activities.unique_sample_rate,
-            remaining_time_ae_mean_minutes=mean(remaining_time_ae),
-            remaining_time_ae_point_minutes=abs(
-                float(ground_truth.point_remaining_time_minutes)
-                - float(ground_truth.true_remaining_time_minutes)
-            ),
-            length_ae_mean=mean(length_ae),
-            length_ae_point=float(
-                abs(len(ground_truth.point_activities) - len(ground_truth.true_activities))
-            ),
-            suffix_length=float(len(ground_truth.true_activities)),
-        ),
     )
 
 
@@ -157,7 +70,7 @@ def _by_prefix_length(per_prefix: Sequence[_PrefixAccuracy]) -> list[ByPrefixLen
         ByPrefixLengthAccuracy(
             length=prefix_len,
             pairs_count=len(buckets[prefix_len]),
-            scores=mean_scores(buckets[prefix_len]),
+            scores=SuffixScores.mean(buckets[prefix_len]),
         )
         for prefix_len in sorted(buckets)
     ]

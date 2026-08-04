@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import Hashable, Sequence
 
 
@@ -110,53 +109,3 @@ def energy_score(dls_mean: float, sample_diversity: float) -> float:
     """
     return (1.0 - dls_mean) - 0.5 * sample_diversity
 
-@dataclass(frozen=True)
-class SampleScores:
-    """How one prefix's generated samples compare to the ground truth, and to each other.
-
-    Attributes:
-        dls_mean: The mean similarity to the ground truth, what one draw is worth.
-        dls_best: The closest of the samples, whether the model covers the truth at all.
-        sample_diversity: The spread across the samples, which needs all of them at once
-            rather than reducing over them independently.
-        unique_sample_rate: The fraction of the samples that are distinct sequences.
-        energy_score: The samples read as a predictive distribution, lower being better.
-    """
-    dls_mean: float
-    dls_best: float
-    sample_diversity: float
-    unique_sample_rate: float
-    energy_score: float
-
-
-def score_samples(
-    samples: Sequence[Sequence[Hashable]],
-    truth: Sequence[Hashable],
-) -> SampleScores:
-    """
-    Score the suffixes generated for one prefix against the ground truth they continue.
-
-    The three numbers a generated set is judged by, in one place: `validate_generation` averages
-    them over a validation slice while training, `accuracy_metrics` over the test split
-    afterwards, so a training curve and a final report measure the same thing rather than
-    agreeing by coincidence.
-
-    Args:
-        samples: The sequences generated for the prefix, one per draw of z. Activity indices
-            while training and decoded activity names when scoring a generations file, which is
-            why nothing here is named after activities.
-        truth: The ground-truth suffix the samples are compared against.
-    Returns:
-        The prefix's scores. A prefix with no samples scores 0.0 on everything and 1.0 on
-        `energy_score`, the worst it can be, rather than looking like a perfect prediction.
-    """
-    similarities = [sequence_similarity(sample, truth) for sample in samples]
-    dls_mean = mean(similarities)
-    sample_diversity = diversity(samples)
-    return SampleScores(
-        dls_mean=dls_mean,
-        dls_best=max(similarities) if similarities else 0.0,
-        sample_diversity=sample_diversity,
-        unique_sample_rate=len({tuple(sample) for sample in samples}) / len(samples) if samples else 0.0,
-        energy_score=energy_score(dls_mean, sample_diversity) if samples else 1.0,
-    )
