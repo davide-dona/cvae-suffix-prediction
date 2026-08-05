@@ -1,5 +1,5 @@
 seed: 42
-experiment_name: cvae_suffix_transformer_new_val
+experiment_name: cvae_suffix_transformer
 output_dir: outputs
 
 model:
