@@ -209,6 +209,10 @@ class TrainingConfig(StrictModel):
     )
     device: Literal["cpu", "cuda", "mps"]
     best_model_dir: Path = Field(..., description="The best step of a run, one file per run")
+    checkpoint_dir: Path = Field(
+        ..., description="The last validated step of a run, one file per run, overwritten every "
+        "validation; what `--resume` reads",
+    )
     log_dir: Path = Field(..., description="TensorBoard event directory")
     val_every_n_steps: int = Field(
         ..., gt=0,

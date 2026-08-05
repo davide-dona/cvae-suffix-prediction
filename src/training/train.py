@@ -1,4 +1,3 @@
-from typing import Callable
 import torch
 from torch import optim
 from torch.utils.data import DataLoader
@@ -11,11 +10,54 @@ from src.configs.schema import (
     TrainingConfig,
 )
 from src.datasets.description import DatasetDescription
-from src.model import TransformerCVAE
+from src.model import TransformerCVAE, checkpoint_path, save_checkpoint
 from src.training.early_stopping import EarlyStopper
 from src.training.kl import cyclical_linear_weight
 from src.training.loss import Loss, compute_loss
 from src.training.validation import validate, validate_generation
+
+
+# The device's own stream, which dropout and the latent sampling draw from, lives behind a
+# namespace of its own; `cpu` has none beside the global one.
+DEVICE_RNG = {
+    'cuda': (torch.cuda.get_rng_state, torch.cuda.set_rng_state),
+    'mps': (torch.mps.get_rng_state, torch.mps.set_rng_state),
+}
+
+
+def rng_state(generator: torch.Generator, device: torch.device) -> dict:
+    """
+    Every random stream a run draws from, so a resumed one carries on where it left off.
+
+    Args:
+        generator: The generator the training loader shuffles with.
+        device: The device the model runs on.
+    Returns:
+        The states, keyed for `restore_rng_state`.
+    """
+    capture = DEVICE_RNG.get(device.type)
+    return {
+        'cpu': torch.get_rng_state(),
+        'dataloader': generator.get_state(),
+        'device': capture[0]() if capture is not None else None,
+    }
+
+
+def restore_rng_state(state: dict, *, generator: torch.Generator, device: torch.device) -> None:
+    """
+    Put back what `rng_state` captured, on the device the run trained on.
+
+    Args:
+        state: What `rng_state` returned.
+        generator: The generator the training loader shuffles with.
+        device: The device the model runs on.
+    """
+    torch.set_rng_state(state['cpu'])
+    generator.set_state(state['dataloader'])
+
+    restore = DEVICE_RNG.get(device.type)
+    if restore is not None:
+        restore[1](state['device'])
 
 
 def train(
@@ -27,7 +69,9 @@ def train(
     generation_samples: int,
     description: DatasetDescription,
     run_name: str,
-    on_best_step: Callable[[int, float], None],
+    model_config: dict,
+    generator: torch.Generator,
+    resume: dict | None,
     loss_config: LossConfig,
     optimizer_config: OptimizerConfig,
     training: TrainingConfig,
@@ -35,6 +79,11 @@ def train(
 ) -> None:
     """
     Train a model on a dataset, logging to TensorBoard and saving checkpoints.
+
+    Every validation writes a checkpoint to `training.checkpoint_dir`, whether or not the step
+    is the best one, and a validation that improves on the best writes a second copy to
+    `training.best_model_dir`. Either file can be handed back as `resume`.
+
     Args:
         model: The model to train, already on `training.device`.
         train_loader: Batches to learn from.
@@ -51,13 +100,18 @@ def train(
             curves instead of listing them side by side; what makes it unique is the
             caller's business. A `/` in it nests the run, which is how TensorBoard groups
             runs under a common prefix.
-        on_best_step: Called with the step number and its selection score whenever a validation
-            improves on the best so far, so that saving a checkpoint stays the caller's
-            business.
+        model_config: The model's `ModelConfig`, dumped to plain data, written into every
+            checkpoint so it can be rebuilt from the file alone.
+        generator: The generator the training loader shuffles with, whose state is saved and
+            restored along with the rest.
+        resume: A checkpoint to carry on from, read by `load_checkpoint`, or `None` to start
+            from step zero. Its step, weights, optimizer state, early-stopping state and random
+            streams are all restored; the budgets stay the caller's, so raising
+            `training.max_steps` and resuming is what extends a finished run.
         loss_config: The KL annealing schedule.
         optimizer_config: The optimizer hyperparameters.
-        training: Step budget, validation cadence, gradient clipping, device and the
-            TensorBoard destination.
+        training: Step budget, validation cadence, gradient clipping, device, and where
+            checkpoints and TensorBoard events go.
         early_stopping_config: When to give up.
     """
     device = torch.device(training.device)
@@ -72,8 +126,24 @@ def train(
     interval_totals = Loss()
     seen = 0
 
-    writer = SummaryWriter(log_dir=training.log_dir / run_name)
+    # If resuming, restore the model, optimizer, early stopper and random streams to the state
+    # they were in when the checkpoint was written.
+    if resume is not None:
+        model.load_state_dict(state_dict=resume['model_state_dict'])
+        optimizer.load_state_dict(state_dict=resume['optimizer_state'])
+        early_stopper.load_state_dict(resume['early_stopping_state'])
+        # Restored after the loaders were built, so that the fixed validation and generation
+        # subsets are still drawn from the seeded stream exactly as an unresumed run draws them.
+        restore_rng_state(resume['rng_state'], generator=generator, device=device)
+        step = resume['step']
+        print(f'Resuming {run_name} from step {step}, best score {resume["selection_score"]:.4f}')
+
+    # Overwrite the TensorBoard logs after the step we resumed from, so that a resumed run's curves are continuous with the original.
+    writer = SummaryWriter(
+        log_dir=training.log_dir / run_name, purge_step=step if resume is not None else None
+    )
     print(f'Logging to {writer.log_dir}')
+    
     try:
         while step < training.max_steps and not should_stop:
             for batch in train_loader:
@@ -139,14 +209,28 @@ def train(
                         flush=True,
                     )
                     selection_score = gen_metrics.activity_energy_score
-
-                    # `early_stopper` already tracks the best score seen for its own patience
-                    # count, so reading it here rather than keeping a second one is what a
-                    # validation improving on it means.
-                    is_best = selection_score < early_stopper.min_validation_score
                     should_stop = early_stopper.update(selection_score)
-                    if is_best:
-                        on_best_step(step, selection_score)
+
+                    # Save a checkpoint with the model, optimizer, early stopper and random streams in their current state.
+                    checkpoint = dict(
+                        model_config=model_config,
+                        step=step,
+                        selection_score=selection_score,
+                        run_name=run_name,
+                        optimizer_state=optimizer.state_dict(),
+                        early_stopping_state=early_stopper.state_dict(),
+                        rng_state=rng_state(generator, device),
+                    )
+                    save_checkpoint(
+                        model, **checkpoint, path=checkpoint_path(training.checkpoint_dir, run_name)
+                    )
+                    # If this validation improved on the best, save a second copy to the best-model directory.
+                    if selection_score < early_stopper.min_validation_score:
+                        path = save_checkpoint(
+                            model, **checkpoint,
+                            path=checkpoint_path(training.best_model_dir, run_name),
+                        )
+                        print(f'New best model (step {step}, score {selection_score:.4f}) saved at {path}')
 
                 if should_stop or step >= training.max_steps:
                     break
