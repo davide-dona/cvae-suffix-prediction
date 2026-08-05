@@ -4,18 +4,11 @@ from pathlib import Path
 import pandas as pd
 
 from src.evaluation import EvaluationReport, accuracy_metrics
-from src.logs.discovery import read_process_model
 
 
 def run(generations_file: Path) -> None:
     """Score a run's generated suffixes and write the result under the `eval` sibling of the
     generations directory.
-
-    Nothing is generated here: the generations file is the input, so a metric can be added and
-    every past run rescored without the model being run again. It is also the only input: the
-    dataset it was generated from is `generations_file`'s parent directory name, per
-    `src.inference.generate.generations_path`, and that dataset's splits and process model live
-    at the fixed `data/<dataset>` convention every `config/*.yaml` follows.
 
     Args:
         generations_file: The generations to score, from `python -m pipelines.generate`.
@@ -26,13 +19,13 @@ def run(generations_file: Path) -> None:
             'or name the right generations file.'
         )
 
+    # Retrieve the dataset name from the generations file's path
     dataset = generations_file.parent.name
-    data_dir = Path('data') / dataset
 
+    # Read the generations file into a DataFrame
     generations = pd.read_parquet(path=generations_file)
-    # A truncated pair's ground-truth suffix stops short of the case's real ending, so it is
-    # neither a fair target to score against nor a trace that can reach the net's final marking.
-    # Dropped once, here, so every number below is measured on the same set of prefixes.
+
+    # Filter out truncated generations, which are not scored
     scored = generations[~generations['truncated']]
     truncated_pairs = _pair_count(generations) - _pair_count(scored)
 
@@ -42,9 +35,6 @@ def run(generations_file: Path) -> None:
         + (f', {truncated_pairs} truncated prefixes left out' if truncated_pairs else ''),
         flush=True,
     )
-
-    net, initial_marking, final_marking = read_process_model(data_dir / 'model')
-    processed_dir = data_dir / 'processed'
 
     report = EvaluationReport(
         run_name=run_name,
@@ -80,8 +70,7 @@ def _eval_path(generations_file: Path) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Score a run's generated test-split suffixes against the log and the "
-                    'process model mined from it.'
+        description="Score a run's generated test-split suffixes against the ground truth."
     )
     parser.add_argument('-g', '--generations', type=Path, required=True,
                         help='Path to the generations file to score, from `pipelines.generate`.')

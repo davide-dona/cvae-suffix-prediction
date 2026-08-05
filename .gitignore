@@ -13,6 +13,4 @@ ideas/
 
 # Preprocessed datasets
 processed/
-# Petri-Net discovery outputs
-data/*/model/
 

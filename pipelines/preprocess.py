@@ -17,7 +17,6 @@ from src.logs.keys import (
     RESOURCE_KEY,
     TIMESTAMP_KEY,
 )
-from src.logs.discovery import discover_process_model, write_process_model
 from src.logs.split import temporal_split
 from src.logs.timestamps import add_case_offset, add_event_delta, add_remaining_time
 
@@ -135,16 +134,6 @@ def run(data_config: DataConfig) -> None:
     # so every later run reads one description rather than deriving its own.
     description = DatasetDescription.fit(train, data_config=data_config)
     description.save(data_config)
-
-    # Discover a Petri net of the process and write it to disk. 
-    # Done using the inductive miner, only on the training set to avoid data leakage.
-    net, initial_marking, final_marking = discover_process_model(
-        train,
-        case_key=CASE_KEY,
-        activity_key=ACTIVITY_KEY,
-        timestamp_key=TIMESTAMP_KEY,
-    )
-    write_process_model(net, initial_marking, final_marking, data_config.dir / 'model')
 
     print(
         f'Preprocessed "{data_config.dir}": {len(train)} train, {len(val)} val, {len(test)} test '

@@ -2,23 +2,30 @@ import argparse
 from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from pipelines.preprocess import ensure_dataset
 from src.configs import ExperimentConfig, load_config
 from src.datasets.dataset import SuffixDataset
 from src.datasets.description import DatasetDescription
-from src.inference import generate_suffixes, generation_batch_size, generations_path
-from src.model import TransformerCVAE, latest_best_model_path, load_checkpoint
+from src.inference import (
+    generate_batch,
+    generation_batch_size,
+    generations_path,
+    open_generations,
+    table_from_generations,
+)
+from src.model import TransformerCVAE, load_checkpoint
 
 
-def run(config: ExperimentConfig, model_path: Path | None = None) -> None:
+def run(config: ExperimentConfig, model_path: Path) -> None:
     """Generate suffixes for every prefix of the test split and write them out.
 
     Args:
         config: The validated experiment config.
-        model_path: The checkpoint to generate with. Defaults to the best model of the most
-            recent run of this config, which is what a config alone can identify: the runs of
-            one config differ only in the timestamp their name ends on.
+        model_path: The checkpoint to generate with. Named rather than guessed at: a config
+            matches every run ever started from it, and picking one of them is a decision the
+            caller makes, not one to be inferred from a filename.
     """
     ensure_dataset(config.data)
     torch.manual_seed(config.seed)
@@ -30,38 +37,42 @@ def run(config: ExperimentConfig, model_path: Path | None = None) -> None:
     test_loader = DataLoader(
         dataset=test_dataset,
         batch_size=generation_batch_size(inference=config.inference, upper_bound=config.data.batch_size),
-        shuffle=False,
+        sampler=test_dataset.length_sorted_indices(),
         num_workers=config.data.num_workers,
     )
 
-    if model_path is None:
-        model_path = latest_best_model_path(
-            config.training.best_model_dir, f'{config.data.dir.name}/{config.experiment_name}'
-        )
+    # Load the model from the checkpoint and put it on the right device
     model = TransformerCVAE.from_checkpoint(
         load_checkpoint(model_path), description, device=config.training.device
     )
+    model.eval()
 
     # The output file is named after the checkpoint's run.
     path = generations_path(config.inference.generations_dir, f'{config.data.dir.name}/{model_path.stem}')
-    path.parent.mkdir(parents=True, exist_ok=True)
+    device = torch.device(config.training.device)
 
     print(
         f'Generating {config.inference.num_samples} suffixes for each of '
-        f'{len(test_loader.dataset)} test prefixes, with {model_path}',
+        f'{len(test_dataset)} test prefixes, with {model_path}',
         flush=True,
     )
 
-    generations = generate_suffixes(
-        model,
-        test_loader,
-        description,
-        num_samples=config.inference.num_samples,
-        device=torch.device(config.training.device),
-    )
+    # Write the generation while it is being produced, avoiding a huge in-memory DataFrame.
+    with open_generations(path) as parquetWriter:
+        for batch in tqdm(iterable=test_loader, desc='Generating', unit='batch'):
+            generations = generate_batch(
+                model=model,
+                batch=batch.to(device),
+                num_samples=config.inference.num_samples,
+                description=description,
+            )
+            # The pair info is needed to decode the generations back into event sequences
+            infos = [test_dataset.pair_info(index) for index in batch.pair_index.tolist()]
+            # Write the generations to the Parquet file in a single table, with one row per generation.
+            table = table_from_generations(generations=generations, infos=infos)
+            parquetWriter.write_table(table=table)
 
-    generations.to_parquet(path=path, index=False)
-    print(f'Wrote {len(generations)} generated suffixes to {path}')
+    print(f'Wrote generated suffixes to {path}')
 
 
 def main() -> None:
@@ -70,9 +81,9 @@ def main() -> None:
     )
     parser.add_argument('-c', '--config', type=Path, required=True,
                         help="Path to this experiment's config YAML.")
-    parser.add_argument('-m', '--model', type=Path,
-                        help='Path to the checkpoint to generate with. Defaults to the best '
-                             "model of this config's most recent run.")
+    parser.add_argument('-m', '--model', type=Path, required=True,
+                        help='Path to the checkpoint to generate with, from '
+                             "`training.best_model_dir` or `training.checkpoint_dir`.")
     args = parser.parse_args()
 
     run(load_config(args.config), args.model)

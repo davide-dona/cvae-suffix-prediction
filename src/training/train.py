@@ -208,6 +208,10 @@ def train(
                         flush=True,
                     )
                     selection_score = gen_metrics.activity_energy_score
+
+                    # Read before `update` folds this score into it, since afterwards it can
+                    # no longer tell an improvement from a step that just matched the best.
+                    is_best = selection_score < early_stopper.min_validation_score
                     should_stop = early_stopper.update(selection_score)
 
                     # Save a checkpoint with the model, optimizer, early stopper and random streams in their current state.
@@ -224,7 +228,7 @@ def train(
                         model, **checkpoint, path=checkpoint_path(training.checkpoint_dir, run_name)
                     )
                     # If this validation improved on the best, save a second copy to the best-model directory.
-                    if selection_score < early_stopper.min_validation_score:
+                    if is_best:
                         path = save_checkpoint(
                             model, **checkpoint,
                             path=checkpoint_path(training.best_model_dir, run_name),
