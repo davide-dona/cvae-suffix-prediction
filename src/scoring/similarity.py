@@ -7,15 +7,7 @@ def mean(values: Sequence[float]) -> float:
 
 
 def damerau_levenshtein_distance(first: Sequence[Hashable], second: Sequence[Hashable]) -> int:
-    """
-    The number of insertions, deletions, substitutions and transpositions between two sequences.
-
-    Transpositions count as one edit rather than two, which is what distinguishes this from a
-    plain Levenshtein distance and why it is the distance suffix prediction is scored with: two
-    activities in the wrong order is a lighter mistake than two unrelated activities.
-
-    This is the optimal-string-alignment variant, where no substring is edited more than once.
-    Sequences here are at most `max_seq_len` events long, so the quadratic table costs nothing.
+    """The number of edits to turn one sequence into another, allowing transpositions of adjacent elements as one edit.
 
     Args:
         first: The first sequence.
@@ -24,9 +16,10 @@ def damerau_levenshtein_distance(first: Sequence[Hashable], second: Sequence[Has
         The number of edits, at least `abs(len(first) - len(second))` and at most
         `max(len(first), len(second))`.
     """
-    # Row i, column j holds the distance between the first i and the first j elements. The
-    # extra row and column are the empty prefixes, whose distance is the length of the other.
+    # Row i, column j holds the distance between the first i and the first j elements.
     distances = [[0] * (len(second) + 1) for _ in range(len(first) + 1)]
+    
+    # Initialize the first row and column to the distance from the empty sequence.
     for i in range(len(first) + 1):
         distances[i][0] = i
     for j in range(len(second) + 1):
@@ -52,12 +45,7 @@ def damerau_levenshtein_distance(first: Sequence[Hashable], second: Sequence[Has
 
 
 def sequence_similarity(predicted: Sequence[Hashable], true: Sequence[Hashable]) -> float:
-    """
-    Damerau-Levenshtein similarity, the distance normalized into `[0, 1]`.
-
-    Dividing by the longer of the two lengths is what makes the score comparable across cut
-    points: an edit costs more on a short suffix than on a long one, and a suffix of the wrong
-    length is penalized by the edits it takes to reach the right one.
+    """Damerau-Levenshtein similarity, the distance normalized into `[0, 1]`.
 
     Args:
         predicted: The generated sequence.
@@ -93,8 +81,7 @@ def diversity(samples: Sequence[Sequence[Hashable]]) -> float:
     return mean(pairs)
 
 def energy_score(dls_mean: float, sample_diversity: float) -> float:
-    """
-    The samples read as a predictive distribution, lower being better.
+    """The samples read as a predictive distribution, lower being better.
 
     The mean distance to the truth, discounted by half the spread the samples already cover.
     Spread only pays off where the truth is far from a single guess, which is what makes this a
@@ -109,3 +96,17 @@ def energy_score(dls_mean: float, sample_diversity: float) -> float:
     """
     return (1.0 - dls_mean) - 0.5 * sample_diversity
 
+def is_hit(samples: Sequence[tuple[str, ...]], truth: tuple[str, ...], *, k: int) -> float:
+    """
+    Whether the true sequence is among the first `k` samples, exactly.
+
+    Args:
+        samples: The activity sequences generated for one prefix, in the order they were drawn.
+            A draw is independent of the ones before it, so the first `k` of them are as good a
+            sample of `k` as any other choice.
+        truth: The ground-truth activity sequence.
+        k: How many samples to look at.
+    Returns:
+        1.0 if one of the first `k` samples is the true sequence, 0.0 otherwise.
+    """
+    return float(truth in samples[:k])

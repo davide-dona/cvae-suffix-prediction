@@ -241,9 +241,10 @@ class InferenceConfig(StrictModel):
     """
 
     num_samples: int = Field(
-        ..., gt=0,
+        ..., ge=10,
         description="Suffixes generated per prefix, all from that prefix's p(z | prefix); the "
-        "spread across them is what the latent is claiming the prefix leaves open",
+        "spread across them is what the latent is claiming the prefix leaves open. Ten is the "
+        "floor because `hit_rate_at_10` reads the tenth draw",
     )
     generation_rows: int = Field(
         ..., gt=0,

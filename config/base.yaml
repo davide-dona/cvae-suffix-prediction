@@ -78,6 +78,7 @@ early_stopping:
 
 inference:
   # k suffixes per prefix differ only in z ~ p(z|prefix); heads are read greedily.
+  # At least ten, since hit_rate_at_10 reads the tenth draw.
   num_samples: 10
   
   # Caps decoder memory usage per batch. The decoder receives
