@@ -2,7 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.datasets.description import DatasetDescription
-from src.inference import generate_predictions
+from src.inference import generate_batch
 from src.model import TransformerCVAE
 from src.scoring import SuffixScores, score_prefix
 from src.training.loss import Loss, compute_loss
@@ -76,10 +76,13 @@ def validate_generation(
     model.eval()
 
     scores = [
-        score_prefix(prediction)
+        score_prefix(generation)
         for batch in loader
-        for prediction in generate_predictions(
-            model, batch.to(device), num_samples=num_samples, description=description
+        for generation in generate_batch(
+            model=model,
+            batch=batch.to(device),
+            num_samples=num_samples,
+            description=description,
         )
     ]
     return SuffixScores.mean(scores)

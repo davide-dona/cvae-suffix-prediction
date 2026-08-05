@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Sequence
 import pandas as pd
 
-from src.inference.generate import prediction_from_rows
+from src.inference import generation_from_rows
 from src.scoring import SuffixScores, score_prefix
 
 
@@ -33,7 +33,7 @@ def accuracy_metrics(generations: pd.DataFrame) -> AccuracyMetrics:
     """
     Score generated suffixes against the ground truth they were generated for.
     Args:
-        generations: Rows written by `src/inference/generate.py`, with the truncated pairs
+        generations: Rows written by `src/inference/parquet.py`, with the truncated pairs
             already dropped (their ground-truth suffix stops short of the real ending, so
             nothing here would be measuring what it claims to).
     Returns:
@@ -45,7 +45,7 @@ def accuracy_metrics(generations: pd.DataFrame) -> AccuracyMetrics:
     # has more than one prefix's objects alive at a time.
     per_prefix = [
         _PrefixAccuracy(
-            prefix_len=int(prefix_len), scores=score_prefix(prediction_from_rows(group))
+            prefix_len=int(prefix_len), scores=score_prefix(generation_from_rows(group))
         )
         for (_, prefix_len), group in generations.groupby(['case_id', 'prefix_len'], sort=False)
     ]

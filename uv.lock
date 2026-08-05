@@ -278,6 +278,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "tensorboard" },
     { name = "torch" },
+    { name = "tqdm" },
 ]
 
 [package.dev-dependencies]
@@ -296,6 +297,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "tensorboard", specifier = ">=2.21.0" },
     { name = "torch", specifier = ">=2.13.0" },
+    { name = "tqdm", specifier = ">=4.69.1" },
 ]
 
 [package.metadata.requires-dev]

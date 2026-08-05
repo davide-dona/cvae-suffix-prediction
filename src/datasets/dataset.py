@@ -155,12 +155,24 @@ class SuffixDataset(Dataset):
         trace, k = self._get_pair(i)
         return PairInfo(case_id=trace.case_id, prefix_len=k, truncated=trace.truncated)
 
-    def suffix_len(self, i: int) -> int:
+    def length_sorted_indices(self) -> list[int]:
+        """Order this split's pairs by how many positions their suffix takes to decode.
+
+        `Decoder.generate` runs a batch until every one of its rows has emitted EOT, so a batch
+        of similarly-long suffixes finishes together; unsorted, almost every batch contains one
+        early-cut, long-suffix straggler and decodes to nearly the cap regardless of its other
+        rows. Sorting the whole split first is what lets that early exit actually save time.
+
+        Returns:
+            Pair indices, ascending by suffix length. Passed as a `DataLoader` sampler.
+        """
+        return sorted(range(len(self)), key=self._suffix_len)
+
+    def _suffix_len(self, i: int) -> int:
         """How many positions the i-th pair's suffix holds: its content, plus an EOT if it has one.
 
         Cheap to call for every pair of a split, unlike `__getitem__`: it skips the padding
-        and tensor work, which generation has no use for when it only wants a length to sort
-        pairs by.
+        and tensor work, which sorting has no use for when it only wants a length.
         """
         trace, k = self._get_pair(i)
         content_len = len(trace.events) - k

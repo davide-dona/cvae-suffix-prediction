@@ -1,25 +1,28 @@
+from dataclasses import dataclass
+
 from src.configs.schema import InferenceConfig
-from src.datasets.codec import decode_sequence
-from src.datasets.dataset import SuffixDataset, SuffixItem
+from src.datasets.codec import DecodedSequence, decode_sequence
+from src.datasets.dataset import SuffixItem
 from src.datasets.description import DatasetDescription
-from src.inference.prediction import PrefixPrediction
 from src.model import TransformerCVAE
 
 
-def length_sorted_indices(dataset: SuffixDataset) -> list[int]:
-    """Order a split's pairs by how many positions their suffix takes to decode.
+@dataclass(frozen=True)
+class Generation:
+    """The model's answer for one prefix: the suffixes it drew, the one it answers with, and the
+    ground truth beside them.
 
-    `Decoder.generate` runs a batch until every one of its rows has emitted EOT, so a batch
-    of similarly-long suffixes finishes together; unsorted, almost every batch contains one
-    early-cut, long-suffix straggler and decodes to nearly the cap regardless of its other
-    rows. Sorting the whole split first is what lets that early exit actually save time.
+    The one shape everything downstream reads, and exactly what `score_prefix` takes. A training
+    curve, the generations file and the final report are all scored off this, so they measure the
+    same thing rather than agreeing by coincidence. `generate_batch` builds it from the model;
+    `generation_from_rows` builds it back out of a generations file, which is only this written down.
 
-    Args:
-        dataset: The split to order, read for each pair's suffix length.
-    Returns:
-        Pair indices of `dataset`, ascending by suffix length.
+    Which prefix this answers is not part of it: the caller that needs identity has the batch, and
+    the file names a prefix by its case and cut point.
     """
-    return sorted(range(len(dataset)), key=dataset.suffix_len)
+    samples: list[DecodedSequence]  # one per draw of z
+    point: DecodedSequence          # the suffix written from the mean of `p(z | prefix)`
+    truth: DecodedSequence
 
 
 def generation_batch_size(inference: InferenceConfig, upper_bound: int) -> int:
@@ -38,18 +41,19 @@ def generation_batch_size(inference: InferenceConfig, upper_bound: int) -> int:
     return max(1, min(upper_bound, inference.generation_rows // inference.num_samples))
 
 
-def generate_predictions(
+def generate_batch(
     model: TransformerCVAE,
     batch: SuffixItem,
     *,
     num_samples: int,
     description: DatasetDescription,
-) -> list[PrefixPrediction]:
+) -> list[Generation]:
     """Generate `num_samples` suffixes per prefix of one batch, and the point prediction beside them.
 
-    The one call into the raw `model.generate`. The second pass costs one prefix's worth of
-    decoding against `num_samples`, and it is what lets the report say what the model answers as
-    well as what it draws.
+    The one call into the raw `model.generate`, and the unit every caller works in: a caller walks
+    its own loader and calls this per batch. The second pass costs one prefix's worth of decoding
+    against `num_samples`, and it is what lets the report say what the model answers as well as
+    what it draws.
 
     Args:
         model: The model to generate with, already in eval mode.
@@ -59,9 +63,10 @@ def generate_predictions(
             direction. Passed rather than read off the dataset, which is a `Subset` wherever only
             a slice of the split is generated for.
     Returns:
-        One prediction per prefix of the batch, in the batch's order, decoded into the log's own
-        units. Each sequence is cut at its length, so what comes back holds events and nothing
-        else, the EOT a generation ended on and the padding behind it both dropped.
+        One generation per prefix of the batch, in the batch's own order, so a caller that needs
+        identity reads it off `batch.pair_index`. Everything is decoded into the log's own units and
+        cut at its length, so what comes back holds events and nothing else, the EOT a generation
+        ended on and the padding behind it both dropped.
     """
     generated = model.generate(item=batch, num_samples=num_samples)
     point = model.generate(item=batch, num_samples=1, sample_latent=False)
@@ -85,7 +90,7 @@ def generate_predictions(
     true_remaining_time = batch.remaining_time.cpu().numpy()  # [batch_size]
 
     return [
-        PrefixPrediction(
+        Generation(
             samples=[
                 decode_sequence(
                     description,

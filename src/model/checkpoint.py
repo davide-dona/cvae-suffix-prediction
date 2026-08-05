@@ -20,32 +20,6 @@ def checkpoint_path(directory: str | Path, run_name: str) -> Path:
     return Path(directory) / f'{run_name}.pt'
 
 
-def latest_best_model_path(best_model_dir: str | Path, run_prefix: str) -> Path:
-    """
-    The best model of the most recent run of one config.
-
-    `pipelines/train.py` names a run `<dataset>/<experiment_name>-<timestamp>`, so every run of
-    one config differs from the others only in that timestamp, and the format sorts them in
-    start order. The last one is the run most recently started with this config, which is the
-    one worth generating with unless told otherwise.
-
-    Args:
-        best_model_dir: The directory the best steps are written to.
-        run_prefix: A run name without its timestamp, `<dataset>/<experiment_name>`.
-    Returns:
-        The path of the newest matching run's best model.
-    Raises:
-        FileNotFoundError: If this config has no trained model yet.
-    """
-    candidates = sorted(Path(best_model_dir).glob(f'{run_prefix}-*.pt'))
-    if not candidates:
-        raise FileNotFoundError(
-            f'no trained model matching {Path(best_model_dir) / run_prefix}-<timestamp>.pt. '
-            'Train one first, or name a checkpoint explicitly.'
-        )
-    return candidates[-1]
-
-
 def save_checkpoint(
     model: nn.Module,
     *,

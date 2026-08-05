@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from src.inference.prediction import PrefixPrediction
+from src.inference import Generation
 from src.metrics import ScalarMetrics
 from src.scoring.sequences import diversity, energy_score, mean, sequence_similarity
 
@@ -47,7 +47,7 @@ class SuffixScores(ScalarMetrics):
     suffix_length: float
 
 
-def score_prefix(prediction: PrefixPrediction) -> SuffixScores:
+def score_prefix(generation: Generation) -> SuffixScores:
     """
     Score the suffixes generated for one prefix against the ground truth they continue.
 
@@ -56,13 +56,13 @@ def score_prefix(prediction: PrefixPrediction) -> SuffixScores:
     training curve and a final report measure the same thing rather than agreeing by coincidence.
 
     Args:
-        prediction: The model's answer for one prefix, decoded into the log's own units.
+        generation: The model's answer for one prefix, decoded into the log's own units.
     Returns:
         The prefix's scores. A prefix with no samples scores 0.0 on everything and 1.0 on
         `activity_energy_score`, the worst it can be, rather than looking like a perfect
         prediction.
     """
-    samples, point, truth = prediction.samples, prediction.point, prediction.truth
+    samples, point, truth = generation.samples, generation.point, generation.truth
 
     similarities = [sequence_similarity(sample.activities, truth.activities) for sample in samples]
     dls_mean = mean(similarities)
