@@ -83,6 +83,6 @@ inference:
   # Caps decoder memory usage per batch. The decoder receives
   # num_samples * min(batch_size, upper_bound) rows at once; this bounds
   # that total regardless of num_samples, which is set independently.
-  generation_rows: 512
+  generation_rows: 2560
   generations_dir: outputs/generations
 

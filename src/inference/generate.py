@@ -73,8 +73,12 @@ def generate_suffixes(
     model.eval()
 
     rows: list[GenerationRow] = []
-    for batch in loader:
-        print(f'Generating {len(batch)} prefixes, {num_samples} samples each', flush=True)
+    for batch_index, batch in enumerate(loader):
+        print(
+            f'Batch {batch_index + 1}/{len(loader)}: '
+            f'{batch.pair_index.size(dim=0)} prefixes, {num_samples} samples each',
+            flush=True,
+        )
         batch = batch.to(device)
         rows += _batch_rows(
             pair_indices=batch.pair_index.tolist(),

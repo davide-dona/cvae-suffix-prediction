@@ -12,10 +12,42 @@ REMAINING_TIME_LOGVAR_MIN = -6.0
 
 
 @dataclass(frozen=True)
+class SuffixCache:
+    """The suffix self-attention's key/value cache, preallocated to its final length and filled
+    one decode step at a time.
+
+    `keys`/`values` are the full `max_steps` buffer; only the first `length` positions are
+    written. Writing a step in place and handing back a view over it, rather than concatenating
+    a newly-sized tensor onto the cache every step, is what keeps a step's cost independent of
+    how far the generation has already run.
+    """
+    keys: torch.Tensor    # [batch_size, num_heads, max_steps, head_dim]
+    values: torch.Tensor  # [batch_size, num_heads, max_steps, head_dim]
+    length: int = 0
+
+    def write(self, step: ProjectedKeysValues) -> "SuffixCache":
+        """Write one step's projection into the next free position, in place.
+
+        Args:
+            step: The new position's projection, `[batch_size, num_heads, 1, head_dim]`.
+        Returns:
+            The cache, one position longer. `keys`/`values` are the same buffer written into,
+            not a copy.
+        """
+        self.keys[:, :, self.length:self.length + 1] = step.keys
+        self.values[:, :, self.length:self.length + 1] = step.values
+        return SuffixCache(keys=self.keys, values=self.values, length=self.length + 1)
+
+    def filled(self) -> ProjectedKeysValues:
+        """The positions written so far, as a view over the buffer rather than a copy."""
+        return ProjectedKeysValues(keys=self.keys[:, :, :self.length], values=self.values[:, :, :self.length])
+
+
+@dataclass(frozen=True)
 class LayerCache:
     """A KV cache for one decoder layer: the projected prefix, and the suffix positions already read."""
     prefix_kv: ProjectedKeysValues
-    suffix_kv: ProjectedKeysValues
+    suffix_kv: SuffixCache
 
 
 @dataclass(frozen=True)
@@ -85,15 +117,19 @@ class DecoderLayer(nn.Module):
             The layer's output for the positions read, and the cache to hand the next call.
         """
         hidden_norm = self.self_attention_norm(hidden)
-        suffix_kv = self.self_attention.project(hidden_norm)
-        # With a cache, the new projections extend the suffix positions already read.
+        step_kv = self.self_attention.project(hidden_norm)
+        # With a cache, the new projection is written into the suffix positions already read.
         if cache is not None:
-            suffix_kv = cache.suffix_kv.extend(suffix_kv)
+            suffix_cache = cache.suffix_kv.write(step_kv)
+            suffix_kv = suffix_cache.filled()
+        else:
+            suffix_cache = SuffixCache(keys=step_kv.keys, values=step_kv.values, length=step_kv.keys.size(dim=2))
+            suffix_kv = step_kv
         hidden = hidden + self.dropout(
             self.self_attention(query=hidden_norm, keys_values=suffix_kv, causal=cache is None)
         )
 
-        # The prefix is projected on the first call of a suffix and read back on every one after.
+        # The prefix is projected once, by `init_cache`, and read back here on every call after.
         prefix_kv = (
             cache.prefix_kv if cache is not None else self.cross_attention.project(prefix_encoded)
         )
@@ -106,7 +142,31 @@ class DecoderLayer(nn.Module):
         )
 
         hidden = hidden + self.dropout(self.feedforward(self.feedforward_norm(hidden)))
-        return hidden, LayerCache(prefix_kv=prefix_kv, suffix_kv=suffix_kv)
+        return hidden, LayerCache(prefix_kv=prefix_kv, suffix_kv=suffix_cache)
+
+    def init_cache(self, prefix_encoded: torch.Tensor, *, max_steps: int) -> LayerCache:
+        """Build this layer's cache for `generate`: the prefix projected once, and an empty
+        suffix cache sized to `max_steps` for `forward` to write into one step at a time.
+
+        Preallocating the suffix cache to its final size up front is what lets a step write
+        into it in place, rather than reallocating and copying the whole cache the way
+        concatenation would.
+
+        Args:
+            prefix_encoded: The encoded prefix events, with the latent token already
+                prepended, `[batch_size, prefix_seq_len, d_model]`.
+            max_steps: The suffix cache's capacity.
+        Returns:
+            This layer's starting cache, an empty suffix cache beside the projected prefix.
+        """
+        batch_size = prefix_encoded.size(dim=0)
+        shape = (batch_size, self.self_attention.num_heads, max_steps, self.self_attention.head_dim)
+        return LayerCache(
+            prefix_kv=self.cross_attention.project(prefix_encoded),
+            suffix_kv=SuffixCache(
+                keys=prefix_encoded.new_zeros(size=shape), values=prefix_encoded.new_zeros(size=shape)
+            ),
+        )
 
 
 class Decoder(nn.Module):
@@ -157,10 +217,10 @@ class Decoder(nn.Module):
             nn.ReLU(),
             nn.Dropout(p=config.dropout),
         )
-        # The remaining time is a Gaussian, so its head is width 2.
         self.activity_head = nn.Linear(
             in_features=config.head_hidden_dim, out_features=num_activities
         )
+        # The remaining time is a Gaussian, so its head is width 2.
         self.remaining_time_head = nn.Linear(in_features=config.head_hidden_dim, out_features=2)
 
     def forward(
@@ -377,7 +437,12 @@ class Decoder(nn.Module):
         finished = torch.zeros(size=(batch_size,), dtype=torch.bool, device=z.device)
 
         steps_taken = max_steps
-        caches: list[LayerCache] | None = None
+        # Seeded before the loop rather than left None for its first iteration: every layer's
+        # suffix cache is preallocated to `max_steps` right away, so even the first step writes
+        # into it in place instead of starting the cache off at its exact size.
+        caches: list[LayerCache] = [
+            layer.init_cache(prefix_encoded, max_steps=max_steps) for layer in self.layers
+        ]
         for position in range(max_steps):
             # Only this one position is new; everything before it is in `caches`.
             hidden, caches = self._run_layers(

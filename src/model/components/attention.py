@@ -15,13 +15,6 @@ class ProjectedKeysValues:
     keys: torch.Tensor    # [batch_size, num_heads, source_len, head_dim]
     values: torch.Tensor  # [batch_size, num_heads, source_len, head_dim]
 
-    def extend(self, tail: "ProjectedKeysValues") -> "ProjectedKeysValues":
-        """Concatenate the keys and values of `tail` onto this one"""
-        return ProjectedKeysValues(
-            keys=torch.cat(tensors=(self.keys, tail.keys), dim=2),
-            values=torch.cat(tensors=(self.values, tail.values), dim=2),
-        )
-
 
 class MultiHeadAttention(nn.Module):
     """Multi-head attention with cached key/value projections.
