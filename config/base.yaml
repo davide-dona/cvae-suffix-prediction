@@ -64,6 +64,7 @@ training:
   grad_clip_norm: 5.0  # null to leave gradients unclipped
   device: mps  # Apple-silicon GPU; ['cpu', 'cuda', 'mps']
   best_model_dir: outputs/best-models  # one file per run, overwritten on improvement
+  checkpoint_dir: outputs/checkpoints  # last validated step, what --resume reads
   log_dir: outputs/tensorboard
   val_every_n_steps: 400
   # Fixed slice of the evaluation set used for validation;

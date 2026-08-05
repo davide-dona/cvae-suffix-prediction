@@ -9,17 +9,43 @@ from src.configs import ExperimentConfig, load_config
 from src.datasets.dataset import SuffixDataset, fixed_subset
 from src.datasets.description import DatasetDescription
 from src.inference import generation_batch_size
-from src.model import TransformerCVAE, best_model_path, save_checkpoint
+from src.model import TransformerCVAE, load_checkpoint
 from src.training.train import train
 
 
-def run(config: ExperimentConfig) -> None:
+def resumed(resume_path: Path) -> tuple[ExperimentConfig, dict]:
+    """
+    Read a checkpoint together with the config of the run that wrote it.
+    
+    Args:
+        resume_path: The checkpoint to carry on from.
+    Returns:
+        Its config, and the checkpoint itself.
+    Raises:
+        ValueError: If the checkpoint carries no training state, and so can only be generated with.
+    """
+    checkpoint = load_checkpoint(resume_path)
+    missing = {
+        'experiment_config', 'run_name', 'optimizer_state', 'early_stopping_state', 'rng_state'
+    } - checkpoint.keys()
+    if missing:
+        raise ValueError(
+            f'{resume_path} is missing {sorted(missing)}: it can be generated with, but not '
+            'resumed from. Start a new run instead.'
+        )
+    return ExperimentConfig.model_validate(checkpoint['experiment_config']), checkpoint
+
+
+def run(config: ExperimentConfig, checkpoint: dict | None = None) -> None:
     """
     Train the model an experiment config describes, on the dataset it names.
     The dataset is preprocessed first if its splits are not on disk yet, so a config file
     and a raw log are all a run needs.
     Args:
         config: The validated experiment config.
+        checkpoint: A checkpoint to carry on from, as read by `resumed`, or `None` to start a
+            new run. The run keeps the name the checkpoint carries, so it writes to the
+            TensorBoard directory and the files the interrupted run was writing to.
     """
     # Preprocess the dataset if it hasn't been done yet
     ensure_dataset(config.data)
@@ -64,25 +90,13 @@ def run(config: ExperimentConfig) -> None:
 
     model = TransformerCVAE(config.model, description).to(config.training.device)
 
-    # The run name is used to name the best-model checkpoint file and the TensorBoard log directory
-    run_name = f'{config.data.dir.name}/{config.experiment_name}-{datetime.now():%Y%m%d-%H%M%S}'
-
-    def save_best(step: int, selection_score: float) -> None:
-        """
-        Decorator for train()'s on_best_step callback, which saves the model to disk.
-        Defined here so it can access the config and model objects without passing them through train().
-        Args:
-            step: The optimizer step that just validated.
-            selection_score: The generation score it reached, its `activity_energy_score`.
-        """
-        path = save_checkpoint(
-            model,
-            model_config=config.model.model_dump(),
-            step=step,
-            selection_score=selection_score,
-            path=best_model_path(config.training.best_model_dir, run_name),
-        )
-        print(f'New best model (step {step}, score {selection_score:.4f}) saved at {path}')
+    # The run name names the checkpoint files and the TensorBoard log directory. Resuming
+    # continues the interrupted run rather than starting a second one beside it.
+    run_name = (
+        f'{config.data.dir.name}/{config.experiment_name}-{datetime.now():%Y%m%d-%H%M%S}'
+        if checkpoint is None
+        else checkpoint['run_name']
+    )
 
     train(
         model=model,
@@ -90,7 +104,9 @@ def run(config: ExperimentConfig) -> None:
         val_loader=val_loader,
         generation_loader=generation_loader,
         run_name=run_name,
-        on_best_step=save_best,
+        experiment_config=config.model_dump(),
+        generator=generator,
+        resume=checkpoint,
         generation_samples=config.inference.num_samples,
         description=description,
         loss_config=config.loss,
@@ -101,12 +117,22 @@ def run(config: ExperimentConfig) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description='Train a suffix-prediction model from a config file.')
-    parser.add_argument('-c', '--config', type=Path, required=True,
-                        help="Path to this experiment's config YAML.")
+    parser = argparse.ArgumentParser(description='Train a suffix-prediction model.')
+    # A run is either started from a config or carried on from a checkpoint, which already
+    # describes the run that wrote it. Two descriptions of one run could only disagree.
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument('-c', '--config', type=Path,
+                        help="Path to this experiment's config YAML, to start a new run.")
+    source.add_argument('-r', '--resume', type=Path,
+                        help='Path to a checkpoint to carry on from, its config included. The '
+                             'run keeps its name, so it writes to the same TensorBoard directory '
+                             'and the same files.')
     args = parser.parse_args()
 
-    run(load_config(args.config))
+    if args.resume is not None:
+        run(*resumed(args.resume))
+    else:
+        run(load_config(args.config))
 
 
 if __name__ == '__main__':

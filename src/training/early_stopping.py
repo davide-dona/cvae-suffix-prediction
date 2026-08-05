@@ -30,3 +30,12 @@ class EarlyStopper:
         self.min_validation_score = min(self.min_validation_score, val_score)
 
         return self.counter >= self.patience
+
+    def state_dict(self) -> dict:
+        """Return a dictionary containing the state of the early stopper."""
+        return {'counter': self.counter, 'min_validation_score': self.min_validation_score}
+
+    def load_state_dict(self, state: dict) -> None:
+        """Load the state of the early stopper from a dictionary."""
+        self.counter = state['counter']
+        self.min_validation_score = state['min_validation_score']

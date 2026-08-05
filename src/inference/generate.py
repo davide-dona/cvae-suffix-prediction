@@ -41,7 +41,7 @@ class GenerationRow:
 def generations_path(generations_dir: str | Path, run_name: str) -> Path:
     """Where the generations of one run are kept: `<generations_dir>/<run_name>.parquet`.
 
-    One file per run, named after it exactly as `best_model_path` names a run's checkpoint,
+    One file per run, named after it exactly as `checkpoint_path` names a run's checkpoint,
     so a run's generations are found without being told anything but its name.
     """
     return Path(generations_dir) / f'{run_name}.parquet'
