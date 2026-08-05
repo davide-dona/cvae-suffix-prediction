@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from src.inference import Generation
 from src.metrics import ScalarMetrics
-from src.scoring.sequences import diversity, energy_score, mean, sequence_similarity
+from src.scoring.similarity import diversity, energy_score, is_hit, mean, sequence_similarity
 
 MINUTES_PER_DAY = 1440.0
 
@@ -21,7 +21,13 @@ class SuffixScores(ScalarMetrics):
     # The Damerau-Levenshtein Similarity (DLS) is the edit distance normalized to [0, 1] and inverted.
     activity_dls_mean: float        # The mean similarity of a prefix's samples to the ground truth
     activity_dls_point: float       # z = mean(p(z | prefix), a single greedy answer, scored against the ground truth
-    activity_dls_best: float        # The similarity of the closest sample to the ground truth
+
+    # The share of prefixes whose true suffix is exactly among their first k samples: what k
+    # suggestions are worth to a user who only needs one of them to be right. 0.0 or 1.0 for a
+    # single prefix, a rate once averaged over a set of them.
+    hit_rate_at_1: float
+    hit_rate_at_5: float
+    hit_rate_at_10: float
 
     # The samples read as a predictive distribution, lower being better. The score a checkpoint
     # is selected on.
@@ -67,18 +73,18 @@ def score_prefix(generation: Generation) -> SuffixScores:
     similarities = [sequence_similarity(sample.activities, truth.activities) for sample in samples]
     dls_mean = mean(similarities)
     sample_diversity = diversity([sample.activities for sample in samples])
+    sample_activities = [tuple(sample.activities) for sample in samples]
+    truth_activities = tuple(truth.activities)
 
     return SuffixScores(
         activity_dls_mean=dls_mean,
         activity_dls_point=sequence_similarity(point.activities, truth.activities),
-        activity_dls_best=max(similarities) if similarities else 0.0,
+        hit_rate_at_1=is_hit(samples=sample_activities, truth=truth_activities, k=1),
+        hit_rate_at_5=is_hit(samples=sample_activities, truth=truth_activities, k=5),
+        hit_rate_at_10=is_hit(samples=sample_activities, truth=truth_activities, k=10),
         activity_energy_score=energy_score(dls_mean, sample_diversity) if samples else 1.0,
         sample_diversity=sample_diversity,
-        unique_sample_rate=(
-            len({tuple(sample.activities) for sample in samples}) / len(samples)
-            if samples
-            else 0.0
-        ),
+        unique_sample_rate=len(set(sample_activities)) / len(samples) if samples else 0.0,
         remaining_time_ae_mean_days=mean([
             abs(sample.remaining_time_minutes - truth.remaining_time_minutes)
             for sample in samples
@@ -90,3 +96,6 @@ def score_prefix(generation: Generation) -> SuffixScores:
         length_ae_point=float(abs(len(point) - len(truth))),
         suffix_length=float(len(truth)),
     )
+
+
+
