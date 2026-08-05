@@ -33,7 +33,7 @@ def accuracy_metrics(generations: pd.DataFrame) -> AccuracyMetrics:
     """
     Score generated suffixes against the ground truth they were generated for.
     Args:
-        generations: Rows written by `src/inference/parquet.py`, with the truncated pairs
+        generations: Rows written by `src/inference/writer.py`, with the truncated pairs
             already dropped (their ground-truth suffix stops short of the real ending, so
             nothing here would be measuring what it claims to).
     Returns:

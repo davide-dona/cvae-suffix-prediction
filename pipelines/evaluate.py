@@ -24,7 +24,7 @@ def run(generations_file: Path) -> None:
 
     # Read the generations file into a DataFrame
     generations = pd.read_parquet(path=generations_file)
-    
+
     # Filter out truncated generations, which are not scored
     scored = generations[~generations['truncated']]
     truncated_pairs = _pair_count(generations) - _pair_count(scored)
