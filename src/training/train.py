@@ -69,7 +69,7 @@ def train(
     generation_samples: int,
     description: DatasetDescription,
     run_name: str,
-    model_config: dict,
+    experiment_config: dict,
     generator: torch.Generator,
     resume: dict | None,
     loss_config: LossConfig,
@@ -100,14 +100,13 @@ def train(
             curves instead of listing them side by side; what makes it unique is the
             caller's business. A `/` in it nests the run, which is how TensorBoard groups
             runs under a common prefix.
-        model_config: The model's `ModelConfig`, dumped to plain data, written into every
-            checkpoint so it can be rebuilt from the file alone.
+        experiment_config: The whole `ExperimentConfig`, dumped to plain data, written into
+            every checkpoint so the run can be rebuilt and carried on from the file alone.
         generator: The generator the training loader shuffles with, whose state is saved and
             restored along with the rest.
         resume: A checkpoint to carry on from, read by `load_checkpoint`, or `None` to start
             from step zero. Its step, weights, optimizer state, early-stopping state and random
-            streams are all restored; the budgets stay the caller's, so raising
-            `training.max_steps` and resuming is what extends a finished run.
+            streams are all restored.
         loss_config: The KL annealing schedule.
         optimizer_config: The optimizer hyperparameters.
         training: Step budget, validation cadence, gradient clipping, device, and where
@@ -213,7 +212,7 @@ def train(
 
                     # Save a checkpoint with the model, optimizer, early stopper and random streams in their current state.
                     checkpoint = dict(
-                        model_config=model_config,
+                        experiment_config=experiment_config,
                         step=step,
                         selection_score=selection_score,
                         run_name=run_name,

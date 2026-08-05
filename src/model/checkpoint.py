@@ -49,7 +49,7 @@ def latest_best_model_path(best_model_dir: str | Path, run_prefix: str) -> Path:
 def save_checkpoint(
     model: nn.Module,
     *,
-    model_config: dict,
+    experiment_config: dict,
     step: int,
     selection_score: float,
     run_name: str,
@@ -61,13 +61,15 @@ def save_checkpoint(
     """
     Save a checkpoint holding everything a run needs to be rebuilt or picked back up.
 
-    The full config travels with the weights, so the same model can be rebuilt later without
+    The run's config travels with the weights, so the same model can be rebuilt later without
     being told a single hyperparameter, and the rest of the training state travels with them,
     so `pipelines/train.py -r` can carry on from here rather than from scratch.
 
     Args:
         model: The model whose weights to save.
-        model_config: Its `ModelConfig`, dumped to plain data.
+        experiment_config: The run's whole `ExperimentConfig`, dumped to plain data, so that
+            resuming needs nothing but this file. Its `model` section is written out beside it,
+            since that is all `TransformerCVAE.from_checkpoint` reads.
         step: The optimizer step the weights are from. The filename does not say, so the file
             has to.
         selection_score: That step's generation score, the number the best is chosen on.
@@ -89,10 +91,11 @@ def save_checkpoint(
     temp_path = path.with_name(f'{path.name}.tmp')
     torch.save(
         obj={
-            'model_config': model_config,
+            'model_config': experiment_config['model'],
             'model_state_dict': model.state_dict(),
             'step': step,
             'selection_score': selection_score,
+            'experiment_config': experiment_config,
             'run_name': run_name,
             'optimizer_state': optimizer_state,
             'early_stopping_state': early_stopping_state,
