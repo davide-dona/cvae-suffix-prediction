@@ -1,9 +1,25 @@
 from src.configs.schema import InferenceConfig
 from src.datasets.codec import decode_sequence
-from src.datasets.dataset import SuffixItem
+from src.datasets.dataset import SuffixDataset, SuffixItem
 from src.datasets.description import DatasetDescription
 from src.inference.prediction import PrefixPrediction
 from src.model import TransformerCVAE
+
+
+def length_sorted_indices(dataset: SuffixDataset) -> list[int]:
+    """Order a split's pairs by how many positions their suffix takes to decode.
+
+    `Decoder.generate` runs a batch until every one of its rows has emitted EOT, so a batch
+    of similarly-long suffixes finishes together; unsorted, almost every batch contains one
+    early-cut, long-suffix straggler and decodes to nearly the cap regardless of its other
+    rows. Sorting the whole split first is what lets that early exit actually save time.
+
+    Args:
+        dataset: The split to order, read for each pair's suffix length.
+    Returns:
+        Pair indices of `dataset`, ascending by suffix length.
+    """
+    return sorted(range(len(dataset)), key=dataset.suffix_len)
 
 
 def generation_batch_size(inference: InferenceConfig, upper_bound: int) -> int:

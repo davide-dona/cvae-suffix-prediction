@@ -4,7 +4,7 @@ from src.inference.generate import (
     generations_path,
     prediction_from_rows,
 )
-from src.inference.batch import generate_predictions, generation_batch_size
+from src.inference.batch import generate_predictions, generation_batch_size, length_sorted_indices
 from src.inference.prediction import PrefixPrediction
 
 __all__ = [
@@ -14,5 +14,6 @@ __all__ = [
     'generate_suffixes',
     'generation_batch_size',
     'generations_path',
+    'length_sorted_indices',
     'prediction_from_rows',
 ]

@@ -7,7 +7,12 @@ from pipelines.preprocess import ensure_dataset
 from src.configs import ExperimentConfig, load_config
 from src.datasets.dataset import SuffixDataset
 from src.datasets.description import DatasetDescription
-from src.inference import generate_suffixes, generation_batch_size, generations_path
+from src.inference import (
+    generate_suffixes,
+    generation_batch_size,
+    generations_path,
+    length_sorted_indices,
+)
 from src.model import TransformerCVAE, latest_best_model_path, load_checkpoint
 
 
@@ -30,7 +35,7 @@ def run(config: ExperimentConfig, model_path: Path | None = None) -> None:
     test_loader = DataLoader(
         dataset=test_dataset,
         batch_size=generation_batch_size(inference=config.inference, upper_bound=config.data.batch_size),
-        shuffle=False,
+        sampler=length_sorted_indices(test_dataset),
         num_workers=config.data.num_workers,
     )
 
