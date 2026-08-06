@@ -4,7 +4,7 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
 
-from pipelines.preprocess import ensure_dataset
+from pipelines.preprocess import require_dataset
 from src.configs import ExperimentConfig, load_config
 from src.datasets.dataset import SuffixDataset, fixed_subset
 from src.datasets.description import DatasetDescription
@@ -39,16 +39,14 @@ def resumed(resume_path: Path) -> tuple[ExperimentConfig, dict]:
 def run(config: ExperimentConfig, checkpoint: dict | None = None) -> None:
     """
     Train the model an experiment config describes, on the dataset it names.
-    The dataset is preprocessed first if its splits are not on disk yet, so a config file
-    and a raw log are all a run needs.
+    The dataset must have been preprocessed already.
     Args:
         config: The validated experiment config.
         checkpoint: A checkpoint to carry on from, as read by `resumed`, or `None` to start a
             new run. The run keeps the name the checkpoint carries, so it writes to the
             TensorBoard directory and the files the interrupted run was writing to.
     """
-    # Preprocess the dataset if it hasn't been done yet
-    ensure_dataset(config.data)
+    require_dataset(config.data)
 
     # Seeded before anything is built, so weight initialization and shuffling are both reproducible.
     torch.manual_seed(config.seed)

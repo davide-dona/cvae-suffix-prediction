@@ -13,4 +13,6 @@ ideas/
 
 # Preprocessed datasets
 processed/
+# Declarative models discovered from them
+declare/
 

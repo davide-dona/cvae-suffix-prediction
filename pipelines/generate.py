@@ -4,7 +4,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from pipelines.preprocess import ensure_dataset
+from pipelines.preprocess import require_dataset
 from src.configs import ExperimentConfig, load_config
 from src.datasets.dataset import SuffixDataset
 from src.datasets.description import DatasetDescription
@@ -27,7 +27,7 @@ def run(config: ExperimentConfig, model_path: Path) -> None:
             matches every run ever started from it, and picking one of them is a decision the
             caller makes, not one to be inferred from a filename.
     """
-    ensure_dataset(config.data)
+    require_dataset(config.data)
     torch.manual_seed(config.seed)
 
     # The description encodes the split and decodes the generations back into event sequences.

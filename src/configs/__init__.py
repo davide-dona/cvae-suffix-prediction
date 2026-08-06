@@ -1,6 +1,7 @@
 from .loader import load_config
 from .schema import (
     DataConfig,
+    DeclareConfig,
     DecoderConfig,
     EarlyStoppingConfig,
     EmbeddingConfig,
@@ -18,6 +19,7 @@ from .schema import (
 __all__ = [
     "load_config",
     "DataConfig",
+    "DeclareConfig",
     "DecoderConfig",
     "EarlyStoppingConfig",
     "EmbeddingConfig",

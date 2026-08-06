@@ -2,6 +2,15 @@ seed: 42
 experiment_name: cvae_suffix_transformer
 output_dir: outputs
 
+# Declarative model discovered from the train split during preprocessing,
+# written to <data.dir>/declare/model.decl.
+declare:
+  consider_vacuity: false
+  min_support: 0.8        # fraction of train traces that satisfy a constraint for it to be included in the model
+  itemsets_support: 0.9   # build itemsets of activities that co-occur in at least this fraction of train traces
+  max_cardinality: 2      # highest n tried for the templates that take one
+
+# Model parameters
 model:
   # The size of the embedding space
   d_model: 64
@@ -86,4 +95,3 @@ inference:
   # that total regardless of num_samples, which is set independently.
   generation_rows: 2560
   generations_dir: outputs/generations
-

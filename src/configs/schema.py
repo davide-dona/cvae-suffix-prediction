@@ -56,6 +56,30 @@ class DataConfig(StrictModel):
         return self
 
 
+class DeclareConfig(StrictModel):
+    """Discovery of the declarative model, run once per dataset at preprocessing time.
+
+    The train split is the only log discovery reads, so the constraints never carry anything
+    the model is not allowed to have seen.
+    """
+
+    consider_vacuity: bool = Field(
+        ..., description="Whether a trace that satisfies a constraint only because it never "
+        "activates it counts as satisfying it",
+    )
+    min_support: float = Field(
+        ..., gt=0.0, le=1.0, description="Fraction of train traces a constraint must hold on to be kept"
+    )
+    itemsets_support: float = Field(
+        ..., gt=0.0, le=1.0,
+        description="Support floor for the frequent activity itemsets the candidate constraints "
+        "are built from. The cost knob: every itemset is checked against every trace",
+    )
+    max_cardinality: int = Field(
+        ..., gt=0, description="Highest n tried for the templates that take one (`Existence3[A]`)"
+    )
+
+
 class EmbeddingConfig(StrictModel):
     """Event embeddings, shared by both trace encoders and the decoder."""
 
@@ -285,6 +309,7 @@ class ExperimentConfig(StrictModel):
     output_dir: Path
 
     data: DataConfig
+    declare: DeclareConfig
     model: ModelConfig
     loss: LossConfig
     optimizer: OptimizerConfig

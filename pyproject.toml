@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.13"
 dependencies = [
+    "declare4py>=2.2.0",
     "numpy>=2.5.1",
     "pandas>=2.2.3",
     "pm4py>=2.7.23.3",
