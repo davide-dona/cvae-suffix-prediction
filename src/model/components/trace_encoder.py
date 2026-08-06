@@ -3,20 +3,8 @@ import torch
 from torch import nn
 
 from src.configs.schema import TraceEncoderConfig
-from src.datasets.dataset import EncodedEvents
+from src.datasets.codec import Events
 from src.model.components.embeddings import EventEmbeddings
-
-
-def padding_mask(lengths: torch.Tensor, seq_len: int) -> torch.Tensor:
-    """Mark the positions of a padded sequence that hold padding.
-    Args:
-        lengths: Number of real events per sequence, `[batch_size]`.
-        seq_len: The padded width the events come in at.
-    Returns:
-        `[batch_size, seq_len]`, True where the position holds padding.
-    """
-    positions = torch.arange(end=seq_len, device=lengths.device)
-    return positions.unsqueeze(dim=0) >= lengths.unsqueeze(dim=1)  # [batch_size, seq_len]
 
 
 @dataclass(frozen=True)
@@ -61,12 +49,12 @@ class TraceEncoder(nn.Module):
             enable_nested_tensor=False,
         )
 
-    def forward(self, events: EncodedEvents, pad_mask: torch.Tensor) -> EncodedTrace:
+    def forward(self, events: Events, pad_mask: torch.Tensor) -> EncodedTrace:
         """
         Args:
             events: The events to read, `[batch_size, seq_len]` per field.
             pad_mask: True where a position holds padding, `[batch_size, seq_len]`, from
-                `padding_mask`.
+                `Events.pad_mask`.
         Returns:
             The sequence's summary and its encoded events.
         """

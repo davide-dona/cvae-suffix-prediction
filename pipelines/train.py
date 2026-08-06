@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 
 from pipelines.preprocess import require_dataset
 from src.configs import ExperimentConfig, load_config
-from src.datasets.dataset import SuffixDataset, fixed_subset
+from src.datasets.dataset import TraceDataset, fixed_subset
 from src.datasets.description import DatasetDescription
 from src.inference import generation_batch_size
 from src.model import TransformerCVAE, load_checkpoint
@@ -54,11 +54,10 @@ def run(config: ExperimentConfig, checkpoint: dict | None = None) -> None:
 
     description = DatasetDescription.load(config.data)
 
-    # Build the datasets and loaders. The test split is not read: it is generated for by
-    # `pipelines/generate.py` and never seen here.
-    train_dataset = SuffixDataset(config.data, split='train', description=description)
-    validation_dataset = SuffixDataset(config.data, split='val', description=description)
-    
+    model = TransformerCVAE(config.model, description).to(config.training.device)
+
+    # Build the datasets and loaders
+    train_dataset = TraceDataset(description=description, split='train')
     train_loader = DataLoader(
         dataset=train_dataset,
         batch_size=config.data.batch_size,
@@ -66,8 +65,10 @@ def run(config: ExperimentConfig, checkpoint: dict | None = None) -> None:
         generator=generator,
         num_workers=config.data.num_workers,
     )
+    
+    validation_dataset = TraceDataset(description=description, split='val')
     # Validation and generation loaders are fixed subsets of the validation split, so every run of a config
-    # reads the same pairs and their curves can be laid over each other.
+    # reads the same traces and their curves can be laid over each other.
     val_loader = DataLoader(
         dataset=fixed_subset(validation_dataset, size=config.training.validation_pairs, generator=generator),
         batch_size=config.data.batch_size,
@@ -80,16 +81,15 @@ def run(config: ExperimentConfig, checkpoint: dict | None = None) -> None:
         shuffle=False,
         num_workers=config.data.num_workers,
     )
+
     print(
         f'Training on {len(train_loader.dataset)} prefix/suffix pairs, scoring '
         f'{len(val_loader.dataset)} of the {len(validation_dataset)} validation pairs and '
         f'generating for {len(generation_loader.dataset)}'
     )
 
-    model = TransformerCVAE(config.model, description).to(config.training.device)
-
-    # The run name names the checkpoint files and the TensorBoard log directory. Resuming
-    # continues the interrupted run rather than starting a second one beside it.
+    
+    # When resuming, keep the run name the checkpoint carries, so it writes to the same TensorBoard directory and the same files.
     run_name = (
         f'{config.data.dir.name}/{config.experiment_name}-{datetime.now():%Y%m%d-%H%M%S}'
         if checkpoint is None

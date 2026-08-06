@@ -23,8 +23,8 @@ from src.logs.timestamps import add_case_offset, add_event_delta, add_remaining_
 
 
 def preprocess(log: pd.DataFrame, *, feature_columns: list[str]) -> pd.DataFrame:
-    """
-    Add relative-timestamp columns to an event log and write its missing categories out.
+    """Preprocess an event log for model training.
+    
     Args:
         log: Event log with columns already renamed to canonical names
             (see `src.logs.io.read_log`).
@@ -64,10 +64,8 @@ def preprocess(log: pd.DataFrame, *, feature_columns: list[str]) -> pd.DataFrame
 
 
 def require_dataset(data_config: DataConfig) -> None:
-    """
-    Check that everything preprocessing produces is on disk, and say what is missing if it is not.
+    """Check that everything preprocessing produces is on disk, and say what is missing if it is not.
 
-    Preprocessing is a pipeline of its own, run once per dataset; this only reads the outputs.
     Args:
         data_config: The `data` section of this dataset's experiment config.
     Raises:
@@ -75,7 +73,7 @@ def require_dataset(data_config: DataConfig) -> None:
     """
     processed_dir = data_config.dir / 'processed'
     outputs = [processed_dir / f'{split}.csv' for split in ('train', 'val', 'test')]
-    outputs.append(metadata_path(data_config))
+    outputs.append(metadata_path(data_config.dir))
     outputs.append(declare_model_path(data_config))
 
     missing = [output for output in outputs if not output.exists()]
@@ -93,9 +91,8 @@ def run(data_config: DataConfig, declare_config: DeclareConfig) -> None:
     Preprocess and split a dataset, writing outputs next to the input.
 
     Reads `<dir>/original.csv`, renames its structural columns to the
-    canonical names used throughout the codebase, adds the relative-timestamp
-    columns, writes the result as `<dir>/processed/full.csv`, then splits it by
-    case start time into `train.csv`, `val.csv` and `test.csv` in the same folder.
+    canonical names used throughout the codebase, extract additional features,
+    and splits the log into train/val/test. 
 
     The vocabularies and normalization ranges the model is built against are fit here too,
     on the train split alone, and written beside it as `dataset.json`. The declarative model is
@@ -120,8 +117,7 @@ def run(data_config: DataConfig, declare_config: DeclareConfig) -> None:
     processed_dir = data_config.dir / 'processed'
     write_log(log, processed_dir / 'full.csv')
 
-    # Split the log into train/val/test and write them. Test is whatever the first two fractions
-    # leave over, so `data_config.test_split` is not passed
+    # Split the log into train/val/test and write them out
     print(f'Splitting "{data_config.dir}" into train/val/test...')
     train, val, test = temporal_split(
         log,
@@ -134,12 +130,12 @@ def run(data_config: DataConfig, declare_config: DeclareConfig) -> None:
     write_log(val, processed_dir / 'val.csv')
     write_log(test, processed_dir / 'test.csv')
 
-    # Fit the vocabularies and normalization ranges on the train split and write them beside it,
-    # so every later run reads one description rather than deriving its own.
+    # Fit the vocabularies and normalization ranges on the train split, writng them out to `dataset.json`
+    # The generated values can be decoded back using the same description.
     description = DatasetDescription.fit(train, data_config=data_config)
-    description.save(data_config)
+    description.save()
 
-    # The declarative model is discovered from the train split alone, for the same reason.
+    # Discover the declarative model from the train split and write it out to `model.decl`.
     num_constraints = discover_declare_model(
         train,
         data_config=data_config,

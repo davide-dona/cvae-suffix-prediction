@@ -1,12 +1,11 @@
 import argparse
 from pathlib import Path
 
-import pandas as pd
-
 from pipelines.preprocess import require_dataset
 from src.configs import ExperimentConfig, load_config
 from src.evaluation.metrics import evaluate_generations
 from src.evaluation.report import EvaluationReport
+from src.inference import read_generations
 from src.logs.declare import load_declare_model
 
 
@@ -29,49 +28,28 @@ def run(config: ExperimentConfig, generations_file: Path) -> None:
 
     dataset = config.data.dir.name
 
-    # Read the generations file into a DataFrame
-    generations = pd.read_parquet(path=generations_file)
-    if 'prefix_activities' not in generations.columns:
-        raise ValueError(
-            f'{generations_file} does not carry the prefix each suffix continues, which '
-            'conformance is checked against. Re-run `python -m pipelines.generate` for this run.'
-        )
+    print(f'Scoring the suffixes generated for each prefix of {generations_file}...', flush=True)
 
-    # Filter out truncated generations, which are not scored
-    scored = generations[~generations['truncated']]
-    truncated_pairs = _pair_count(generations) - _pair_count(scored)
-
-    run_name = f'{dataset}/{generations_file.stem}'
-    print(
-        f'Scoring {len(scored)} generated suffixes from {generations_file}'
-        + (f', {truncated_pairs} truncated prefixes left out' if truncated_pairs else '')
-        + '. Checking each one against the declarative model is the slow part',
-        flush=True,
-    )
-
+    # Compute the metrics of the generation
     metrics = evaluate_generations(
-        scored,
+        read_generations(generations_file),
         declare_model=load_declare_model(config.data),
         consider_vacuity=config.declare.consider_vacuity,
     )
+    
     report = EvaluationReport(
-        run_name=run_name,
-        # Read off the breakdown rather than the frame, so the count is the population the
-        # averages were actually taken over.
-        pairs=sum(bucket.pairs_count for bucket in metrics.by_prefix_length),
-        cases=int(scored['case_id'].nunique()),
-        samples_per_prefix=int(scored['sample_index'].nunique()),
-        truncated_pairs_excluded=truncated_pairs,
+        run_name=f'{dataset}/{generations_file.stem}',
         metrics=metrics,
     )
-
     path = report.write(_eval_path(generations_file))
-    print(f"Wrote evaluation report to {path}")
-
-
-def _pair_count(generations: pd.DataFrame) -> int:
-    """How many distinct (case, cut point) prefixes a set of generation rows covers."""
-    return len(generations.drop_duplicates(subset=['case_id', 'prefix_len']))
+    print(
+        f'Scored {metrics.pairs} prefixes over {metrics.cases} cases'
+        + (
+            f', {metrics.truncated_pairs_excluded} truncated prefixes left out'
+            if metrics.truncated_pairs_excluded else ''
+        )
+        + f'. Wrote evaluation report to {path}'
+    )
 
 
 def _eval_path(generations_file: Path) -> Path:

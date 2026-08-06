@@ -4,7 +4,7 @@ from torch import nn
 
 from src.datasets.description import DatasetDescription
 from src.configs.schema import EmbeddingConfig
-from src.datasets.dataset import EncodedEvents
+from src.datasets.codec import Events
 
 
 class EventEmbeddings(nn.Module):
@@ -58,7 +58,7 @@ class EventEmbeddings(nn.Module):
             persistent=False,
         )
 
-    def forward(self, events: EncodedEvents, *, start_position: int = 0) -> torch.Tensor:
+    def forward(self, events: Events, *, start_position: int = 0) -> torch.Tensor:
         """
         Args:
             events: The events to embed, `[batch_size, seq_len]` per field. This is the one

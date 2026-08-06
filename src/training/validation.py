@@ -2,7 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.datasets.description import DatasetDescription
-from evaluation.accuracy import AccuracyScores, score_generation
+from src.evaluation.accuracy import AccuracyScores, score_generation
 from src.inference import generate_batch
 from src.model import TransformerCVAE
 from src.training.loss import Loss, compute_loss
@@ -21,7 +21,7 @@ def validate(
     Run one pass over `loader` without learning from it.
     Args:
         model: The model to evaluate. Put in evaluation mode here, and left in it.
-        loader: The dataloader to iterate over. Its batches are `SuffixItem`s.
+        loader: The dataloader to iterate over. Its batches are `SplitTrace`s.
         kl_weight: The weight this step's KL term is given.
         free_bits: Nats per latent dimension the KL is not penalized below.
         device: The device to run the computations on.
@@ -61,7 +61,7 @@ def validate_generation(
 
     Args:
         model: The model to evaluate. Put in evaluation mode here, and left in it.
-        loader: The prefixes to generate for, from a `SuffixDataset`.
+        loader: The prefixes to generate for, from a `TraceDataset`.
         num_samples: Suffixes to draw per prefix. The spread across them is what
             `sample_diversity` measures, and `generate` puts `len(batch) * num_samples` rows
             through the decoder at once, so it is also what the caller sizes its batches by.
