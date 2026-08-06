@@ -1,5 +1,6 @@
 import argparse
 from pathlib import Path
+
 import pandas as pd
 from pandas.api.types import is_numeric_dtype
 
@@ -9,10 +10,10 @@ from src.datasets.description import DatasetDescription
 from src.logs.declare import discover_declare_model
 from src.logs.io import read_log, write_log
 from src.logs.keys import (
-    CASE_OFFSET_KEY,
-    EVENT_DELTA_KEY,
     ACTIVITY_KEY,
     CASE_KEY,
+    CASE_OFFSET_KEY,
+    EVENT_DELTA_KEY,
     LABEL_KEY,
     MISSING_FEATURE,
     REMAINING_TIME_KEY,
@@ -25,7 +26,7 @@ from src.logs.timestamps import add_case_offset, add_event_delta, add_remaining_
 
 def preprocess(log: pd.DataFrame, *, feature_columns: list[str]) -> pd.DataFrame:
     """Preprocess an event log for model training.
-    
+
     Args:
         log: Event log with columns already renamed to canonical names
             (see `src.logs.io.read_log`).
@@ -56,8 +57,8 @@ def preprocess(log: pd.DataFrame, *, feature_columns: list[str]) -> pd.DataFrame
         timestamp_key=TIMESTAMP_KEY,
         out_key=REMAINING_TIME_KEY,
     )
-    # Filling leaves these columns as strings, so the same test in `DatasetDescription.fit` sorts them
-    # into the same channels it would have before.
+    # Filling leaves these columns as strings, so the same test in `DatasetDescription.fit`
+    # sorts them into the same channels it would have before.
     for column in feature_columns:
         if not is_numeric_dtype(log[column]):
             log[column] = log[column].fillna(MISSING_FEATURE).astype(str)
@@ -65,7 +66,8 @@ def preprocess(log: pd.DataFrame, *, feature_columns: list[str]) -> pd.DataFrame
 
 
 def require_dataset(dataset: str) -> None:
-    """Check that everything preprocessing produces is on disk, and say what is missing if it is not.
+    """Check that everything preprocessing produces is on disk, and say what is missing if it
+    is not.
 
     Args:
         dataset: The dataset to check.
@@ -128,8 +130,8 @@ def run(data_config: DataConfig, declare_config: DeclareConfig) -> None:
     for split, rows in (('train', train), ('val', val), ('test', test)):
         write_log(rows, paths.split_path(dataset=dataset, split=split))
 
-    # Fit the vocabularies and normalization ranges on the train split, writng them out to `dataset.json`
-    # The generated values can be decoded back using the same description.
+    # Fit the vocabularies and normalization ranges on the train split, writng them out to
+    # `dataset.json`. The generated values can be decoded back using the same description.
     description = DatasetDescription.fit(train, data_config=data_config)
     description.save()
 
@@ -154,8 +156,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description='Turn a raw event log into the train/val/test CSVs the model consumes.'
     )
-    parser.add_argument('-c', '--config', type=Path, required=True,
-                         help="Path to this dataset's experiment config YAML.")
+    parser.add_argument(
+        '-c',
+        '--config',
+        type=Path,
+        required=True,
+        help="Path to this dataset's experiment config YAML.",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)

@@ -1,5 +1,6 @@
 import argparse
 from pathlib import Path
+
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -34,18 +35,19 @@ def run(config: ExperimentConfig, model_path: Path) -> None:
 
     # Load the model from the checkpoint and put it on the right device
     checkpoint = load_checkpoint(model_path)
-    model = TransformerCVAE.from_checkpoint(
-        checkpoint, description, device=config.training.device
-    )
+    model = TransformerCVAE.from_checkpoint(checkpoint, description, device=config.training.device)
     model.eval()
 
     # Build the DataLoader for the test split
     test_dataset = TraceDataset(description=description, split='test')
     test_loader = DataLoader(
         dataset=test_dataset,
-        batch_size=generation_batch_size(inference=config.inference, upper_bound=config.data.batch_size),
-        sampler=test_dataset.length_sorted_indices(),       # sort the prefixes by length so the batches are more uniform and generation is faster
-        num_workers=config.data.num_workers,                
+        batch_size=generation_batch_size(
+            inference=config.inference, upper_bound=config.data.batch_size
+        ),
+        # sort the prefixes by length so the batches are more uniform and generation is faster
+        sampler=test_dataset.length_sorted_indices(),
+        num_workers=config.data.num_workers,
     )
 
     # The output file is named after the run the checkpoint carries, not after the file it was
@@ -60,7 +62,7 @@ def run(config: ExperimentConfig, model_path: Path) -> None:
     )
 
     # Write the generation while it is being produced, avoiding a huge in-memory DataFrame.
-    with open_generations(path) as parquetWriter:
+    with open_generations(path) as parquet_writer:
         for batch in tqdm(iterable=test_loader, desc='Generating', unit='batch'):
             generations = generate_batch(
                 model=model,
@@ -69,7 +71,7 @@ def run(config: ExperimentConfig, model_path: Path) -> None:
                 description=description,
             )
             # Write the generations to the Parquet file in a single table, one row per prefix.
-            parquetWriter.write_table(table=table_from_generations(generations))
+            parquet_writer.write_table(table=table_from_generations(generations))
 
     print(f'Wrote generated suffixes to {path}')
 
@@ -78,11 +80,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description='Generate test-split suffixes from a trained model.'
     )
-    parser.add_argument('-c', '--config', type=Path, required=True,
-                        help="Path to this experiment's config YAML.")
-    parser.add_argument('-m', '--model', type=Path, required=True,
-                        help='Path to the checkpoint to generate with, from '
-                             '`outputs/best-models/` or `outputs/checkpoints/`.')
+    parser.add_argument(
+        '-c', '--config', type=Path, required=True, help="Path to this experiment's config YAML."
+    )
+    parser.add_argument(
+        '-m',
+        '--model',
+        type=Path,
+        required=True,
+        help='Path to the checkpoint to generate with, from '
+        '`outputs/best-models/` or `outputs/checkpoints/`.',
+    )
     args = parser.parse_args()
 
     run(load_config(args.config), args.model)

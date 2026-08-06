@@ -26,9 +26,7 @@ class PriorNetwork(nn.Module):
             ]
             width = hidden_dim
         # The output layer emits mean and log-variance side by side, hence twice `latent_dim`.
-        layers.append(
-            nn.Linear(in_features=width, out_features=2 * latent_config.latent_dim)
-        )
+        layers.append(nn.Linear(in_features=width, out_features=2 * latent_config.latent_dim))
 
         # With `hidden_dims` empty this collapses to a single linear layer.
         self.net = nn.Sequential(*layers)

@@ -35,8 +35,11 @@ def validate(
         batch = batch.to(device)
         output = model(batch)
         _, metrics = compute_loss(
-            output, batch,
-            pad_activity_index=model.pad_activity_index, kl_weight=kl_weight, free_bits=free_bits,
+            output,
+            batch,
+            pad_activity_index=model.pad_activity_index,
+            kl_weight=kl_weight,
+            free_bits=free_bits,
         )
         totals += metrics
 

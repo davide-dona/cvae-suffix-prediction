@@ -1,5 +1,5 @@
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import pandas as pd
 import pyarrow as pa
@@ -7,29 +7,30 @@ import pyarrow.parquet as pq
 
 from src.inference.generation import DecodedEvents, Generation
 
-
 # One run of activity names, the shape every activity column of the schema is built from.
 _ACTIVITIES = pa.list_(pa.field(name='element', type=pa.string()))
 
 # The schema of the Parquet file that holds a run's generations. One row per prefix: the samples
 # nest inside it, so nothing describing the prefix is written once per sample.
-_SCHEMA = pa.schema([
-    ('case_id', pa.large_string()),
-    ('prefix_len', pa.int64()),
-    # Whether the ground-truth suffix was cut short of its real ending.
-    ('truncated', pa.bool_()),
-    # The events before the cut, which a constraint over the whole trace is checked against.
-    ('prefix_activities', _ACTIVITIES),
-    # One entry per draw of z, in the order they were drawn: `hit_rate_at_k` reads the first k.
-    ('generated_activities', pa.list_(pa.field(name='element', type=_ACTIVITIES))),
-    ('generated_remaining_time_minutes', pa.list_(pa.field(name='element', type=pa.float64()))),
-    # The suffix written from the mean of `p(z | prefix)`: the model's single answer, drawn once
-    # per prefix and the only column comparable against a model that does not sample.
-    ('point_activities', _ACTIVITIES),
-    ('point_remaining_time_minutes', pa.float64()),
-    ('true_activities', _ACTIVITIES),
-    ('true_remaining_time_minutes', pa.float64()),
-])
+_SCHEMA = pa.schema(
+    [
+        ('case_id', pa.large_string()),
+        ('prefix_len', pa.int64()),
+        # Whether the ground-truth suffix was cut short of its real ending.
+        ('truncated', pa.bool_()),
+        # The events before the cut, which a constraint over the whole trace is checked against.
+        ('prefix_activities', _ACTIVITIES),
+        # One entry per draw of z, in the order they were drawn: `hit_rate_at_k` reads the first k.
+        ('generated_activities', pa.list_(pa.field(name='element', type=_ACTIVITIES))),
+        ('generated_remaining_time_minutes', pa.list_(pa.field(name='element', type=pa.float64()))),
+        # The suffix written from the mean of `p(z | prefix)`: the model's single answer, drawn once
+        # per prefix and the only column comparable against a model that does not sample.
+        ('point_activities', _ACTIVITIES),
+        ('point_remaining_time_minutes', pa.float64()),
+        ('true_activities', _ACTIVITIES),
+        ('true_remaining_time_minutes', pa.float64()),
+    ]
+)
 
 
 def open_generations(path: Path) -> pq.ParquetWriter:

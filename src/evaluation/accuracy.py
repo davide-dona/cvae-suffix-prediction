@@ -1,10 +1,11 @@
+from collections.abc import Hashable, Sequence
 from dataclasses import dataclass
-from typing import Hashable, Sequence
 
 from src.inference import Generation
 from src.metrics import ScalarMetrics, mean
 
 MINUTES_PER_DAY = 1440.0
+
 
 @dataclass(frozen=True)
 class AccuracyScores(ScalarMetrics):
@@ -21,9 +22,13 @@ class AccuracyScores(ScalarMetrics):
     No defaults: a field added here must be set in `score_generation`, and a `TypeError` is how
     that is enforced.
     """
-    # The Damerau-Levenshtein Similarity (DLS) is the edit distance normalized to [0, 1] and inverted.
-    dls_mean: float        # The mean similarity of a prefix's samples to the ground truth
-    dls_point: float       # z = mean(p(z | prefix), a single greedy answer, scored against the ground truth
+
+    # The Damerau-Levenshtein Similarity (DLS) is the edit distance normalized to [0, 1] and
+    # inverted.
+    dls_mean: float  # The mean similarity of a prefix's samples to the ground truth
+    dls_point: (
+        float  # z = mean(p(z | prefix), a single greedy answer, scored against the ground truth
+    )
 
     # The share of prefixes whose true suffix is exactly among their first k samples: what k
     # suggestions are worth to a user who only needs one of them to be right. 0.0 or 1.0 for a
@@ -57,7 +62,8 @@ class AccuracyScores(ScalarMetrics):
 
 
 def damerau_levenshtein_distance(first: Sequence[Hashable], second: Sequence[Hashable]) -> int:
-    """The number of edits to turn one sequence into another, allowing transpositions of adjacent elements as one edit.
+    """The number of edits to turn one sequence into another, allowing transpositions of
+    adjacent elements as one edit.
 
     Args:
         first: The first sequence.
@@ -79,16 +85,12 @@ def damerau_levenshtein_distance(first: Sequence[Hashable], second: Sequence[Has
         for j in range(1, len(second) + 1):
             substitution_cost = 0 if first[i - 1] == second[j - 1] else 1
             distances[i][j] = min(
-                distances[i - 1][j] + 1,                       # delete
-                distances[i][j - 1] + 1,                       # insert
-                distances[i - 1][j - 1] + substitution_cost,   # substitute, or match for free
+                distances[i - 1][j] + 1,  # delete
+                distances[i][j - 1] + 1,  # insert
+                distances[i - 1][j - 1] + substitution_cost,  # substitute, or match for free
             )
             # The two elements are each other's, the other way round: one edit, not two.
-            if (
-                i > 1 and j > 1
-                and first[i - 1] == second[j - 2]
-                and first[i - 2] == second[j - 1]
-            ):
+            if i > 1 and j > 1 and first[i - 1] == second[j - 2] and first[i - 2] == second[j - 1]:
                 distances[i][j] = min(distances[i][j], distances[i - 2][j - 2] + 1)
 
     return distances[len(first)][len(second)]
@@ -164,7 +166,6 @@ def is_hit(samples: Sequence[tuple[str, ...]], truth: tuple[str, ...], *, k: int
     return float(truth in samples[:k])
 
 
-
 def score_generation(generation: Generation) -> AccuracyScores:
     """
     Score the suffixes generated for one prefix against the ground truth they continue.
@@ -199,13 +200,17 @@ def score_generation(generation: Generation) -> AccuracyScores:
         ),
         sample_diversity=sample_diversity,
         unique_sample_rate=len(set(sample_activities)) / len(samples) if samples else 0.0,
-        remaining_time_ae_mean_days=mean([
-            abs(sample.remaining_time_minutes - truth.remaining_time_minutes)
-            for sample in samples
-        ]) / MINUTES_PER_DAY,
+        remaining_time_ae_mean_days=mean(
+            [
+                abs(sample.remaining_time_minutes - truth.remaining_time_minutes)
+                for sample in samples
+            ]
+        )
+        / MINUTES_PER_DAY,
         remaining_time_ae_point_days=abs(
             point.remaining_time_minutes - truth.remaining_time_minutes
-        ) / MINUTES_PER_DAY,
+        )
+        / MINUTES_PER_DAY,
         length_ae_mean=mean([float(abs(len(sample) - len(truth))) for sample in samples]),
         length_ae_point=float(abs(len(point) - len(truth))),
         suffix_length=float(len(truth)),

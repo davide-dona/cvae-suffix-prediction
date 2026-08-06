@@ -1,10 +1,11 @@
 import math
+
 import torch
 from torch import nn
 
-from src.datasets.description import DatasetDescription
 from src.configs.schema import EmbeddingConfig
 from src.datasets.codec import Events
+from src.datasets.description import DatasetDescription
 
 
 class EventEmbeddings(nn.Module):
@@ -30,7 +31,7 @@ class EventEmbeddings(nn.Module):
         )
         self.num_categorical = len(description.categorical_features)
         self.num_numeric = len(description.numeric_features)
-        
+
         self.feature_embedding = (
             nn.Embedding(
                 num_embeddings=description.num_feature_categories,
@@ -72,17 +73,17 @@ class EventEmbeddings(nn.Module):
         # Concatenate every channel of each event into a single vector, then project to `d_model`.
         channels = [
             self.activity_embedding(events.activities),  # [batch_size, seq_len, activity_dim]
-            self.resource_embedding(events.resources),   # [batch_size, seq_len, resource_dim]
-            events.time_deltas.unsqueeze(dim=-1),        # [batch_size, seq_len, 1]
+            self.resource_embedding(events.resources),  # [batch_size, seq_len, resource_dim]
+            events.time_deltas.unsqueeze(dim=-1),  # [batch_size, seq_len, 1]
         ]
         if self.feature_embedding is not None:
             channels.append(
                 self.feature_embedding(events.feature_categories).flatten(start_dim=-2)
             )  # [batch_size, seq_len, num_categorical * feature_dim]
         # Zero-width on a log with no numeric features, which `cat` takes as the no-op it is.
-        channels.append(events.feature_values)   # [batch_size, seq_len, num_numeric]
+        channels.append(events.feature_values)  # [batch_size, seq_len, num_numeric]
         channels.append(events.feature_present)  # [batch_size, seq_len, num_numeric]
-        
+
         # Concatenate the channels and project to `d_model`.
         event = torch.cat(tensors=channels, dim=-1)  # [batch_size, seq_len, projection.in_features]
         content = self.projection(event)  # [batch_size, seq_len, d_model]

@@ -10,6 +10,7 @@ from src.model import TransformerCVAE
 class DecodedEvents:
     """One run of events, decoded back to the log's own units. A channel the model learns to
     write gains a field here."""
+
     activities: list[str]
     remaining_time_minutes: float
 
@@ -32,11 +33,12 @@ class Generation:
     identify a case: two cases of a log can run the same activities in the same order, so nothing
     here but the id itself says which one this answers for.
     """
-    case_id: str                  # which case of the log the prefix was cut from
+
+    case_id: str  # which case of the log the prefix was cut from
     prefix_activities: list[str]  # the events before the cut, in order
-    truncated: bool               # whether `truth` stops short of the case's real ending
+    truncated: bool  # whether `truth` stops short of the case's real ending
     samples: list[DecodedEvents]  # one per draw of z
-    point: DecodedEvents          # the suffix written from the mean of `p(z | prefix)`
+    point: DecodedEvents  # the suffix written from the mean of `p(z | prefix)`
     truth: DecodedEvents
 
     @property
@@ -68,7 +70,8 @@ def generate_batch(
     num_samples: int,
     description: DatasetDescription,
 ) -> list[Generation]:
-    """Generate `num_samples` suffixes per prefix of one batch, and the point prediction beside them.
+    """Generate `num_samples` suffixes per prefix of one batch, and the point prediction beside
+    them.
 
     The one call into the raw `model.generate`, and the unit every caller works in: a caller walks
     its own loader and calls this per batch. The second pass costs one prefix's worth of decoding
@@ -103,11 +106,11 @@ def generate_batch(
     # marker the length above drops is also what says whether the truth reaches the real ending.
     truncated = ~ends_with_eot.cpu().numpy()  # [batch_size]
 
-    activities = generated.activities.cpu().numpy()          # [batch_size, num_samples, steps]
-    lengths = generated.lengths.cpu().numpy()                # [batch_size, num_samples]
+    activities = generated.activities.cpu().numpy()  # [batch_size, num_samples, steps]
+    lengths = generated.lengths.cpu().numpy()  # [batch_size, num_samples]
     remaining_time = generated.remaining_time.cpu().numpy()  # [batch_size, num_samples]
-    point_activities = point.activities.squeeze(dim=1).cpu().numpy()          # [batch_size, steps]
-    point_lengths = point.lengths.squeeze(dim=1).cpu().numpy()                # [batch_size]
+    point_activities = point.activities.squeeze(dim=1).cpu().numpy()  # [batch_size, steps]
+    point_lengths = point.lengths.squeeze(dim=1).cpu().numpy()  # [batch_size]
     point_remaining_time = point.remaining_time.squeeze(dim=1).cpu().numpy()  # [batch_size]
     true_activities = batch.suffix.activities.cpu().numpy()  # [batch_size, seq_len]
     true_remaining_time = batch.remaining_time.cpu().numpy()  # [batch_size]

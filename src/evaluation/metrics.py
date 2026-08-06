@@ -1,5 +1,6 @@
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Iterable, Self, Sequence
+from typing import Self
 
 from Declare4Py.ProcessModels.DeclareModel import DeclareModel
 
@@ -16,6 +17,7 @@ class PrefixScores:
     asks whether it is a trace the process allows at all. A suffix can score well on one and badly
     on the other, which is why they are carried side by side rather than folded together.
     """
+
     accuracy: AccuracyScores
     conformance: ConformanceScores
 
@@ -37,6 +39,7 @@ class PrefixScores:
 @dataclass(frozen=True)
 class ByPrefixLengthMetrics:
     """The scores of the prefixes of one length, and how many pairs that length had."""
+
     length: int
     pairs_count: int
     scores: PrefixScores
@@ -56,6 +59,7 @@ class EvaluationMetrics:
     without knowing how many prefixes went into it and how many were left out, and only the pass
     that scores a file sees them.
     """
+
     pairs: int
     cases: int
     samples_per_prefix: int

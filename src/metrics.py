@@ -1,5 +1,6 @@
+from collections.abc import Sequence
 from dataclasses import asdict, fields
-from typing import Self, Sequence
+from typing import Self
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -27,25 +28,29 @@ class ScalarMetrics:
         Returns:
             The mean of every field, all 0.0 if there are none.
         """
-        return cls(**{
-            field.name: (
-                sum(getattr(value, field.name) for value in values) / len(values)
-                if values
-                else 0.0
-            )
-            for field in fields(cls)
-        })
+        return cls(
+            **{
+                field.name: (
+                    sum(getattr(value, field.name) for value in values) / len(values)
+                    if values
+                    else 0.0
+                )
+                for field in fields(cls)
+            }
+        )
 
     def __add__(self, other: Self) -> Self:
-        return type(self)(**{
-            field.name: getattr(self, field.name) + getattr(other, field.name)
-            for field in fields(self)
-        })
+        return type(self)(
+            **{
+                field.name: getattr(self, field.name) + getattr(other, field.name)
+                for field in fields(self)
+            }
+        )
 
     def __truediv__(self, divisor: float) -> Self:
-        return type(self)(**{
-            field.name: getattr(self, field.name) / divisor for field in fields(self)
-        })
+        return type(self)(
+            **{field.name: getattr(self, field.name) / divisor for field in fields(self)}
+        )
 
     def log(self, writer: SummaryWriter, step: int, *, prefix: str) -> None:
         """

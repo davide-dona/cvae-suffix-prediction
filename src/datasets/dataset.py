@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import NamedTuple
+
 import numpy as np
 import pandas as pd
 import torch
@@ -13,17 +15,20 @@ from src.logs.keys import CASE_KEY, EVENT_DELTA_KEY, REMAINING_TIME_KEY
 
 
 class SplitTrace(NamedTuple):
-    """A single trace cut into a (prefix, suffix) pair, with the remaining time from the last prefix event to the case's real ending."""
-    # Which case of the log this was cut from. Allow to identify the original trace after generation.
-    case_id: str          # a `tuple[str, ...]` of `batch_size` of them once collated
+    """A single trace cut into a (prefix, suffix) pair, with the remaining time from the last
+    prefix event to the case's real ending."""
 
-    prefix: Events        # the condition: the events before the cut, no EOT
-    suffix: Events        # what the decoder must produce: content, EOT, then padding
+    # Which case of the log this was cut from. Allow to identify the original trace after
+    # generation.
+    case_id: str  # a `tuple[str, ...]` of `batch_size` of them once collated
+
+    prefix: Events  # the condition: the events before the cut, no EOT
+    suffix: Events  # what the decoder must produce: content, EOT, then padding
 
     # The normalized minutes from the last prefix event to the case's real ending, one per item.
     remaining_time: torch.Tensor  # float32, [] per item, [batch_size] batched
 
-    def to(self, device: torch.device) -> "SplitTrace":
+    def to(self, device: torch.device) -> SplitTrace:
         """Move a whole batch in one call"""
         return SplitTrace(
             case_id=self.case_id,
@@ -36,10 +41,15 @@ class SplitTrace(NamedTuple):
 @dataclass(frozen=True)
 class _Trace:
     """One case of the log, encoded once and shared by every trace cut from it."""
-    case_id: str                   # which case of the log this is
-    truncated: bool                # whether the case was longer than `max_trace_length`, so the suffix cut from it does not actually end
-    events: Events                 # the case's events, unpadded
-    remaining_time: torch.Tensor   # normalized minutes from each event to the case's real ending, [len(events)]
+
+    case_id: str  # which case of the log this is
+    # whether the case was longer than `max_trace_length`, so the suffix cut from it does not
+    # actually end
+    truncated: bool
+    events: Events  # the case's events, unpadded
+    remaining_time: (
+        torch.Tensor
+    )  # normalized minutes from each event to the case's real ending, [len(events)]
 
 
 class TraceDataset(Dataset):
@@ -66,7 +76,7 @@ class TraceDataset(Dataset):
         # Read the split and encode it whole: the same work done per event in `__getitem__`
         # would be repeated for every cut point of every case.
         split_dataset = _read_split(description, split=split)
-        
+
         events = encode_events(
             description,
             time_deltas_minutes=split_dataset[EVENT_DELTA_KEY].to_numpy(dtype=np.float32),
@@ -86,11 +96,15 @@ class TraceDataset(Dataset):
             remaining_time=remaining_time,
         )
 
-        # Build the list of (case index, cut point) pairs once here rather than on every __getitem__ call.
+        # Build the list of (case index, cut point) pairs once here rather than on every
+        # __getitem__ call.
         self._cuts: list[tuple[int, int]] = [
-            (case_idx, k)  # The k-th cut of the case at case_idx, yielding prefix[:k] and suffix[k:].
+            # The k-th cut of the case at case_idx, yielding prefix[:k] and suffix[k:].
+            (case_idx, k)
             for case_idx, case in enumerate(self._traces)
-            for k in range(1, int(case.events.length))  # Every cut point of the case, from 1 to len - 1, yielding n - 1 traces for a case of n events.
+            # Every cut point of the case, from 1 to len - 1, yielding n - 1 traces for a case
+            # of n events.
+            for k in range(1, int(case.events.length))
         ]
 
     def _get_cut(self, i: int) -> tuple[_Trace, int]:
@@ -109,12 +123,13 @@ class TraceDataset(Dataset):
         suffix_len = int(case.events.length) - k
 
         # The first k events of the case, padded to `max_trace_length`
-        prefix=case.events.cut(slice(0, k)).padded(to=self.max_len)
+        prefix = case.events.cut(slice(0, k)).padded(to=self.max_len)
         # The last len - k events of the case, padded to `max_trace_length`.
         suffix = case.events.cut(slice(k, None)).padded(to=self.max_len)
-        
-        # If the case was not truncated, append an EOT token to the suffix and increase its length by 1.
-        # Adding it anyways would teach the model to stop at `max_trace_length` rather than where traces really end.
+
+        # If the case was not truncated, append an EOT token to the suffix and increase its
+        # length by 1. Adding it anyways would teach the model to stop at `max_trace_length`
+        # rather than where traces really end.
         if not case.truncated:
             suffix.activities[suffix_len] = self.description.activity.eot_index
             suffix.resources[suffix_len] = self.description.resource.eot_index
@@ -206,9 +221,7 @@ def _group_cases(
     cases = []
     for case_id, group in split_dataset.groupby(CASE_KEY, sort=False):
         # The case's rows as positions into the split-wide columns, cut to the length limit.
-        positions = torch.from_numpy(
-            split_dataset.index.get_indexer(group.index)[:max_content_len]
-        )
+        positions = torch.from_numpy(split_dataset.index.get_indexer(group.index)[:max_content_len])
         cases.append(
             _Trace(
                 case_id=str(case_id),

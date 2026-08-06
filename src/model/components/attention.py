@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -12,7 +13,8 @@ class ProjectedKeysValues:
     does not change while a suffix is being written, and a suffix position already written does
     not change when the next one is added, so both can be projected once and kept.
     """
-    keys: torch.Tensor    # [batch_size, num_heads, source_len, head_dim]
+
+    keys: torch.Tensor  # [batch_size, num_heads, source_len, head_dim]
     values: torch.Tensor  # [batch_size, num_heads, source_len, head_dim]
 
 
@@ -97,6 +99,6 @@ class MultiHeadAttention(nn.Module):
         """`[batch_size, length, d_model]` -> `[batch_size, num_heads, length, head_dim]`,
         giving each head its own slice of the embedding dimension."""
         batch_size, length, _ = projected.shape
-        return projected.view(
-            batch_size, length, self.num_heads, self.head_dim
-        ).transpose(dim0=1, dim1=2)
+        return projected.view(batch_size, length, self.num_heads, self.head_dim).transpose(
+            dim0=1, dim1=2
+        )

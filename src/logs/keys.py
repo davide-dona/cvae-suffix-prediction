@@ -15,15 +15,15 @@ REMAINING_TIME_KEY = 'remaining_time_to_case_end'
 
 # Special tokens used by the encoders and decoder. Each follows the vocabulary of whichever
 # categorical channel carries it, so the same marker serves activities, resources and features.
-SOS_TOKEN = 'SOS'               # Start Of Suffix
+SOS_TOKEN = 'SOS'  # Start Of Suffix
 
-EOT_TOKEN = 'EOT'               # End Of Trace
+EOT_TOKEN = 'EOT'  # End Of Trace
 
-PAD_TOKEN = 'PAD'               # Padding (Used to align sequences to the same length in a batch)
+PAD_TOKEN = 'PAD'  # Padding (Used to align sequences to the same length in a batch)
 
-UNK_TOKEN = 'UNK'               # Unknown (Used to represent values not seen during training)
+UNK_TOKEN = 'UNK'  # Unknown (Used to represent values not seen during training)
 
-MISSING_FEATURE = '<MISSING>'   # Value used to represent missing features in the input data
+MISSING_FEATURE = '<MISSING>'  # Value used to represent missing features in the input data
 
 
 # Separator used by every raw and processed CSV log in this project.

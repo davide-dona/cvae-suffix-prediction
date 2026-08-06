@@ -1,10 +1,11 @@
 from dataclasses import dataclass
+
 import torch
 from torch import nn
 
-from src.datasets.description import DatasetDescription
 from src.configs.schema import ModelConfig
 from src.datasets.dataset import SplitTrace
+from src.datasets.description import DatasetDescription
 from src.distributions.gaussian import Gaussian
 from src.model.components.decoder import Decoder, DecoderOutput, GeneratedSuffix
 from src.model.components.embeddings import EventEmbeddings
@@ -162,7 +163,9 @@ class TransformerCVAE(nn.Module):
             mean=prior.mean.repeat_interleave(repeats=num_samples, dim=0),
             logvar=prior.logvar.repeat_interleave(repeats=num_samples, dim=0),
         )
-        z = repeated.sample() if sample_latent else repeated.mean  # [batch_size * num_samples, latent_dim]
+        z = (
+            repeated.sample() if sample_latent else repeated.mean
+        )  # [batch_size * num_samples, latent_dim]
 
         # A suffix holds at most `max_seq_len` events, the padded width the batch comes in at.
         generated = self.decoder.generate(

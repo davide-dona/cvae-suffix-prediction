@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+
 import torch
 from torch import nn
 
@@ -10,8 +11,9 @@ from src.model.components.embeddings import EventEmbeddings
 @dataclass(frozen=True)
 class EncodedTrace:
     """What `TraceEncoder` turns a sequence into: a summary of the whole, and a row per event."""
+
     summary: torch.Tensor  # [batch_size, d_model]
-    events: torch.Tensor   # [batch_size, seq_len, d_model]
+    events: torch.Tensor  # [batch_size, seq_len, d_model]
 
 
 class TraceEncoder(nn.Module):
@@ -23,6 +25,7 @@ class TraceEncoder(nn.Module):
     whatever the latent networks reading it turn out to need. The token is internal; callers
     see only the `EncodedTrace` it comes back as.
     """
+
     def __init__(self, config: TraceEncoderConfig, embeddings: EventEmbeddings, *, d_model: int):
         super().__init__()
         self.embeddings = embeddings
@@ -58,12 +61,16 @@ class TraceEncoder(nn.Module):
         Returns:
             The sequence's summary and its encoded events.
         """
-        # Apply the embedding and dropout to every event, then prepend the CLS token to the sequence.
+        # Apply the embedding and dropout to every event, then prepend the CLS token to the
+        # sequence.
         embedded = self.dropout(self.embeddings(events))  # [batch_size, seq_len, d_model]
 
         cls_token = self.cls_token.expand(embedded.size(dim=0), -1, -1)  # [batch_size, 1, d_model]
-        sequence = torch.cat(tensors=(cls_token, embedded), dim=1)  # [batch_size, 1 + seq_len, d_model]
-        # The CLS column is never padding, so add a column of False to the pad mask to match the sequence's width.
+        sequence = torch.cat(
+            tensors=(cls_token, embedded), dim=1
+        )  # [batch_size, 1 + seq_len, d_model]
+        # The CLS column is never padding, so add a column of False to the pad mask to match
+        # the sequence's width.
         cls_column = pad_mask.new_zeros(size=(pad_mask.size(dim=0), 1))  # [batch_size, 1]
         full_mask = torch.cat(tensors=(cls_column, pad_mask), dim=1)  # [batch_size, 1 + seq_len]
 

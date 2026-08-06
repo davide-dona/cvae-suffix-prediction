@@ -1,5 +1,6 @@
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
+
 import torch
 
 # The latent heads emit a log-variance rather than a standard deviation, so the scale stays
@@ -11,6 +12,7 @@ LOGVAR_MIN, LOGVAR_MAX = -10.0, 10.0
 @dataclass(frozen=True)
 class Gaussian:
     """A diagonal Gaussian, `[batch_size, dim]` per field."""
+
     mean: torch.Tensor
     logvar: torch.Tensor
 
@@ -22,7 +24,7 @@ class Gaussian:
         *,
         logvar_min: float = LOGVAR_MIN,
         logvar_max: float = LOGVAR_MAX,
-    ) -> "Gaussian":
+    ) -> 'Gaussian':
         """Build a Gaussian from an already-split mean and log-variance.
 
         Args:
@@ -43,8 +45,8 @@ class Gaussian:
         `mean` and `logvar`."""
         # mean + std * noise: the randomness sits in a term with no parameters, which is what
         # leaves a gradient path through `mean` and `logvar`.
-        std = torch.exp(input=0.5 * self.logvar)                        # [batch_size, dim]
-        return self.mean + std * torch.randn_like(input=self.mean)      # [batch_size, dim]
+        std = torch.exp(input=0.5 * self.logvar)  # [batch_size, dim]
+        return self.mean + std * torch.randn_like(input=self.mean)  # [batch_size, dim]
 
     def nll(self, target: torch.Tensor) -> torch.Tensor:
         """Negative log-likelihood of a target under this Gaussian.

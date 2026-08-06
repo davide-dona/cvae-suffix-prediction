@@ -1,7 +1,9 @@
 from __future__ import annotations
-from functools import cached_property
+
 import json
+from functools import cached_property
 from pathlib import Path
+
 import numpy as np
 import pandas as pd
 from pandas.api.types import is_numeric_dtype
@@ -25,11 +27,12 @@ from src.logs.keys import (
 # Row 0 of the shared feature table is a PAD too, so padding a run of events is a plain zero fill.
 ACTIVITY_TOKENS = (PAD_TOKEN, EOT_TOKEN, SOS_TOKEN, UNK_TOKEN)
 RESOURCE_TOKENS = (PAD_TOKEN, EOT_TOKEN, UNK_TOKEN)
-FEATURE_TOKENS  = (UNK_TOKEN,)
+FEATURE_TOKENS = (UNK_TOKEN,)
 
 
 class CategoricalColumn(StrictModel):
     """One categorical channel of the log, and the vocabulary it is embedded through."""
+
     column: str
     vocab: tuple[str, ...]
     special_tokens: tuple[str, ...]
@@ -43,7 +46,7 @@ class CategoricalColumn(StrictModel):
         column: str,
         special_tokens: tuple[str, ...],
         offset: int = 0,
-    ) -> "CategoricalColumn":
+    ) -> CategoricalColumn:
         """Fit one channel's vocabulary on the train split.
 
         Args:
@@ -93,7 +96,8 @@ class CategoricalColumn(StrictModel):
 
     @property
     def pad_index(self) -> int:
-        """The row filling a sequence out to `max_trace_length`, row 0 of any channel carrying it."""
+        """The row filling a sequence out to `max_trace_length`, row 0 of any channel
+        carrying it."""
         return self._index_of(PAD_TOKEN)
 
     @property
@@ -147,13 +151,14 @@ class NumericColumn(StrictModel):
     - log_max: The maximum of the log1p of the clipped train values.
     Log1p is used since the numeric columns may span several orders of magnitude.
     """
+
     column: str
     clip_value: float
     log_min: float
     log_max: float
 
     @classmethod
-    def fit(cls, train: pd.DataFrame, *, column: str, percentile: float) -> "NumericColumn":
+    def fit(cls, train: pd.DataFrame, *, column: str, percentile: float) -> NumericColumn:
         """Fit one channel's normalization range on the train split.
 
         Missing values take no part in the fit: a percentile over a column holding NaN is NaN, and
@@ -219,6 +224,7 @@ class NumericColumn(StrictModel):
 
 class DatasetDescription(StrictModel):
     """The description of a dataset, fit on the train split and written beside the splits."""
+
     activity: CategoricalColumn
     resource: CategoricalColumn
     delta: NumericColumn
@@ -240,7 +246,7 @@ class DatasetDescription(StrictModel):
         return 1 + sum(feature.num_rows for feature in self.categorical_features)
 
     @classmethod
-    def fit(cls, train: pd.DataFrame, *, data_config: DataConfig) -> "DatasetDescription":
+    def fit(cls, train: pd.DataFrame, *, data_config: DataConfig) -> DatasetDescription:
         """Fit the description on the train split.
         Args:
             train: The train split, as `pipelines/preprocess.py` holds it before writing.
@@ -270,7 +276,7 @@ class DatasetDescription(StrictModel):
         )
 
     @classmethod
-    def load(cls, data_config: DataConfig) -> "DatasetDescription":
+    def load(cls, data_config: DataConfig) -> DatasetDescription:
         """Load the description previously generated for a dataset.
 
         The one place a config becomes a description: what comes back names the dataset and its

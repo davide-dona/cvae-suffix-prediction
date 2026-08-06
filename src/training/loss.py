@@ -1,16 +1,18 @@
 from dataclasses import dataclass
+
 import torch
 import torch.nn.functional as F
 
 from src.datasets.dataset import SplitTrace
-from src.model import TransformerCVAEOutput
 from src.metrics import ScalarMetrics
+from src.model import TransformerCVAEOutput
 from src.training.kl import free_bits_kl, gaussian_kl
 
 
 @dataclass(frozen=True)
 class Loss(ScalarMetrics):
     """The loss of one pass, and the terms it is made of."""
+
     loss: float = 0.0
     reconstruction_loss: float = 0.0
     kl_loss: float = 0.0
@@ -50,7 +52,9 @@ def compute_loss(
     reconstruction_loss = activity_loss + remaining_time_loss
 
     # Compute KL divergence, summed over the batch
-    kl_per_dim = gaussian_kl(posterior=output.posterior, prior=output.prior)  # [batch_size, latent_dim]
+    kl_per_dim = gaussian_kl(
+        posterior=output.posterior, prior=output.prior
+    )  # [batch_size, latent_dim]
     kl_loss = kl_per_dim.sum()
     penalized_kl_loss = free_bits_kl(kl_per_dim, free_bits=free_bits)
     total_loss = reconstruction_loss + kl_weight * penalized_kl_loss

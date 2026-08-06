@@ -3,20 +3,19 @@ from torch import optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
+from src import paths
 from src.configs.schema import (
     EarlyStoppingConfig,
     LossConfig,
     OptimizerConfig,
     TrainingConfig,
 )
-from src import paths
 from src.datasets.description import DatasetDescription
 from src.model import TransformerCVAE, save_checkpoint
 from src.training.early_stopping import EarlyStopper
 from src.training.kl import cyclical_linear_weight
 from src.training.loss import Loss, compute_loss
 from src.training.validation import validate, validate_generation
-
 
 # The device's own stream, which dropout and the latent sampling draw from, lives behind a
 # namespace of its own; `cpu` has none beside the global one.
@@ -114,7 +113,7 @@ def train(
         early_stopping_config: When to give up.
     """
     device = torch.device(training.device)
-    
+
     optimizer = optim.Adam(
         model.parameters(), lr=optimizer_config.lr, weight_decay=optimizer_config.weight_decay
     )
@@ -137,12 +136,13 @@ def train(
         step = resume['step']
         print(f'Resuming {run_name} from step {step}, best score {resume["selection_score"]:.4f}')
 
-    # Overwrite the TensorBoard logs after the step we resumed from, so that a resumed run's curves are continuous with the original.
+    # Overwrite the TensorBoard logs after the step we resumed from, so that a resumed run's
+    # curves are continuous with the original.
     writer = SummaryWriter(
         log_dir=paths.tensorboard_dir(run_name), purge_step=step if resume is not None else None
     )
     print(f'Logging to {writer.log_dir}')
-    
+
     try:
         while step < training.max_steps and not should_stop:
             for batch in train_loader:
@@ -158,10 +158,11 @@ def train(
                 )
                 # Run a forward pass
                 output = model(batch)
-                
+
                 # Compute the loss and propagate gradients
                 loss, metrics = compute_loss(
-                    output, batch,
+                    output,
+                    batch,
                     pad_activity_index=model.pad_activity_index,
                     kl_weight=kl_weight,
                     free_bits=loss_config.free_bits,
@@ -183,15 +184,23 @@ def train(
                     train_metrics = interval_totals / seen
                     interval_totals, seen = Loss(), 0
 
-                    # Score the model on the validation set and the generation set, and log the results.
+                    # Score the model on the validation set and the generation set, and log
+                    # the results.
                     val_metrics = validate(
-                        model, val_loader, kl_weight=kl_weight, free_bits=loss_config.free_bits, device=device
+                        model,
+                        val_loader,
+                        kl_weight=kl_weight,
+                        free_bits=loss_config.free_bits,
+                        device=device,
                     )
                     val_metrics.log(writer, step, prefix='val')
-                    
+
                     gen_metrics = validate_generation(
-                        model, generation_loader,
-                        num_samples=generation_samples, description=description, device=device,
+                        model,
+                        generation_loader,
+                        num_samples=generation_samples,
+                        description=description,
+                        device=device,
                     )
                     gen_metrics.log(writer, step, prefix='gen')
 
@@ -214,7 +223,8 @@ def train(
                     is_best = selection_score < early_stopper.min_validation_score
                     should_stop = early_stopper.update(selection_score)
 
-                    # Save a checkpoint with the model, optimizer, early stopper and random streams in their current state.
+                    # Save a checkpoint with the model, optimizer, early stopper and random
+                    # streams in their current state.
                     checkpoint = dict(
                         experiment_config=experiment_config,
                         step=step,
@@ -225,12 +235,16 @@ def train(
                         rng_state=rng_state(generator, device),
                     )
                     save_checkpoint(model, **checkpoint, path=paths.checkpoint_path(run_name))
-                    # If this validation improved on the best, save a second copy to the best-model directory.
+                    # If this validation improved on the best, save a second copy to the
+                    # best-model directory.
                     if is_best:
                         path = save_checkpoint(
                             model, **checkpoint, path=paths.best_model_path(run_name)
                         )
-                        print(f'New best model (step {step}, score {selection_score:.4f}) saved at {path}')
+                        print(
+                            f'New best model (step {step}, score {selection_score:.4f}) '
+                            f'saved at {path}'
+                        )
 
                 if should_stop or step >= training.max_steps:
                     break

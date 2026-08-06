@@ -10,7 +10,8 @@ from src.metrics import ScalarMetrics, mean
 @dataclass(frozen=True)
 class ConformanceScores(ScalarMetrics):
     """The scores of one prefix's generated samples."""
-    conformance_mean: float   # the mean over a prefix's samples
+
+    conformance_mean: float  # the mean over a prefix's samples
     conformance_point: float  # the suffix written from the mean of `p(z | prefix)`
 
 
@@ -22,7 +23,7 @@ def score_conformance(
 ) -> ConformanceScores:
     """
     Check one prefix's generated suffixes and its point prediction.
-    
+
     Args:
         generation: The model's answer for one prefix, decoded into the log's own units.
         model: The declarative model to check against, from `load_declare_model`.
