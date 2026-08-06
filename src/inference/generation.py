@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from src.configs.schema import InferenceConfig
-from src.datasets.codec import DecodedSequence, decode_sequence
+from src.datasets.codec import DecodedSequence, decode_activities, decode_sequence
 from src.datasets.dataset import SuffixItem
 from src.datasets.description import DatasetDescription
 from src.model import TransformerCVAE
@@ -12,14 +12,16 @@ class Generation:
     """The model's answer for one prefix: the suffixes it drew, the one it answers with, and the
     ground truth beside them.
 
-    The one shape everything downstream reads, and exactly what `score_prefix` takes. A training
+    The one shape everything downstream reads, and exactly what `score_generation` takes. A training
     curve, the generations file and the final report are all scored off this, so they measure the
     same thing rather than agreeing by coincidence. `generate_batch` builds it from the model;
     `generation_from_rows` builds it back out of a generations file, which is only this written down.
 
-    Which prefix this answers is not part of it: the caller that needs identity has the batch, and
-    the file names a prefix by its case and cut point.
+    Which prefix this answers is still not part of it: the caller that needs identity has the
+    batch, and the file names a prefix by its case and cut point. Its activities are, because a
+    declarative constraint is about the whole trace and not about the run of events after the cut.
     """
+    prefix_activities: list[str]    # the events before the cut, in order
     samples: list[DecodedSequence]  # one per draw of z
     point: DecodedSequence          # the suffix written from the mean of `p(z | prefix)`
     truth: DecodedSequence
@@ -88,9 +90,16 @@ def generate_batch(
     point_remaining_time = point.remaining_time.squeeze(dim=1).cpu().numpy()  # [batch_size]
     true_activities = batch.suffix.activities.cpu().numpy()  # [batch_size, seq_len]
     true_remaining_time = batch.remaining_time.cpu().numpy()  # [batch_size]
+    prefix_activities = batch.prefix.activities.cpu().numpy()  # [batch_size, seq_len]
+    prefix_lengths = batch.prefix_len.cpu().numpy()  # [batch_size]
 
     return [
         Generation(
+            prefix_activities=decode_activities(
+                description,
+                activities=prefix_activities[position],
+                length=prefix_lengths[position],
+            ),
             samples=[
                 decode_sequence(
                     description,

@@ -71,6 +71,24 @@ class DecodedSequence:
         return len(self.activities)
 
 
+def decode_activities(
+    description: DatasetDescription,
+    *,
+    activities: np.ndarray,
+    length: int,
+) -> list[str]:
+    """Read a run of activity indices back into the log's own names.
+
+    Args:
+        description: The dataset's description, holding the activity channel's decode map.
+        activities: The activity indices of one sequence, int64, `[seq_len]`.
+        length: How many of them to keep, the rest being padding.
+    Returns:
+        The activity names, in order.
+    """
+    return [description.activity.from_index[int(index)] for index in activities[:length]]
+
+
 def decode_sequence(
     description: DatasetDescription,
     *,
@@ -94,7 +112,7 @@ def decode_sequence(
         The sequence in raw activity names and minutes.
     """
     return DecodedSequence(
-        activities=[description.activity.from_index[int(i)] for i in activities[:length]],
+        activities=decode_activities(description, activities=activities, length=length),
         remaining_time_minutes=float(description.remaining_time.denormalize(remaining_time)),
     )
 

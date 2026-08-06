@@ -2,7 +2,7 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from src.evaluation.accuracy import AccuracyMetrics
+from src.evaluation.metrics import EvaluationMetrics
 
 
 @dataclass(frozen=True)
@@ -17,7 +17,7 @@ class EvaluationReport:
     cases: int
     samples_per_prefix: int
     truncated_pairs_excluded: int
-    accuracy: AccuracyMetrics
+    metrics: EvaluationMetrics
 
     def write(self, path: str | Path) -> Path:
         """
