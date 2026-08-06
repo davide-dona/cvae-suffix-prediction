@@ -4,6 +4,11 @@ from typing import Self, Sequence
 from torch.utils.tensorboard import SummaryWriter
 
 
+def mean(values: Sequence[float]) -> float:
+    """The mean of `values`, or 0.0 if there are none."""
+    return sum(values) / len(values) if values else 0.0
+
+
 class ScalarMetrics:
     """Named scalars of one pass, aggregated field by field.
 

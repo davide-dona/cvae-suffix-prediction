@@ -5,7 +5,7 @@ output_dir: outputs
 # Declarative model discovered from the train split during preprocessing,
 # written to <data.dir>/declare/model.decl.
 declare:
-  consider_vacuity: false
+  consider_vacuity: false # unactivated constraints are considered as violated
   min_support: 0.8        # fraction of train traces that satisfy a constraint for it to be included in the model
   itemsets_support: 0.9   # build itemsets of activities that co-occur in at least this fraction of train traces
   max_cardinality: 2      # highest n tried for the templates that take one

@@ -1,8 +1,12 @@
 from pathlib import Path
+from typing import Sequence
 import pandas as pd
 import pm4py
 from Declare4Py.D4PyEventLog import D4PyEventLog
 from Declare4Py.ProcessMiningTasks.Discovery.DeclareMiner import DeclareMiner
+from Declare4Py.ProcessModels.DeclareModel import DeclareModel
+from Declare4Py.Utils.Declare.Checkers import ConstraintChecker
+from Declare4Py.Utils.Declare.TraceStates import TraceState
 
 from src.configs import DataConfig, DeclareConfig
 from src.logs.keys import ACTIVITY_KEY, CASE_KEY, TIMESTAMP_KEY
@@ -61,3 +65,46 @@ def discover_declare_model(
     path.write_text('\n'.join(lines) + '\n')
 
     return len(model.constraints)
+
+def load_declare_model(data_config: DataConfig) -> DeclareModel:
+    """Read back the model discovered at preprocessing time.
+
+    Args:
+        data_config: The `data` section, for where the model is.
+    Returns:
+        The parsed model, ready for `conformance_rate`.
+    """
+    return DeclareModel().parse_from_file(str(declare_model_path(data_config)))
+
+
+def conformance_rate(
+    activities: Sequence[str],
+    *,
+    model: DeclareModel,
+    consider_vacuity: bool,
+) -> float:
+    """
+    The fraction of a declarative model's constraints one trace satisfies.
+
+    Args:
+        activities: The trace's activity names, in order. A whole case, prefix included: a
+            constraint like `Init` or `Precedence` is about the trace, not about a run of events
+            inside it.
+        model: The model to check against, from `load_declare_model`.
+        consider_vacuity: Whether a constraint the trace never activates counts as satisfied.
+            False makes it count as violated instead, so the rate only credits constraints the
+            trace actually exercises.
+    Returns:
+        The satisfied share, in `[0, 1]`, or 0.0 for a model that checked nothing.
+    """
+    # The checkers only ever read `event[ACTIVITY_KEY]` and the trace's length, so this is all a
+    # trace has to be: no event log, and nothing read off disk per call.
+    trace = [{ACTIVITY_KEY: activity} for activity in activities]
+    # Every trace is judged as a finished case, which `check_trace_conformance` assumes anyway.
+    results = ConstraintChecker().check_trace_conformance(trace, model, consider_vacuity, ACTIVITY_KEY)
+    if not results:
+        return 0.0
+    # A constraint whose conditions fail to parse is dropped by the checker, so the results are
+    # the denominator rather than the model's constraints.
+    satisfied = sum(result.state == TraceState.SATISFIED for result in results)
+    return satisfied / len(results)

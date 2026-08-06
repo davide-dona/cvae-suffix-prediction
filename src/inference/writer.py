@@ -16,6 +16,8 @@ _SCHEMA = pa.schema([
     # Whether the ground-truth suffix was cut short of its real ending.
     ('truncated', pa.bool_()),
     ('sample_index', pa.int64()),
+    # The events before the cut, which a constraint over the whole trace is checked against.
+    ('prefix_activities', pa.list_(pa.field(name='element', type=pa.string()))),
     ('generated_activities', pa.list_(pa.field(name='element', type=pa.string()))),
     ('generated_remaining_time_minutes', pa.float64()),
     # The suffix written from the mean of `p(z | prefix)`: the model's single answer, drawn once
@@ -57,8 +59,9 @@ def table_from_generations(
         generations: The model's answers, in the order `generate_batch` returned them.
         infos: Which pair each of those generations answers, in the same order.
     Returns:
-        The rows as one table, ready to be written as a row group. The point prediction and the
-        truth describe the prefix rather than the sample, so they repeat unchanged across its rows.
+        The rows as one table, ready to be written as a row group. The prefix, the point
+        prediction and the truth describe the prefix rather than the sample, so they repeat
+        unchanged across its rows.
     Raises:
         ValueError: If `generations` and `infos` are of different lengths, which would put every
             generated suffix beside the wrong case.
@@ -70,6 +73,7 @@ def table_from_generations(
             'prefix_len': info.prefix_len,
             'truncated': info.truncated,
             'sample_index': sample_index,
+            'prefix_activities': generation.prefix_activities,
             'generated_activities': sample.activities,
             'generated_remaining_time_minutes': sample.remaining_time_minutes,
             'point_activities': generation.point.activities,
@@ -87,12 +91,12 @@ def generation_from_rows(rows: pd.DataFrame) -> Generation:
     """Read one prefix's generation back out of the rows a generations file holds it as.
 
     The inverse of `table_from_generations` over one prefix, which is what lets a written file be
-    scored through the same `score_prefix` a training run reports from.
+    scored through the same `score_generation` a training run reports from.
 
     Args:
-        rows: The rows of a single (case, cut point), one per generated sample. The point
-            prediction and the ground truth describe the prefix rather than the sample and repeat
-            across the rows, so both are read off the first of them.
+        rows: The rows of a single (case, cut point), one per generated sample. The prefix, the
+            point prediction and the ground truth describe the prefix rather than the sample and
+            repeat across the rows, so all three are read off the first of them.
     Returns:
         The same generation `generate_batch` produced. Parquet hands the activity columns back as
         arrays, so they are copied into lists: `DecodedSequence` promises lists, and the edit
@@ -100,6 +104,7 @@ def generation_from_rows(rows: pd.DataFrame) -> Generation:
     """
     ground_truth = rows.iloc[0]
     return Generation(
+        prefix_activities=list(ground_truth.prefix_activities),
         samples=[
             DecodedSequence(
                 activities=list(sample.generated_activities),
