@@ -1,6 +1,7 @@
 import argparse
 from datetime import datetime
 from pathlib import Path
+
 import torch
 from torch.utils.data import DataLoader
 
@@ -16,7 +17,7 @@ from src.training.train import train
 def resumed(resume_path: Path) -> tuple[ExperimentConfig, dict]:
     """
     Read a checkpoint together with the config of the run that wrote it.
-    
+
     Args:
         resume_path: The checkpoint to carry on from.
     Returns:
@@ -26,7 +27,11 @@ def resumed(resume_path: Path) -> tuple[ExperimentConfig, dict]:
     """
     checkpoint = load_checkpoint(resume_path)
     missing = {
-        'experiment_config', 'run_name', 'optimizer_state', 'early_stopping_state', 'rng_state'
+        'experiment_config',
+        'run_name',
+        'optimizer_state',
+        'early_stopping_state',
+        'rng_state',
     } - checkpoint.keys()
     if missing:
         raise ValueError(
@@ -65,19 +70,25 @@ def run(config: ExperimentConfig, checkpoint: dict | None = None) -> None:
         generator=generator,
         num_workers=config.data.num_workers,
     )
-    
+
     validation_dataset = TraceDataset(description=description, split='val')
-    # Validation and generation loaders are fixed subsets of the validation split, so every run of a config
-    # reads the same traces and their curves can be laid over each other.
+    # Validation and generation loaders are fixed subsets of the validation split, so every run
+    # of a config reads the same traces and their curves can be laid over each other.
     val_loader = DataLoader(
-        dataset=fixed_subset(validation_dataset, size=config.training.validation_pairs, generator=generator),
+        dataset=fixed_subset(
+            validation_dataset, size=config.training.validation_pairs, generator=generator
+        ),
         batch_size=config.data.batch_size,
         shuffle=False,
         num_workers=config.data.num_workers,
     )
     generation_loader = DataLoader(
-        dataset=fixed_subset(validation_dataset, size=config.training.generation_pairs, generator=generator),
-        batch_size=generation_batch_size(inference=config.inference, upper_bound=config.data.batch_size),
+        dataset=fixed_subset(
+            validation_dataset, size=config.training.generation_pairs, generator=generator
+        ),
+        batch_size=generation_batch_size(
+            inference=config.inference, upper_bound=config.data.batch_size
+        ),
         shuffle=False,
         num_workers=config.data.num_workers,
     )
@@ -88,8 +99,8 @@ def run(config: ExperimentConfig, checkpoint: dict | None = None) -> None:
         f'generating for {len(generation_loader.dataset)}'
     )
 
-    
-    # When resuming, keep the run name the checkpoint carries, so it writes to the same TensorBoard directory and the same files.
+    # When resuming, keep the run name the checkpoint carries, so it writes to the same
+    # TensorBoard directory and the same files.
     run_name = (
         f'{config.data.name}/{config.experiment_name}-{datetime.now():%Y%m%d-%H%M%S}'
         if checkpoint is None
@@ -119,12 +130,20 @@ def main() -> None:
     # A run is either started from a config or carried on from a checkpoint, which already
     # describes the run that wrote it. Two descriptions of one run could only disagree.
     source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument('-c', '--config', type=Path,
-                        help="Path to this experiment's config YAML, to start a new run.")
-    source.add_argument('-r', '--resume', type=Path,
-                        help='Path to a checkpoint to carry on from, its config included. The '
-                             'run keeps its name, so it writes to the same TensorBoard directory '
-                             'and the same files.')
+    source.add_argument(
+        '-c',
+        '--config',
+        type=Path,
+        help="Path to this experiment's config YAML, to start a new run.",
+    )
+    source.add_argument(
+        '-r',
+        '--resume',
+        type=Path,
+        help='Path to a checkpoint to carry on from, its config included. The '
+        'run keeps its name, so it writes to the same TensorBoard directory '
+        'and the same files.',
+    )
     args = parser.parse_args()
 
     if args.resume is not None:

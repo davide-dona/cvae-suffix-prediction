@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+
 import torch
 from torch import nn
 
@@ -21,11 +22,12 @@ class SuffixCache:
     a newly-sized tensor onto the cache every step, is what keeps a step's cost independent of
     how far the generation has already run.
     """
-    keys: torch.Tensor    # [batch_size, num_heads, max_steps, head_dim]
+
+    keys: torch.Tensor  # [batch_size, num_heads, max_steps, head_dim]
     values: torch.Tensor  # [batch_size, num_heads, max_steps, head_dim]
     length: int = 0
 
-    def write(self, step: ProjectedKeysValues) -> "SuffixCache":
+    def write(self, step: ProjectedKeysValues) -> 'SuffixCache':
         """Write one step's projection into the next free position, in place.
 
         Args:
@@ -34,18 +36,22 @@ class SuffixCache:
             The cache, one position longer. `keys`/`values` are the same buffer written into,
             not a copy.
         """
-        self.keys[:, :, self.length:self.length + 1] = step.keys
-        self.values[:, :, self.length:self.length + 1] = step.values
+        self.keys[:, :, self.length : self.length + 1] = step.keys
+        self.values[:, :, self.length : self.length + 1] = step.values
         return SuffixCache(keys=self.keys, values=self.values, length=self.length + 1)
 
     def filled(self) -> ProjectedKeysValues:
         """The positions written so far, as a view over the buffer rather than a copy."""
-        return ProjectedKeysValues(keys=self.keys[:, :, :self.length], values=self.values[:, :, :self.length])
+        return ProjectedKeysValues(
+            keys=self.keys[:, :, : self.length], values=self.values[:, :, : self.length]
+        )
 
 
 @dataclass(frozen=True)
 class LayerCache:
-    """A KV cache for one decoder layer: the projected prefix, and the suffix positions already read."""
+    """A KV cache for one decoder layer: the projected prefix, and the suffix positions already
+    read."""
+
     prefix_kv: ProjectedKeysValues
     suffix_kv: SuffixCache
 
@@ -58,7 +64,8 @@ class DecoderOutput:
     The remaining time is a Gaussian rather than a point, so its loss is a log-likelihood in
     nats, the same units as the activity cross-entropy it is added to.
     """
-    activity_logits: torch.Tensor   # [batch_size, seq_len, num_activities]
+
+    activity_logits: torch.Tensor  # [batch_size, seq_len, num_activities]
     remaining_time_distr: Gaussian  # [batch_size], mean and log-variance
 
 
@@ -70,13 +77,15 @@ class GeneratedSuffix:
     The leading axes are whatever the caller generated over: `[batch_size, ...]` from
     `Decoder.generate`, `[batch_size, num_samples, ...]` from `TransformerCVAE.generate`.
     """
-    activities: torch.Tensor      # [..., steps]
-    lengths: torch.Tensor         # [...], events emitted before EOT, or `steps` if EOT never came
+
+    activities: torch.Tensor  # [..., steps]
+    lengths: torch.Tensor  # [...], events emitted before EOT, or `steps` if EOT never came
     remaining_time: torch.Tensor  # [...], in [0, 1] like the targets
 
 
 class DecoderLayer(nn.Module):
-    """One layer of the decoder stack, with self-attention over the suffix and cross-attention over the prefix."""
+    """One layer of the decoder stack, with self-attention over the suffix and cross-attention
+    over the prefix."""
 
     def __init__(self, config: DecoderConfig, *, d_model: int):
         super().__init__()
@@ -123,7 +132,9 @@ class DecoderLayer(nn.Module):
             suffix_cache = cache.suffix_kv.write(step_kv)
             suffix_kv = suffix_cache.filled()
         else:
-            suffix_cache = SuffixCache(keys=step_kv.keys, values=step_kv.values, length=step_kv.keys.size(dim=2))
+            suffix_cache = SuffixCache(
+                keys=step_kv.keys, values=step_kv.values, length=step_kv.keys.size(dim=2)
+            )
             suffix_kv = step_kv
         hidden = hidden + self.dropout(
             self.self_attention(query=hidden_norm, keys_values=suffix_kv, causal=cache is None)
@@ -164,7 +175,8 @@ class DecoderLayer(nn.Module):
         return LayerCache(
             prefix_kv=self.cross_attention.project(prefix_encoded),
             suffix_kv=SuffixCache(
-                keys=prefix_encoded.new_zeros(size=shape), values=prefix_encoded.new_zeros(size=shape)
+                keys=prefix_encoded.new_zeros(size=shape),
+                values=prefix_encoded.new_zeros(size=shape),
             ),
         )
 
@@ -311,9 +323,9 @@ class Decoder(nn.Module):
         A decoder that cannot count on the previous ground-truth token has to look to z for
         what comes next, which keeps information flowing through the latent.
         """
-        dropped = (
-            torch.rand_like(activities, dtype=torch.float32) < self.activity_dropout
-        ) & (activities != self.sos_activity_index)  # [batch_size, seq_len]
+        dropped = (torch.rand_like(activities, dtype=torch.float32) < self.activity_dropout) & (
+            activities != self.sos_activity_index
+        )  # [batch_size, seq_len]
         return activities.masked_fill(mask=dropped, value=self.pad_activity_index)
 
     def _run_layers(
@@ -350,7 +362,7 @@ class Decoder(nn.Module):
         # leave a row with nothing to attend to, whose softmax is a NaN.
         layer_caches = caches if caches is not None else [None] * len(self.layers)
         new_caches: list[LayerCache] = []
-        for layer, cache in zip(self.layers, layer_caches):
+        for layer, cache in zip(self.layers, layer_caches, strict=True):
             hidden, layer_cache = layer(
                 hidden, prefix_encoded=prefix_encoded, prefix_pad_mask=prefix_pad_mask, cache=cache
             )

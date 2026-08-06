@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 from typing import NamedTuple
+
 import numpy as np
 import pandas as pd
 import torch
@@ -9,15 +11,18 @@ from src.datasets.description import DatasetDescription
 
 class Events(NamedTuple):
     """The set of events composing a single trace, as the model reads it."""
-    activities: torch.Tensor          # int64, [..., seq_len]
-    resources: torch.Tensor           # int64, [..., seq_len]
-    time_deltas: torch.Tensor         # float32 in [0, 1], [..., seq_len]
-    feature_categories: torch.Tensor  # int64, [..., seq_len, num_categorical]
-    feature_values: torch.Tensor      # float32 in [0, 1], [..., seq_len, num_numeric]
-    feature_present: torch.Tensor     # float32 0/1, 0.0 where the log had no value [..., seq_len, num_numeric]
-    length: torch.Tensor              # int64, the real, unpadded length of the run, [...], 1D
 
-    def cut(self, index: slice | torch.Tensor) -> "Events":
+    activities: torch.Tensor  # int64, [..., seq_len]
+    resources: torch.Tensor  # int64, [..., seq_len]
+    time_deltas: torch.Tensor  # float32 in [0, 1], [..., seq_len]
+    feature_categories: torch.Tensor  # int64, [..., seq_len, num_categorical]
+    feature_values: torch.Tensor  # float32 in [0, 1], [..., seq_len, num_numeric]
+    feature_present: (
+        torch.Tensor
+    )  # float32 0/1, 0.0 where the log had no value [..., seq_len, num_numeric]
+    length: torch.Tensor  # int64, the real, unpadded length of the run, [...], 1D
+
+    def cut(self, index: slice | torch.Tensor) -> Events:
         """Slice every per-event field by index, updating `length`."""
         activities = self.activities[index]
         return Events(
@@ -30,9 +35,10 @@ class Events(NamedTuple):
             length=torch.tensor(data=len(activities), dtype=torch.long),
         )
 
-    def padded(self, to: int) -> "Events":
+    def padded(self, to: int) -> Events:
         """Pad every per-event field to `to` positions, leaving `length` unchanged.
-        This allows a batch of runs to be stacked into a single tensor, with the padding masked out by `pad_mask`.
+        This allows a batch of runs to be stacked into a single tensor, with the padding masked
+        out by `pad_mask`.
 
         Args:
             to: The width to pad to, `max_trace_length` for everything the model reads.
@@ -42,12 +48,14 @@ class Events(NamedTuple):
         # Every field but `length`, which counts real events and so survives the padding.
         return Events(
             *(
-                torch.cat(tensors=(
-                    channel,
-                    torch.zeros(
-                        size=(to - channel.size(dim=0), *channel.shape[1:]), dtype=channel.dtype
-                    ),
-                ))
+                torch.cat(
+                    tensors=(
+                        channel,
+                        torch.zeros(
+                            size=(to - channel.size(dim=0), *channel.shape[1:]), dtype=channel.dtype
+                        ),
+                    )
+                )
                 for channel in self[:-1]
             ),
             length=self.length,
@@ -61,7 +69,7 @@ class Events(NamedTuple):
         positions = torch.arange(end=self.activities.size(dim=-1), device=self.length.device)
         return positions.unsqueeze(dim=0) >= self.length.unsqueeze(dim=1)
 
-    def to(self, device: torch.device) -> "Events":
+    def to(self, device: torch.device) -> Events:
         """Move a whole batch in one call"""
         return Events(*(field.to(device) for field in self))
 

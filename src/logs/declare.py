@@ -1,4 +1,5 @@
-from typing import Sequence
+from collections.abc import Sequence
+
 import pandas as pd
 import pm4py
 from Declare4Py.D4PyEventLog import D4PyEventLog
@@ -49,7 +50,7 @@ def discover_declare_model(
     # Write the activities in the Declare4py format
     lines = [f'activity {activity}' for activity in model.activities]
     # Write the constraints in the Declare4py format, one per line
-    for constraint, serialized in zip(model.constraints, model.serialized_constraints):
+    for constraint, serialized in zip(model.constraints, model.serialized_constraints, strict=True):
         # Declare4Py serializes a binary constraint's two conditions as the one empty field a
         # unary constraint gets, which its own parser then rejects; the missing separator is
         # added back here.
@@ -60,6 +61,7 @@ def discover_declare_model(
     path.write_text('\n'.join(lines) + '\n')
 
     return len(model.constraints)
+
 
 def load_declare_model(dataset: str) -> DeclareModel:
     """Read back the model discovered at preprocessing time.
@@ -96,7 +98,9 @@ def conformance_rate(
     # trace has to be: no event log, and nothing read off disk per call.
     trace = [{ACTIVITY_KEY: activity} for activity in activities]
     # Every trace is judged as a finished case, which `check_trace_conformance` assumes anyway.
-    results = ConstraintChecker().check_trace_conformance(trace, model, consider_vacuity, ACTIVITY_KEY)
+    results = ConstraintChecker().check_trace_conformance(
+        trace, model, consider_vacuity, ACTIVITY_KEY
+    )
     if not results:
         return 0.0
     # A constraint whose conditions fail to parse is dropped by the checker, so the results are

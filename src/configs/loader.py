@@ -1,12 +1,15 @@
 from pathlib import Path
+
 import yaml
+
 from .schema import ExperimentConfig
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
     """
     Recursively merge two dicts, with override taking precedence.
-    Recursion allows nested dicts to be merged rather than replaced, so a config can override just one field of a nested section.
+    Recursion allows nested dicts to be merged rather than replaced, so a config can override
+    just one field of a nested section.
     Args:
         base: The base config dict.
         override: The override config dict.
@@ -15,7 +18,7 @@ def _deep_merge(base: dict, override: dict) -> dict:
     """
     # Start with a copy of the base dict
     merged = dict(base)
-    
+
     # For each key/value pair in the override dict
     for key, value in override.items():
         # If both are dicts, merge them recursively
@@ -42,11 +45,11 @@ def load_config(path: str | Path) -> ExperimentConfig:
     """
     path = Path(path)
     # Load the base config and the override config
-    with (path.parent / "base.yaml").open("r") as f:
+    with (path.parent / 'base.yaml').open('r') as f:
         base = yaml.safe_load(f)
-    with path.open("r") as f:
+    with path.open('r') as f:
         override = yaml.safe_load(f)
     # Merge the two configs, with the override taking precedence
     merged = _deep_merge(base, override)
-    merged["data"]["name"] = path.stem
+    merged['data']['name'] = path.stem
     return ExperimentConfig.model_validate(merged)

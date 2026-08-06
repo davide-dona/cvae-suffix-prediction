@@ -3,10 +3,7 @@ import torch
 from src.distributions.gaussian import Gaussian
 
 
-def gaussian_kl(
-    posterior: Gaussian,
-    prior: Gaussian
-) -> torch.Tensor:
+def gaussian_kl(posterior: Gaussian, prior: Gaussian) -> torch.Tensor:
     """Closed-form KL divergence between two diagonal Gaussians, per latent dimension.
     Args:
         posterior: The posterior distribution.
@@ -38,7 +35,7 @@ def cyclical_linear_weight(
     Every `period_steps` steps the weight ramps linearly from `start` to `stop` over the first
     `ratio` of the cycle, then holds at the top for the rest of it. This way a run repeatedly gives
     the posterior a stretch of cheap latent capacity and then pays for it again
-    
+
     Args:
         step: The step to weight, counted from 0.
         period_steps: Length of one cycle, in optimizer steps.
@@ -57,7 +54,7 @@ def cyclical_linear_weight(
     # Otherwise, linearly interpolate between the start and stop of the cycle
     return start + (stop - start) * (position / ramp_steps)
 
-    
+
 def free_bits_kl(kl_per_dim: torch.Tensor, *, free_bits: float) -> torch.Tensor:
     """Floor each latent dimension's KL at `free_bits` nats before it is weighted.
     This is a common trick to prevent posterior collapse, where the KL is driven to 0 and the latent

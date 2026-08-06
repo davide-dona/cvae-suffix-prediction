@@ -8,6 +8,7 @@ from src.evaluation.metrics import EvaluationMetrics
 @dataclass(frozen=True)
 class EvaluationReport:
     """Everything one evaluation produced, under the name of the run it scored."""
+
     run_name: str
     metrics: EvaluationMetrics
 

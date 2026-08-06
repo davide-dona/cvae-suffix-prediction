@@ -45,7 +45,8 @@ def run(config: ExperimentConfig, generations_file: Path) -> None:
         f'Scored {metrics.pairs} prefixes over {metrics.cases} cases'
         + (
             f', {metrics.truncated_pairs_excluded} truncated prefixes left out'
-            if metrics.truncated_pairs_excluded else ''
+            if metrics.truncated_pairs_excluded
+            else ''
         )
         + f'. Wrote evaluation report to {path}'
     )
@@ -55,10 +56,20 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Score a run's generated test-split suffixes against the ground truth."
     )
-    parser.add_argument('-c', '--config', type=Path, required=True,
-                        help="Path to the experiment config the generations were written under.")
-    parser.add_argument('-g', '--generations', type=Path, required=True,
-                        help='Path to the generations file to score, from `pipelines.generate`.')
+    parser.add_argument(
+        '-c',
+        '--config',
+        type=Path,
+        required=True,
+        help='Path to the experiment config the generations were written under.',
+    )
+    parser.add_argument(
+        '-g',
+        '--generations',
+        type=Path,
+        required=True,
+        help='Path to the generations file to score, from `pipelines.generate`.',
+    )
     args = parser.parse_args()
 
     run(load_config(args.config), args.generations)

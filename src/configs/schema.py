@@ -1,11 +1,14 @@
 from __future__ import annotations
+
 from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class StrictModel(BaseModel):
     """Strict base model for all config sections: immutable and typo-proof."""
-    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    model_config = ConfigDict(frozen=True, extra='forbid')
 
 
 class DataConfig(StrictModel):
@@ -13,49 +16,55 @@ class DataConfig(StrictModel):
     proportions live here rather than as global constants."""
 
     name: str = Field(
-        ..., description="The dataset this config describes, and the name every path under "
-        "`data/` and `outputs/` is derived from. Absent from the YAML: `load_config` fills it in "
+        ...,
+        description='The dataset this config describes, and the name every path under '
+        '`data/` and `outputs/` is derived from. Absent from the YAML: `load_config` fills it in '
         "from the config's filename, so it cannot disagree with the file it is written in",
     )
 
-    case_key: str = Field(..., description="Raw column identifying the case each event belongs to")
-    activity_key: str = Field(..., description="Raw column identifying the activity label")
-    resource_key: str = Field(..., description="Raw column identifying the resource")
-    timestamp_key: str = Field(..., description="Raw column holding the event timestamp")
-    label_key: str = Field(..., description="Raw column holding the case label")
+    case_key: str = Field(..., description='Raw column identifying the case each event belongs to')
+    activity_key: str = Field(..., description='Raw column identifying the activity label')
+    resource_key: str = Field(..., description='Raw column identifying the resource')
+    timestamp_key: str = Field(..., description='Raw column holding the event timestamp')
+    label_key: str = Field(..., description='Raw column holding the case label')
 
     train_split: float = Field(..., gt=0.0, lt=1.0)
     val_split: float = Field(..., gt=0.0, lt=1.0)
     test_split: float = Field(..., gt=0.0, lt=1.0)
 
     max_seq_len: int = Field(
-        ..., gt=0,
-        description="Cases are truncated to this many events, which also bounds every prefix and suffix cut "
-        "from them; the model's sequence tensors are padded to it",
+        ...,
+        gt=0,
+        description='Cases are truncated to this many events, which also bounds every prefix '
+        "and suffix cut from them; the model's sequence tensors are padded to it",
     )
-    
+
     event_features: list[str] = Field(
-        ..., description="Canonical (post-preprocessing) columns the encoders read beside the "
-        "activity, resource and time delta. A numeric one becomes a value and a present flag, "
+        ...,
+        description='Canonical (post-preprocessing) columns the encoders read beside the '
+        'activity, resource and time delta. A numeric one becomes a value and a present flag, '
         "anything else a vocabulary. Read at preprocessing time and fit into the dataset's "
-        "description, so changing this list means preprocessing the dataset again"
+        'description, so changing this list means preprocessing the dataset again',
     )
 
     time_clip_percentile: float = Field(
-        ..., gt=0.0, le=100.0,
-        description="Values above this train-split percentile are clipped before normalization. "
-        "Applied to every numeric channel against its own percentile: the per-event gaps the "
-        "encoders read, the remaining time the model predicts, and each numeric event-feature column",
+        ...,
+        gt=0.0,
+        le=100.0,
+        description='Values above this train-split percentile are clipped before normalization. '
+        'Applied to every numeric channel against its own percentile: the per-event gaps the '
+        'encoders read, the remaining time the model predicts, and each numeric event-feature '
+        'column',
     )
 
     batch_size: int = Field(..., gt=0)
     num_workers: int = Field(..., ge=0)
 
-    @model_validator(mode="after")
-    def _splits_sum_to_one(self) -> "DataConfig":
+    @model_validator(mode='after')
+    def _splits_sum_to_one(self) -> DataConfig:
         total = self.train_split + self.val_split + self.test_split
         if abs(total - 1.0) > 1e-6:
-            raise ValueError(f"train/val/test splits must sum to 1.0, got {total}")
+            raise ValueError(f'train/val/test splits must sum to 1.0, got {total}')
         return self
 
 
@@ -67,19 +76,25 @@ class DeclareConfig(StrictModel):
     """
 
     consider_vacuity: bool = Field(
-        ..., description="Whether a trace that satisfies a constraint only because it never "
-        "activates it counts as satisfying it",
+        ...,
+        description='Whether a trace that satisfies a constraint only because it never '
+        'activates it counts as satisfying it',
     )
     min_support: float = Field(
-        ..., gt=0.0, le=1.0, description="Fraction of train traces a constraint must hold on to be kept"
+        ...,
+        gt=0.0,
+        le=1.0,
+        description='Fraction of train traces a constraint must hold on to be kept',
     )
     itemsets_support: float = Field(
-        ..., gt=0.0, le=1.0,
-        description="Support floor for the frequent activity itemsets the candidate constraints "
-        "are built from. The cost knob: every itemset is checked against every trace",
+        ...,
+        gt=0.0,
+        le=1.0,
+        description='Support floor for the frequent activity itemsets the candidate constraints '
+        'are built from. The cost knob: every itemset is checked against every trace',
     )
     max_cardinality: int = Field(
-        ..., gt=0, description="Highest n tried for the templates that take one (`Existence3[A]`)"
+        ..., gt=0, description='Highest n tried for the templates that take one (`Existence3[A]`)'
     )
 
 
@@ -89,10 +104,11 @@ class EmbeddingConfig(StrictModel):
     activity_dim: int = Field(..., gt=0)
     resource_dim: int = Field(..., gt=0)
     feature_dim: int = Field(
-        ..., gt=0,
+        ...,
+        gt=0,
         description="Width of every categorical feature channel's lookup. One width for all "
         "of them, since they share a table; each channel widens the projection's input by this "
-        "much, so a log with many of them wants a smaller value, not a bigger one",
+        'much, so a log with many of them wants a smaller value, not a bigger one',
     )
 
 
@@ -108,8 +124,12 @@ class TraceEncoderConfig(StrictModel):
     """
 
     num_layers: int = Field(..., gt=0)
-    num_heads: int = Field(..., gt=0, description="Attention heads per layer; must divide `d_model`")
-    feedforward_dim: int = Field(..., gt=0, description="Width of the feed-forward block inside a layer")
+    num_heads: int = Field(
+        ..., gt=0, description='Attention heads per layer; must divide `d_model`'
+    )
+    feedforward_dim: int = Field(
+        ..., gt=0, description='Width of the feed-forward block inside a layer'
+    )
     dropout: float = Field(..., ge=0.0, lt=1.0)
 
 
@@ -122,7 +142,9 @@ class PriorConfig(StrictModel):
     only has to carry what the prefix does not already imply.
     """
 
-    hidden_dims: list[int] = Field(..., description="Widths of the hidden layers; empty for a linear prior")
+    hidden_dims: list[int] = Field(
+        ..., description='Widths of the hidden layers; empty for a linear prior'
+    )
     dropout: float = Field(..., ge=0.0, lt=1.0)
 
 
@@ -139,16 +161,24 @@ class DecoderConfig(StrictModel):
     """
 
     num_layers: int = Field(..., gt=0)
-    num_heads: int = Field(..., gt=0, description="Attention heads per layer; must divide `d_model`")
-    feedforward_dim: int = Field(..., gt=0, description="Width of the feed-forward block inside a layer")
+    num_heads: int = Field(
+        ..., gt=0, description='Attention heads per layer; must divide `d_model`'
+    )
+    feedforward_dim: int = Field(
+        ..., gt=0, description='Width of the feed-forward block inside a layer'
+    )
     dropout: float = Field(..., ge=0.0, lt=1.0)
     activity_dropout: float = Field(
-        ..., ge=0.0, lt=1.0,
-        description="Fraction of teacher-forced input activities blanked to PAD during "
-        "training. An unreliable previous token cannot carry the suffix on its own, which "
-        "pushes that information into z. 0.0 disables it",
+        ...,
+        ge=0.0,
+        lt=1.0,
+        description='Fraction of teacher-forced input activities blanked to PAD during '
+        'training. An unreliable previous token cannot carry the suffix on its own, which '
+        'pushes that information into z. 0.0 disables it',
     )
-    head_hidden_dim: int = Field(..., gt=0, description="Width of the layer shared by the two output heads")
+    head_hidden_dim: int = Field(
+        ..., gt=0, description='Width of the layer shared by the two output heads'
+    )
 
 
 class ModelConfig(StrictModel):
@@ -160,10 +190,11 @@ class ModelConfig(StrictModel):
     """
 
     d_model: int = Field(
-        ..., gt=0,
-        description="The one width the embeddings, both encoders and the decoder all run at. "
-        "Cross-attention makes the prefix encoder and the decoder agree on it, and the shared "
-        "event embeddings make the suffix encoder agree with them",
+        ...,
+        gt=0,
+        description='The one width the embeddings, both encoders and the decoder all run at. '
+        'Cross-attention makes the prefix encoder and the decoder agree on it, and the shared '
+        'event embeddings make the suffix encoder agree with them',
     )
 
     embeddings: EmbeddingConfig
@@ -173,15 +204,16 @@ class ModelConfig(StrictModel):
     latent: LatentConfig
     decoder: DecoderConfig
 
-    @model_validator(mode="after")
-    def _heads_divide_width(self) -> "ModelConfig":
+    @model_validator(mode='after')
+    def _heads_divide_width(self) -> ModelConfig:
         # nn.MultiheadAttention asserts this when the layer is built, halfway through a run's
         # setup. Checking it here turns a config mistake back into a config error.
-        for name in ("prefix_encoder", "suffix_encoder", "decoder"):
+        for name in ('prefix_encoder', 'suffix_encoder', 'decoder'):
             num_heads = getattr(self, name).num_heads
             if self.d_model % num_heads != 0:
                 raise ValueError(
-                    f"model.{name}.num_heads ({num_heads}) must divide model.d_model ({self.d_model})"
+                    f'model.{name}.num_heads ({num_heads}) must divide '
+                    f'model.d_model ({self.d_model})'
                 )
         return self
 
@@ -199,17 +231,24 @@ class LossConfig(StrictModel):
     schedule are separate decisions, and a run that stops early has still seen whole cycles.
     """
 
-    kl_annealing_period_steps: int = Field(..., gt=0, description="Optimizer steps in one cycle")
-    kl_annealing_ratio: float = Field(..., gt=0.0, lt=1.0, description="Fraction of each cycle spent ramping up")
-    kl_annealing_start_weight: float = Field(..., ge=0.0, description="Weight each cycle ramps up from")
-    kl_annealing_full_weight: float = Field(..., ge=0.0, description="Weight each cycle ramps up to, and holds at")
+    kl_annealing_period_steps: int = Field(..., gt=0, description='Optimizer steps in one cycle')
+    kl_annealing_ratio: float = Field(
+        ..., gt=0.0, lt=1.0, description='Fraction of each cycle spent ramping up'
+    )
+    kl_annealing_start_weight: float = Field(
+        ..., ge=0.0, description='Weight each cycle ramps up from'
+    )
+    kl_annealing_full_weight: float = Field(
+        ..., ge=0.0, description='Weight each cycle ramps up to, and holds at'
+    )
 
     free_bits: float = Field(
-        ..., ge=0.0,
-        description="Nats per latent dimension the KL is not penalized below. Unlike the "
-        "annealing weight, which trades the KL off against a reconstruction sum that grows "
-        "with suffix length, this is a floor on the information z carries and so means the "
-        "same thing on every dataset. 0.0 leaves the KL unfloored",
+        ...,
+        ge=0.0,
+        description='Nats per latent dimension the KL is not penalized below. Unlike the '
+        'annealing weight, which trades the KL off against a reconstruction sum that grows '
+        'with suffix length, this is a floor on the information z carries and so means the '
+        'same thing on every dataset. 0.0 leaves the KL unfloored',
     )
 
 
@@ -227,30 +266,34 @@ class TrainingConfig(StrictModel):
     """
 
     max_steps: int = Field(
-        ..., gt=0,
-        description="Ceiling on the optimizer steps a run takes. Early stopping is what "
-        "normally ends a run; this is what bounds one that never plateaus",
+        ...,
+        gt=0,
+        description='Ceiling on the optimizer steps a run takes. Early stopping is what '
+        'normally ends a run; this is what bounds one that never plateaus',
     )
     grad_clip_norm: float | None = Field(
-        None, gt=0.0, description="Max gradient norm; null or absent leaves gradients unclipped"
+        None, gt=0.0, description='Max gradient norm; null or absent leaves gradients unclipped'
     )
-    device: Literal["cpu", "cuda", "mps"]
+    device: Literal['cpu', 'cuda', 'mps']
     val_every_n_steps: int = Field(
-        ..., gt=0,
-        description="Steps between validations. Also the unit `early_stopping.patience` "
-        "counts in, which is what makes that patience portable across datasets",
+        ...,
+        gt=0,
+        description='Steps between validations. Also the unit `early_stopping.patience` '
+        'counts in, which is what makes that patience portable across datasets',
     )
     validation_pairs: int = Field(
-        ..., gt=0,
-        description="Pairs the two teacher-forced passes read, as a fixed slice of the "
-        "validation split, or the whole of it where it is smaller. Validation is on the "
-        "critical path and the whole split is more than the mean needs",
+        ...,
+        gt=0,
+        description='Pairs the two teacher-forced passes read, as a fixed slice of the '
+        'validation split, or the whole of it where it is smaller. Validation is on the '
+        'critical path and the whole split is more than the mean needs',
     )
     generation_pairs: int = Field(
-        ..., gt=0,
-        description="Prefixes the free-running pass generates for, as a fixed slice of the "
-        "same split. Smaller again, a suffix costing one decoder pass per event rather than "
-        "one per suffix; this is the sample the selection score is computed on",
+        ...,
+        gt=0,
+        description='Prefixes the free-running pass generates for, as a fixed slice of the '
+        'same split. Smaller again, a suffix costing one decoder pass per event rather than '
+        'one per suffix; this is the sample the selection score is computed on',
     )
 
 
@@ -262,16 +305,18 @@ class InferenceConfig(StrictModel):
     """
 
     num_samples: int = Field(
-        ..., ge=10,
+        ...,
+        ge=10,
         description="Suffixes generated per prefix, all from that prefix's p(z | prefix); the "
-        "spread across them is what the latent is claiming the prefix leaves open. Ten is the "
-        "floor because `hit_rate_at_10` reads the tenth draw",
+        'spread across them is what the latent is claiming the prefix leaves open. Ten is the '
+        'floor because `hit_rate_at_10` reads the tenth draw',
     )
     generation_rows: int = Field(
-        ..., gt=0,
-        description="Rows `generate` puts through the decoder in one call. A prefix reaches it "
-        "`num_samples` times over, each row holding a key and value cache per position and "
-        "layer, so this and not `data.batch_size` is what bounds the memory a call takes",
+        ...,
+        gt=0,
+        description='Rows `generate` puts through the decoder in one call. A prefix reaches it '
+        '`num_samples` times over, each row holding a key and value cache per position and '
+        'layer, so this and not `data.batch_size` is what bounds the memory a call takes',
     )
 
 
@@ -284,12 +329,15 @@ class EarlyStoppingConfig(StrictModel):
     """
 
     patience: int = Field(
-        ..., gt=0,
-        description="Non-improving validations tolerated before stopping. Counted in "
-        "validations, so it must outlast a whole `loss.kl_annealing_ratio` ramp, during which "
-        "generation gets worse by design",
+        ...,
+        gt=0,
+        description='Non-improving validations tolerated before stopping. Counted in '
+        'validations, so it must outlast a whole `loss.kl_annealing_ratio` ramp, during which '
+        'generation gets worse by design',
     )
-    min_delta_perc: float = Field(..., ge=0.0, description="Minimum relative improvement to reset the patience counter")
+    min_delta_perc: float = Field(
+        ..., ge=0.0, description='Minimum relative improvement to reset the patience counter'
+    )
 
 
 class ExperimentConfig(StrictModel):
