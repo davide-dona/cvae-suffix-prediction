@@ -1,6 +1,4 @@
 data:
-  dir: data/bpic-2017
-
   case_key: "case:concept:name"
   activity_key: "concept:name"
   resource_key: "org:resource"

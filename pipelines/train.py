@@ -46,7 +46,7 @@ def run(config: ExperimentConfig, checkpoint: dict | None = None) -> None:
             new run. The run keeps the name the checkpoint carries, so it writes to the
             TensorBoard directory and the files the interrupted run was writing to.
     """
-    require_dataset(config.data)
+    require_dataset(config.data.name)
 
     # Seeded before anything is built, so weight initialization and shuffling are both reproducible.
     torch.manual_seed(config.seed)
@@ -91,7 +91,7 @@ def run(config: ExperimentConfig, checkpoint: dict | None = None) -> None:
     
     # When resuming, keep the run name the checkpoint carries, so it writes to the same TensorBoard directory and the same files.
     run_name = (
-        f'{config.data.dir.name}/{config.experiment_name}-{datetime.now():%Y%m%d-%H%M%S}'
+        f'{config.data.name}/{config.experiment_name}-{datetime.now():%Y%m%d-%H%M%S}'
         if checkpoint is None
         else checkpoint['run_name']
     )

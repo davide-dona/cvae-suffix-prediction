@@ -7,6 +7,7 @@ import pandas as pd
 from pandas.api.types import is_numeric_dtype
 from pydantic import Field
 
+from src import paths
 from src.configs.schema import DataConfig, StrictModel
 from src.logs.keys import (
     ACTIVITY_KEY,
@@ -227,9 +228,9 @@ class DatasetDescription(StrictModel):
     categorical_features: tuple[CategoricalColumn, ...]
     numeric_features: tuple[NumericColumn, ...]
 
-    # Where the preprocessed splits are, and the maximum trace length they were preprocessed to.
+    # Which dataset the splits belong to, and the maximum trace length they were preprocessed to.
     # Both come from the config rather than from the fit, so neither is written to `dataset.json`.
-    dir: Path = Field(..., exclude=True)
+    dataset: str = Field(..., exclude=True)
     max_trace_length: int = Field(..., exclude=True)
 
     @property
@@ -264,7 +265,7 @@ class DatasetDescription(StrictModel):
             ),
             categorical_features=categorical_features,
             numeric_features=numeric_features,
-            dir=data_config.dir,
+            dataset=data_config.name,
             max_trace_length=data_config.max_seq_len,
         )
 
@@ -272,52 +273,43 @@ class DatasetDescription(StrictModel):
     def load(cls, data_config: DataConfig) -> "DatasetDescription":
         """Load the description previously generated for a dataset.
 
-        The one place a config becomes a description: what comes back names the dataset's
-        directory and sequence length as well as its encoding, so everything read from disk
-        afterwards is asked of the description alone.
+        The one place a config becomes a description: what comes back names the dataset and its
+        sequence length as well as its encoding, so everything read from disk afterwards is asked
+        of the description alone.
 
         Args:
-            data_config: The `data` section, naming the dataset directory and the sequence length.
+            data_config: The `data` section, naming the dataset and the sequence length.
         Returns:
-            The dataset description, with `dir` and `max_trace_length` taken from the config.
+            The dataset description, with `dataset` and `max_trace_length` taken from the config.
         Raises:
             FileNotFoundError: If the dataset has not been preprocessed.
         """
-        path = metadata_path(data_config.dir)
+        path = paths.description_path(data_config.name)
         if not path.exists():
             raise FileNotFoundError(
                 f'no dataset description at {path}. Run `python -m pipelines.preprocess` first.'
             )
         return cls.model_validate(
             json.loads(path.read_text())
-            | {'dir': data_config.dir, 'max_trace_length': data_config.max_seq_len}
+            | {'dataset': data_config.name, 'max_trace_length': data_config.max_seq_len}
         )
 
     def save(self) -> Path:
         """Write this description beside the splits, and return where it went."""
-        path = metadata_path(self.dir)
+        path = paths.description_path(self.dataset)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(self.model_dump_json(indent=2))
         return path
 
     def split_path(self, split: str) -> Path:
-        """Where one preprocessed split is kept.
+        """Where one preprocessed split of this dataset is kept.
 
         Args:
             split: Which of `train`, `val`, `test` to name.
         Returns:
             The path to that split's file.
         """
-        return self.dir / 'processed' / f'{split}.csv'
-
-
-def metadata_path(dataset_dir: Path) -> Path:
-    """Where a dataset's fitted description is kept, next to the splits it was fit on.
-
-    Takes the directory rather than the config, so it also answers for a description that has
-    already been loaded.
-    """
-    return dataset_dir / 'processed' / 'dataset.json'
+        return paths.split_path(dataset=self.dataset, split=split)
 
 
 def _fit_event_features(

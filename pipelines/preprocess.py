@@ -3,9 +3,10 @@ from pathlib import Path
 import pandas as pd
 from pandas.api.types import is_numeric_dtype
 
+from src import paths
 from src.configs import DataConfig, DeclareConfig, load_config
-from src.datasets.description import DatasetDescription, metadata_path
-from src.logs.declare import declare_model_path, discover_declare_model
+from src.datasets.description import DatasetDescription
+from src.logs.declare import discover_declare_model
 from src.logs.io import read_log, write_log
 from src.logs.keys import (
     CASE_OFFSET_KEY,
@@ -63,23 +64,22 @@ def preprocess(log: pd.DataFrame, *, feature_columns: list[str]) -> pd.DataFrame
     return log
 
 
-def require_dataset(data_config: DataConfig) -> None:
+def require_dataset(dataset: str) -> None:
     """Check that everything preprocessing produces is on disk, and say what is missing if it is not.
 
     Args:
-        data_config: The `data` section of this dataset's experiment config.
+        dataset: The dataset to check.
     Raises:
         FileNotFoundError: If any preprocessing output is missing, naming every one of them.
     """
-    processed_dir = data_config.dir / 'processed'
-    outputs = [processed_dir / f'{split}.csv' for split in ('train', 'val', 'test')]
-    outputs.append(metadata_path(data_config.dir))
-    outputs.append(declare_model_path(data_config))
+    outputs = [paths.split_path(dataset=dataset, split=split) for split in ('train', 'val', 'test')]
+    outputs.append(paths.description_path(dataset))
+    outputs.append(paths.declare_model_path(dataset))
 
     missing = [output for output in outputs if not output.exists()]
     if missing:
         raise FileNotFoundError(
-            f'"{data_config.dir}" has not been preprocessed: '
+            f'"{dataset}" has not been preprocessed: '
             f'{", ".join(str(output) for output in missing)} '
             f'{"are" if len(missing) > 1 else "is"} missing. Run '
             f'"uv run python -m pipelines.preprocess -c <config>" first.'
@@ -90,13 +90,13 @@ def run(data_config: DataConfig, declare_config: DeclareConfig) -> None:
     """
     Preprocess and split a dataset, writing outputs next to the input.
 
-    Reads `<dir>/original.csv`, renames its structural columns to the
+    Reads `data/<dataset>/original.csv`, renames its structural columns to the
     canonical names used throughout the codebase, extract additional features,
-    and splits the log into train/val/test. 
+    and splits the log into train/val/test.
 
     The vocabularies and normalization ranges the model is built against are fit here too,
     on the train split alone, and written beside it as `dataset.json`. The declarative model is
-    discovered from the same split and written to `<dir>/declare/model.decl`.
+    discovered from the same split and written to `data/<dataset>/declare/model.decl`.
 
     Args:
         data_config: The `data` section of this dataset's experiment config.
@@ -110,15 +110,14 @@ def run(data_config: DataConfig, declare_config: DeclareConfig) -> None:
         data_config.label_key: LABEL_KEY,
     }
 
-    # Read, preprocess and write the full elaborated log
-    print(f'Preprocessing "{data_config.dir}"...')
-    log = read_log(data_config.dir / 'original.csv', column_mapping=column_mapping)
+    # Read and preprocess the raw log
+    dataset = data_config.name
+    print(f'Preprocessing "{dataset}"...')
+    log = read_log(paths.original_log(dataset), column_mapping=column_mapping)
     log = preprocess(log, feature_columns=data_config.event_features)
-    processed_dir = data_config.dir / 'processed'
-    write_log(log, processed_dir / 'full.csv')
 
     # Split the log into train/val/test and write them out
-    print(f'Splitting "{data_config.dir}" into train/val/test...')
+    print(f'Splitting "{dataset}" into train/val/test...')
     train, val, test = temporal_split(
         log,
         case_key=CASE_KEY,
@@ -126,9 +125,8 @@ def run(data_config: DataConfig, declare_config: DeclareConfig) -> None:
         train_frac=data_config.train_split,
         val_frac=data_config.val_split,
     )
-    write_log(train, processed_dir / 'train.csv')
-    write_log(val, processed_dir / 'val.csv')
-    write_log(test, processed_dir / 'test.csv')
+    for split, rows in (('train', train), ('val', val), ('test', test)):
+        write_log(rows, paths.split_path(dataset=dataset, split=split))
 
     # Fit the vocabularies and normalization ranges on the train split, writng them out to `dataset.json`
     # The generated values can be decoded back using the same description.
@@ -138,12 +136,12 @@ def run(data_config: DataConfig, declare_config: DeclareConfig) -> None:
     # Discover the declarative model from the train split and write it out to `model.decl`.
     num_constraints = discover_declare_model(
         train,
-        data_config=data_config,
+        dataset=dataset,
         declare_config=declare_config,
     )
 
     print(
-        f'Preprocessed "{data_config.dir}": {len(train)} train, {len(val)} val, {len(test)} test '
+        f'Preprocessed "{dataset}": {len(train)} train, {len(val)} val, {len(test)} test '
         f'events, {len(description.activity.vocab)} activities, '
         f'{len(description.resource.vocab)} resources, '
         f'{len(description.categorical_features)} categorical and '
