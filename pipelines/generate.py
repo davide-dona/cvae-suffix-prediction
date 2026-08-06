@@ -5,13 +5,13 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from pipelines.preprocess import require_dataset
+from src import paths
 from src.configs import ExperimentConfig, load_config
 from src.datasets.dataset import TraceDataset
 from src.datasets.description import DatasetDescription
 from src.inference import (
     generate_batch,
     generation_batch_size,
-    generations_path,
     open_generations,
     table_from_generations,
 )
@@ -27,17 +27,19 @@ def run(config: ExperimentConfig, model_path: Path) -> None:
             matches every run ever started from it, and picking one of them is a decision the
             caller makes, not one to be inferred from a filename.
     """
-    require_dataset(config.data)
+    require_dataset(config.data.name)
     torch.manual_seed(config.seed)
 
+    description = DatasetDescription.load(config.data)
+
     # Load the model from the checkpoint and put it on the right device
+    checkpoint = load_checkpoint(model_path)
     model = TransformerCVAE.from_checkpoint(
-        load_checkpoint(model_path), description, device=config.training.device
+        checkpoint, description, device=config.training.device
     )
     model.eval()
 
     # Build the DataLoader for the test split
-    description = DatasetDescription.load(config.data)
     test_dataset = TraceDataset(description=description, split='test')
     test_loader = DataLoader(
         dataset=test_dataset,
@@ -46,8 +48,9 @@ def run(config: ExperimentConfig, model_path: Path) -> None:
         num_workers=config.data.num_workers,                
     )
 
-    # The output file is named after the checkpoint's run.
-    path = generations_path(config.inference.generations_dir, f'{config.data.dir.name}/{model_path.stem}')
+    # The output file is named after the run the checkpoint carries, not after the file it was
+    # read from, so the generations land under the run that produced them whatever it is called.
+    path = paths.generations_path(checkpoint['run_name'])
     device = torch.device(config.training.device)
 
     print(
@@ -79,7 +82,7 @@ def main() -> None:
                         help="Path to this experiment's config YAML.")
     parser.add_argument('-m', '--model', type=Path, required=True,
                         help='Path to the checkpoint to generate with, from '
-                             "`training.best_model_dir` or `training.checkpoint_dir`.")
+                             '`outputs/best-models/` or `outputs/checkpoints/`.')
     args = parser.parse_args()
 
     run(load_config(args.config), args.model)

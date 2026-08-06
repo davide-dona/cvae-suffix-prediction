@@ -9,8 +9,9 @@ from src.configs.schema import (
     OptimizerConfig,
     TrainingConfig,
 )
+from src import paths
 from src.datasets.description import DatasetDescription
-from src.model import TransformerCVAE, checkpoint_path, save_checkpoint
+from src.model import TransformerCVAE, save_checkpoint
 from src.training.early_stopping import EarlyStopper
 from src.training.kl import cyclical_linear_weight
 from src.training.loss import Loss, compute_loss
@@ -80,9 +81,9 @@ def train(
     """
     Train a model on a dataset, logging to TensorBoard and saving checkpoints.
 
-    Every validation writes a checkpoint to `training.checkpoint_dir`, whether or not the step
-    is the best one, and a validation that improves on the best writes a second copy to
-    `training.best_model_dir`. Either file can be handed back as `resume`.
+    Every validation writes a checkpoint to `paths.checkpoint_path`, whether or not the step is
+    the best one, and a validation that improves on the best writes a second copy to
+    `paths.best_model_path`. Either file can be handed back as `resume`.
 
     Args:
         model: The model to train, already on `training.device`.
@@ -95,8 +96,8 @@ def train(
             same number of draws.
         description: The description the splits were encoded through, passed on to the
             generation pass so its remaining times are scored in minutes.
-        run_name: Subdirectory of `training.log_dir` this run writes its events to. One
-            directory is one TensorBoard run, so a name reused across runs overlays their
+        run_name: The name every file this run writes is derived from (see `src/paths.py`). One
+            TensorBoard directory is one run, so a name reused across runs overlays their
             curves instead of listing them side by side; what makes it unique is the
             caller's business. A `/` in it nests the run, which is how TensorBoard groups
             runs under a common prefix.
@@ -109,8 +110,7 @@ def train(
             streams are all restored.
         loss_config: The KL annealing schedule.
         optimizer_config: The optimizer hyperparameters.
-        training: Step budget, validation cadence, gradient clipping, device, and where
-            checkpoints and TensorBoard events go.
+        training: Step budget, validation cadence, gradient clipping and device.
         early_stopping_config: When to give up.
     """
     device = torch.device(training.device)
@@ -139,7 +139,7 @@ def train(
 
     # Overwrite the TensorBoard logs after the step we resumed from, so that a resumed run's curves are continuous with the original.
     writer = SummaryWriter(
-        log_dir=training.log_dir / run_name, purge_step=step if resume is not None else None
+        log_dir=paths.tensorboard_dir(run_name), purge_step=step if resume is not None else None
     )
     print(f'Logging to {writer.log_dir}')
     
@@ -224,14 +224,11 @@ def train(
                         early_stopping_state=early_stopper.state_dict(),
                         rng_state=rng_state(generator, device),
                     )
-                    save_checkpoint(
-                        model, **checkpoint, path=checkpoint_path(training.checkpoint_dir, run_name)
-                    )
+                    save_checkpoint(model, **checkpoint, path=paths.checkpoint_path(run_name))
                     # If this validation improved on the best, save a second copy to the best-model directory.
                     if is_best:
                         path = save_checkpoint(
-                            model, **checkpoint,
-                            path=checkpoint_path(training.best_model_dir, run_name),
+                            model, **checkpoint, path=paths.best_model_path(run_name)
                         )
                         print(f'New best model (step {step}, score {selection_score:.4f}) saved at {path}')
 

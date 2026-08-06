@@ -32,19 +32,10 @@ _SCHEMA = pa.schema([
 ])
 
 
-def generations_path(generations_dir: str | Path, run_name: str) -> Path:
-    """Where the generations of one run are kept: `<generations_dir>/<run_name>.parquet`.
-
-    One file per run, named after it exactly as `checkpoint_path` names a run's checkpoint,
-    so a run's generations are found without being told anything but its name.
-    """
-    return Path(generations_dir) / f'{run_name}.parquet'
-
-
 def open_generations(path: Path) -> pq.ParquetWriter:
     """Open a Parquet file for writing generations, creating its parent directories if needed.
     Args:
-        path: The file to write, from `generations_path`. Overwritten if it already exists.
+        path: The file to write, from `paths.generations_path`. Overwritten if it already exists.
     Returns:
         A writer bound to the generations schema, to be used as a context manager: closing it is
         what writes the file's footer.
@@ -91,7 +82,7 @@ def read_generations(path: Path) -> Iterator[Generation]:
     at any group boundary without buffering.
 
     Args:
-        path: The generations file to read, from `generations_path`.
+        path: The generations file to read, from `paths.generations_path`.
     Yields:
         The generation for each prefix, in the order they were written.
     """

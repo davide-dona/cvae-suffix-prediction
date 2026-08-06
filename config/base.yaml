@@ -1,9 +1,8 @@
 seed: 42
 experiment_name: cvae_suffix_transformer
-output_dir: outputs
 
 # Declarative model discovered from the train split during preprocessing,
-# written to <data.dir>/declare/model.decl.
+# written to data/<dataset>/declare/model.decl.
 declare:
   consider_vacuity: false # unactivated constraints are considered as violated
   min_support: 0.8        # fraction of train traces that satisfy a constraint for it to be included in the model
@@ -72,9 +71,6 @@ training:
   max_steps: 30000 
   grad_clip_norm: 5.0  # null to leave gradients unclipped
   device: mps  # Apple-silicon GPU; ['cpu', 'cuda', 'mps']
-  best_model_dir: outputs/best-models  # one file per run, overwritten on improvement
-  checkpoint_dir: outputs/checkpoints  # last validated step, what --resume reads
-  log_dir: outputs/tensorboard
   val_every_n_steps: 400
   # Fixed slice of the evaluation set used for validation;
   # Using the full evaluation set for validation would be too slow
@@ -94,4 +90,3 @@ inference:
   # num_samples * min(batch_size, upper_bound) rows at once; this bounds
   # that total regardless of num_samples, which is set independently.
   generation_rows: 2560
-  generations_dir: outputs/generations

@@ -1,6 +1,4 @@
 data:
-  dir: data/helpdesk
-
   case_key: "Case ID"
   activity_key: Activity
   resource_key: Resource

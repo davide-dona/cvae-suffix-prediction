@@ -3,23 +3,6 @@ import torch
 from torch import nn
 
 
-def checkpoint_path(directory: str | Path, run_name: str) -> Path:
-    """
-    Where a run keeps a checkpoint: `<directory>/<run_name>.pt`.
-
-    One file per run, overwritten as the run goes on, so a directory holds every run's
-    checkpoint side by side and nothing has to be picked out of a history. Used with
-    `training.best_model_dir` for the best step and `training.checkpoint_dir` for the last one.
-
-    Args:
-        directory: The directory the file belongs in.
-        run_name: The run the checkpoint is of.
-    Returns:
-        The path to write to or read from.
-    """
-    return Path(directory) / f'{run_name}.pt'
-
-
 def save_checkpoint(
     model: nn.Module,
     *,

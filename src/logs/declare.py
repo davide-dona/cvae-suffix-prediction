@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Sequence
 import pandas as pd
 import pm4py
@@ -8,19 +7,15 @@ from Declare4Py.ProcessModels.DeclareModel import DeclareModel
 from Declare4Py.Utils.Declare.Checkers import ConstraintChecker
 from Declare4Py.Utils.Declare.TraceStates import TraceState
 
-from src.configs import DataConfig, DeclareConfig
+from src import paths
+from src.configs import DeclareConfig
 from src.logs.keys import ACTIVITY_KEY, CASE_KEY, TIMESTAMP_KEY
-
-
-def declare_model_path(data_config: DataConfig) -> Path:
-    """Where a dataset's discovered declarative model is kept."""
-    return data_config.dir / 'declare' / 'model.decl'
 
 
 def discover_declare_model(
     train: pd.DataFrame,
     *,
-    data_config: DataConfig,
+    dataset: str,
     declare_config: DeclareConfig,
 ) -> int:
     """
@@ -29,7 +24,7 @@ def discover_declare_model(
     Args:
         train: The train split, as preprocessing holds it. The only log discovery reads, so the
             constraints never carry anything from the validation or test split.
-        data_config: The `data` section, for where the model goes.
+        dataset: The dataset the split came from, naming where the model goes.
         declare_config: The `declare` section: which constraints are looked for and how much of
             the log has to support one.
 
@@ -60,21 +55,21 @@ def discover_declare_model(
         # added back here.
         lines.append(f'{serialized} |' if constraint['template'].is_binary else serialized)
 
-    path = declare_model_path(data_config)
+    path = paths.declare_model_path(dataset)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('\n'.join(lines) + '\n')
 
     return len(model.constraints)
 
-def load_declare_model(data_config: DataConfig) -> DeclareModel:
+def load_declare_model(dataset: str) -> DeclareModel:
     """Read back the model discovered at preprocessing time.
 
     Args:
-        data_config: The `data` section, for where the model is.
+        dataset: The dataset whose model to read.
     Returns:
         The parsed model, ready for `conformance_rate`.
     """
-    return DeclareModel().parse_from_file(str(declare_model_path(data_config)))
+    return DeclareModel().parse_from_file(str(paths.declare_model_path(dataset)))
 
 
 def conformance_rate(

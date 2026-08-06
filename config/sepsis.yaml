@@ -1,6 +1,4 @@
 data:
-  dir: data/sepsis
-
   case_key: "Case ID"
   activity_key: Activity
   resource_key: Resource

@@ -1,5 +1,4 @@
 from __future__ import annotations
-from pathlib import Path
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -10,10 +9,14 @@ class StrictModel(BaseModel):
 
 
 class DataConfig(StrictModel):
-    """Per-dataset config: one YAML per dataset, so paths and raw column
-    names live here rather than as global constants."""
+    """Per-dataset config: one YAML per dataset, so the raw column names and the split
+    proportions live here rather than as global constants."""
 
-    dir: Path = Field(..., description="Folder holding original.csv and the generated full/train/val/test.csv")
+    name: str = Field(
+        ..., description="The dataset this config describes, and the name every path under "
+        "`data/` and `outputs/` is derived from. Absent from the YAML: `load_config` fills it in "
+        "from the config's filename, so it cannot disagree with the file it is written in",
+    )
 
     case_key: str = Field(..., description="Raw column identifying the case each event belongs to")
     activity_key: str = Field(..., description="Raw column identifying the activity label")
@@ -232,12 +235,6 @@ class TrainingConfig(StrictModel):
         None, gt=0.0, description="Max gradient norm; null or absent leaves gradients unclipped"
     )
     device: Literal["cpu", "cuda", "mps"]
-    best_model_dir: Path = Field(..., description="The best step of a run, one file per run")
-    checkpoint_dir: Path = Field(
-        ..., description="The last validated step of a run, one file per run, overwritten every "
-        "validation; what `--resume` reads",
-    )
-    log_dir: Path = Field(..., description="TensorBoard event directory")
     val_every_n_steps: int = Field(
         ..., gt=0,
         description="Steps between validations. Also the unit `early_stopping.patience` "
@@ -276,7 +273,6 @@ class InferenceConfig(StrictModel):
         "`num_samples` times over, each row holding a key and value cache per position and "
         "layer, so this and not `data.batch_size` is what bounds the memory a call takes",
     )
-    generations_dir: Path = Field(..., description="One generations file per run, named after it")
 
 
 class EarlyStoppingConfig(StrictModel):
@@ -306,7 +302,6 @@ class ExperimentConfig(StrictModel):
 
     seed: int
     experiment_name: str
-    output_dir: Path
 
     data: DataConfig
     declare: DeclareConfig
