@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn.functional as F
 
-from src.datasets.dataset import SuffixItem
+from src.datasets.dataset import SplitTrace
 from src.model import TransformerCVAEOutput
 from src.metrics import ScalarMetrics
 from src.training.kl import free_bits_kl, gaussian_kl
@@ -21,7 +21,7 @@ class Loss(ScalarMetrics):
 
 def compute_loss(
     output: TransformerCVAEOutput,
-    batch: SuffixItem,
+    batch: SplitTrace,
     *,
     pad_activity_index: int,
     kl_weight: float,
@@ -30,7 +30,7 @@ def compute_loss(
     """Score a forward pass's predictions against the batch it was run on.
     Args:
         output: The model's prediction for `batch`, from `model(batch)`.
-        batch: A batch from `SuffixDataset`, already on the right device.
+        batch: A batch from `TraceDataset`, already on the right device.
         pad_activity_index: `model.pad_activity_index`, ignored in the activity cross-entropy.
         kl_weight: The weight the KL term is given at this step (see `training/kl.py`).
         free_bits: Nats per latent dimension the KL is not penalized below (see `free_bits_kl`).

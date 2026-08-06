@@ -1,30 +1,33 @@
 from pathlib import Path
+from typing import Iterator
+
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from src.datasets.codec import DecodedSequence
-from src.datasets.dataset import PairInfo
-from src.inference.generation import Generation
+from src.inference.generation import DecodedEvents, Generation
 
 
-# The schema of the Parquet file that holds a run's generations.
-# One row per generated sample, with the point prediction
+# One run of activity names, the shape every activity column of the schema is built from.
+_ACTIVITIES = pa.list_(pa.field(name='element', type=pa.string()))
+
+# The schema of the Parquet file that holds a run's generations. One row per prefix: the samples
+# nest inside it, so nothing describing the prefix is written once per sample.
 _SCHEMA = pa.schema([
     ('case_id', pa.large_string()),
     ('prefix_len', pa.int64()),
     # Whether the ground-truth suffix was cut short of its real ending.
     ('truncated', pa.bool_()),
-    ('sample_index', pa.int64()),
     # The events before the cut, which a constraint over the whole trace is checked against.
-    ('prefix_activities', pa.list_(pa.field(name='element', type=pa.string()))),
-    ('generated_activities', pa.list_(pa.field(name='element', type=pa.string()))),
-    ('generated_remaining_time_minutes', pa.float64()),
+    ('prefix_activities', _ACTIVITIES),
+    # One entry per draw of z, in the order they were drawn: `hit_rate_at_k` reads the first k.
+    ('generated_activities', pa.list_(pa.field(name='element', type=_ACTIVITIES))),
+    ('generated_remaining_time_minutes', pa.list_(pa.field(name='element', type=pa.float64()))),
     # The suffix written from the mean of `p(z | prefix)`: the model's single answer, drawn once
     # per prefix and the only column comparable against a model that does not sample.
-    ('point_activities', pa.list_(pa.field(name='element', type=pa.string()))),
+    ('point_activities', _ACTIVITIES),
     ('point_remaining_time_minutes', pa.float64()),
-    ('true_activities', pa.list_(pa.field(name='element', type=pa.string()))),
+    ('true_activities', _ACTIVITIES),
     ('true_remaining_time_minutes', pa.float64()),
 ])
 
@@ -50,74 +53,88 @@ def open_generations(path: Path) -> pq.ParquetWriter:
     return pq.ParquetWriter(where=path, schema=_SCHEMA)
 
 
-def table_from_generations(
-    generations: list[Generation], infos: list[PairInfo]
-) -> pa.Table:
-    """Flatten one batch's generations into a table, one row per (prefix, sample).
+def table_from_generations(generations: list[Generation]) -> pa.Table:
+    """Lay one batch's generations out as a table, one row per prefix.
 
     Args:
         generations: The model's answers, in the order `generate_batch` returned them.
-        infos: Which pair each of those generations answers, in the same order.
     Returns:
-        The rows as one table, ready to be written as a row group. The prefix, the point
-        prediction and the truth describe the prefix rather than the sample, so they repeat
-        unchanged across its rows.
-    Raises:
-        ValueError: If `generations` and `infos` are of different lengths, which would put every
-            generated suffix beside the wrong case.
+        The rows as one table, ready to be written as a row group.
     """
     # Dicts here because they are what arrow's constructor takes, keyed by the schema's own names.
     rows = [
         {
-            'case_id': info.case_id,
-            'prefix_len': info.prefix_len,
-            'truncated': info.truncated,
-            'sample_index': sample_index,
+            'case_id': generation.case_id,
+            'prefix_len': generation.prefix_len,
+            'truncated': generation.truncated,
             'prefix_activities': generation.prefix_activities,
-            'generated_activities': sample.activities,
-            'generated_remaining_time_minutes': sample.remaining_time_minutes,
+            'generated_activities': [sample.activities for sample in generation.samples],
+            'generated_remaining_time_minutes': [
+                sample.remaining_time_minutes for sample in generation.samples
+            ],
             'point_activities': generation.point.activities,
             'point_remaining_time_minutes': generation.point.remaining_time_minutes,
             'true_activities': generation.truth.activities,
             'true_remaining_time_minutes': generation.truth.remaining_time_minutes,
         }
-        for generation, info in zip(generations, infos, strict=True)
-        for sample_index, sample in enumerate(generation.samples)
+        for generation in generations
     ]
     return pa.Table.from_pylist(mapping=rows, schema=_SCHEMA)
 
 
-def generation_from_rows(rows: pd.DataFrame) -> Generation:
-    """Read one prefix's generation back out of the rows a generations file holds it as.
+def read_generations(path: Path) -> Iterator[Generation]:
+    """Read a generations file back one prefix at a time.
 
-    The inverse of `table_from_generations` over one prefix, which is what lets a written file be
-    scored through the same `score_generation` a training run reports from.
+    The inverse of `table_from_generations` over a whole file. One row group is decoded at a time,
+    so what it costs to read is set by the batch a run wrote rather than by the size of the split.
+    A prefix cannot straddle a row group, since a row holds one, which is what lets a reader stop
+    at any group boundary without buffering.
 
     Args:
-        rows: The rows of a single (case, cut point), one per generated sample. The prefix, the
-            point prediction and the ground truth describe the prefix rather than the sample and
-            repeat across the rows, so all three are read off the first of them.
+        path: The generations file to read, from `generations_path`.
+    Yields:
+        The generation for each prefix, in the order they were written.
+    """
+    with pq.ParquetFile(path) as parquet:
+        for row_group in range(parquet.num_row_groups):
+            frame = parquet.read_row_group(row_group).to_pandas()
+            for _, row in frame.iterrows():
+                yield _generation_from_row(row)
+
+
+def _generation_from_row(row: pd.Series) -> Generation:
+    """Read one prefix's generation back out of the row a generations file holds it as.
+
+    What lets a written file be scored through the same `score_generation` a training run reports
+    from.
+
+    Args:
+        row: One row of a generations file, holding a prefix and every suffix drawn for it.
     Returns:
         The same generation `generate_batch` produced. Parquet hands the activity columns back as
-        arrays, so they are copied into lists: `DecodedSequence` promises lists, and the edit
-        distance that reads them is quicker to index for it.
+        arrays, so they are copied into lists: `DecodedEvents` promises lists, and the edit
+        distance that reads them is quicker to index for it. Copying is also what lets the row
+        group behind them be dropped once the prefix has been scored.
     """
-    ground_truth = rows.iloc[0]
     return Generation(
-        prefix_activities=list(ground_truth.prefix_activities),
+        case_id=str(row.case_id),
+        prefix_activities=list(row.prefix_activities),
+        truncated=bool(row.truncated),
         samples=[
-            DecodedSequence(
-                activities=list(sample.generated_activities),
-                remaining_time_minutes=float(sample.generated_remaining_time_minutes),
+            DecodedEvents(
+                activities=list(activities),
+                remaining_time_minutes=float(remaining_time_minutes),
             )
-            for sample in rows.itertuples()
+            for activities, remaining_time_minutes in zip(
+                row.generated_activities, row.generated_remaining_time_minutes, strict=True
+            )
         ],
-        point=DecodedSequence(
-            activities=list(ground_truth.point_activities),
-            remaining_time_minutes=float(ground_truth.point_remaining_time_minutes),
+        point=DecodedEvents(
+            activities=list(row.point_activities),
+            remaining_time_minutes=float(row.point_remaining_time_minutes),
         ),
-        truth=DecodedSequence(
-            activities=list(ground_truth.true_activities),
-            remaining_time_minutes=float(ground_truth.true_remaining_time_minutes),
+        truth=DecodedEvents(
+            activities=list(row.true_activities),
+            remaining_time_minutes=float(row.true_remaining_time_minutes),
         ),
     )

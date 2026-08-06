@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 from pipelines.preprocess import require_dataset
 from src.configs import ExperimentConfig, load_config
-from src.datasets.dataset import SuffixDataset
+from src.datasets.dataset import TraceDataset
 from src.datasets.description import DatasetDescription
 from src.inference import (
     generate_batch,
@@ -30,22 +30,21 @@ def run(config: ExperimentConfig, model_path: Path) -> None:
     require_dataset(config.data)
     torch.manual_seed(config.seed)
 
-    # The description encodes the split and decodes the generations back into event sequences.
-    description = DatasetDescription.load(config.data)
-    test_dataset = SuffixDataset(config.data, split='test', description=description)
-
-    test_loader = DataLoader(
-        dataset=test_dataset,
-        batch_size=generation_batch_size(inference=config.inference, upper_bound=config.data.batch_size),
-        sampler=test_dataset.length_sorted_indices(),
-        num_workers=config.data.num_workers,
-    )
-
     # Load the model from the checkpoint and put it on the right device
     model = TransformerCVAE.from_checkpoint(
         load_checkpoint(model_path), description, device=config.training.device
     )
     model.eval()
+
+    # Build the DataLoader for the test split
+    description = DatasetDescription.load(config.data)
+    test_dataset = TraceDataset(description=description, split='test')
+    test_loader = DataLoader(
+        dataset=test_dataset,
+        batch_size=generation_batch_size(inference=config.inference, upper_bound=config.data.batch_size),
+        sampler=test_dataset.length_sorted_indices(),       # sort the prefixes by length so the batches are more uniform and generation is faster
+        num_workers=config.data.num_workers,                
+    )
 
     # The output file is named after the checkpoint's run.
     path = generations_path(config.inference.generations_dir, f'{config.data.dir.name}/{model_path.stem}')
@@ -66,11 +65,8 @@ def run(config: ExperimentConfig, model_path: Path) -> None:
                 num_samples=config.inference.num_samples,
                 description=description,
             )
-            # The pair info is needed to decode the generations back into event sequences
-            infos = [test_dataset.pair_info(index) for index in batch.pair_index.tolist()]
-            # Write the generations to the Parquet file in a single table, with one row per generation.
-            table = table_from_generations(generations=generations, infos=infos)
-            parquetWriter.write_table(table=table)
+            # Write the generations to the Parquet file in a single table, one row per prefix.
+            parquetWriter.write_table(table=table_from_generations(generations))
 
     print(f'Wrote generated suffixes to {path}')
 

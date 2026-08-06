@@ -1,33 +1,69 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from typing import NamedTuple
 import numpy as np
 import pandas as pd
+import torch
 
-from src.datasets.description import CategoricalColumn, DatasetDescription
+from src.datasets.description import DatasetDescription
 
-@dataclass(frozen=True)
-class EncodedSequence:
-    """One run of events, encoded to indices and normalized floats."""
-    activities: np.ndarray          # int64, shape [len]
-    time_deltas: np.ndarray         # float32 in [0, 1], shape [len(activities)]
-    resources: np.ndarray           # int64, shape [len(activities)]
-    feature_categories: np.ndarray  # int64, shape [len(activities), num_categorical]
-    feature_values: np.ndarray      # float32 in [0, 1], shape [len(activities), num_numeric]
-    feature_present: np.ndarray     # float32 0/1, shape [len(activities), num_numeric]
 
-    def __len__(self) -> int:
-        return len(self.activities)
+class Events(NamedTuple):
+    """The set of events composing a single trace, as the model reads it."""
+    activities: torch.Tensor          # int64, [..., seq_len]
+    resources: torch.Tensor           # int64, [..., seq_len]
+    time_deltas: torch.Tensor         # float32 in [0, 1], [..., seq_len]
+    feature_categories: torch.Tensor  # int64, [..., seq_len, num_categorical]
+    feature_values: torch.Tensor      # float32 in [0, 1], [..., seq_len, num_numeric]
+    feature_present: torch.Tensor     # float32 0/1, 0.0 where the log had no value [..., seq_len, num_numeric]
+    length: torch.Tensor              # int64, the real, unpadded length of the run, [...], 1D
 
-    def __getitem__(self, cut: int | slice | np.ndarray) -> "EncodedSequence":
-        """Return a cut of the sequence - a slice or an index selection - with all fields aligned."""
-        return EncodedSequence(
-            activities=self.activities[cut],
-            time_deltas=self.time_deltas[cut],
-            resources=self.resources[cut],
-            feature_categories=self.feature_categories[cut],
-            feature_values=self.feature_values[cut],
-            feature_present=self.feature_present[cut],
+    def cut(self, index: slice | torch.Tensor) -> "Events":
+        """Slice every per-event field by index, updating `length`."""
+        activities = self.activities[index]
+        return Events(
+            activities=activities,
+            resources=self.resources[index],
+            time_deltas=self.time_deltas[index],
+            feature_categories=self.feature_categories[index],
+            feature_values=self.feature_values[index],
+            feature_present=self.feature_present[index],
+            length=torch.tensor(data=len(activities), dtype=torch.long),
         )
+
+    def padded(self, to: int) -> "Events":
+        """Pad every per-event field to `to` positions, leaving `length` unchanged.
+        This allows a batch of runs to be stacked into a single tensor, with the padding masked out by `pad_mask`.
+
+        Args:
+            to: The width to pad to, `max_trace_length` for everything the model reads.
+        Returns:
+            The same events at the front of `to` positions, `length` unchanged.
+        """
+        # Every field but `length`, which counts real events and so survives the padding.
+        return Events(
+            *(
+                torch.cat(tensors=(
+                    channel,
+                    torch.zeros(
+                        size=(to - channel.size(dim=0), *channel.shape[1:]), dtype=channel.dtype
+                    ),
+                ))
+                for channel in self[:-1]
+            ),
+            length=self.length,
+        )
+
+    def pad_mask(self) -> torch.Tensor:
+        """Marks the positions that were padded out.
+        Returns:
+            `[batch_size, seq_len]`, True where the position holds padding.
+        """
+        positions = torch.arange(end=self.activities.size(dim=-1), device=self.length.device)
+        return positions.unsqueeze(dim=0) >= self.length.unsqueeze(dim=1)
+
+    def to(self, device: torch.device) -> "Events":
+        """Move a whole batch in one call"""
+        return Events(*(field.to(device) for field in self))
 
 
 def encode_events(
@@ -35,7 +71,7 @@ def encode_events(
     *,
     time_deltas_minutes: np.ndarray,
     log: pd.DataFrame,
-) -> EncodedSequence:
+) -> Events:
     """Map a run of raw events to the indices and normalized floats the model consumes.
 
     Args:
@@ -47,92 +83,24 @@ def encode_events(
             it is asked.
 
     Returns:
-        The same events as vocabulary indices and normalized columns.
+        The same events as vocabulary indices and normalized channels, unpadded, so every one of
+        them counts towards `length`.
     """
     feature_values, feature_present = _encode_numerics(description, log)
-    return EncodedSequence(
-        activities=_encode_column(description.activity, log),
-        resources=_encode_column(description.resource, log),
-        time_deltas=description.delta.normalize(time_deltas_minutes),
+    return Events(
+        # `torch.tensor` rather than `from_numpy`: pandas hands back a read-only view of its
+        # own block for some dtypes, which torch would wrap rather than copy.
+        activities=torch.tensor(data=description.activity.encode(log), dtype=torch.long),
+        resources=torch.tensor(data=description.resource.encode(log), dtype=torch.long),
+        time_deltas=torch.from_numpy(description.delta.normalize(time_deltas_minutes)),
         feature_categories=_encode_categories(description, log),
         feature_values=feature_values,
         feature_present=feature_present,
+        length=torch.tensor(data=len(log), dtype=torch.long),
     )
 
 
-@dataclass(frozen=True)
-class DecodedSequence:
-    """One run of events, decoded back to the log's own units. A channel the model learns to
-    write gains a field here."""
-    activities: list[str]
-    remaining_time_minutes: float
-
-    def __len__(self) -> int:
-        return len(self.activities)
-
-
-def decode_activities(
-    description: DatasetDescription,
-    *,
-    activities: np.ndarray,
-    length: int,
-) -> list[str]:
-    """Read a run of activity indices back into the log's own names.
-
-    Args:
-        description: The dataset's description, holding the activity channel's decode map.
-        activities: The activity indices of one sequence, int64, `[seq_len]`.
-        length: How many of them to keep, the rest being padding.
-    Returns:
-        The activity names, in order.
-    """
-    return [description.activity.from_index[int(index)] for index in activities[:length]]
-
-
-def decode_sequence(
-    description: DatasetDescription,
-    *,
-    activities: np.ndarray,
-    length: int,
-    remaining_time: float,
-) -> DecodedSequence:
-    """Read one sequence back into the log's own units, the inverse of `encode_events` over
-    every channel the model writes.
-
-    Args:
-        description: The dataset's description, holding each written channel's decode map or
-            normalization range.
-        activities: The activity indices of one sequence, int64, `[seq_len]`.
-        length: How many events to keep; the cut is what drops the EOT a generation ended
-            on and the padding behind it, so what comes back holds events and nothing else.
-        remaining_time: The sequence's remaining time as the model writes it, normalized in
-            `[0, 1]`.
-
-    Returns:
-        The sequence in raw activity names and minutes.
-    """
-    return DecodedSequence(
-        activities=decode_activities(description, activities=activities, length=length),
-        remaining_time_minutes=float(description.remaining_time.denormalize(remaining_time)),
-    )
-
-
-def _encode_column(column: CategoricalColumn, log: pd.DataFrame) -> np.ndarray:
-    """One categorical channel as rows of the table it is embedded with, with an UNK for values
-    the train split did not see.
-
-    Returns:
-        `[len(log)]` of int64 rows.
-    """
-    return (
-        log[column.column]
-        .map(column.to_index)
-        .fillna(column.unk_index)
-        .to_numpy(dtype=np.int64)
-    )
-
-
-def _encode_categories(description: DatasetDescription, log: pd.DataFrame) -> np.ndarray:
+def _encode_categories(description: DatasetDescription, log: pd.DataFrame) -> torch.Tensor:
     """Every categorical feature channel of a run of events, packed into one index array.
 
     Args:
@@ -144,16 +112,19 @@ def _encode_categories(description: DatasetDescription, log: pd.DataFrame) -> np
         `[len(log), num_categorical]` of rows of the shared embedding table.
     """
     if not description.categorical_features:
-        return np.zeros(shape=(len(log), 0), dtype=np.int64)
-    return np.stack(
-        arrays=[_encode_column(feature, log) for feature in description.categorical_features],
-        axis=1,
+        return torch.zeros(size=(len(log), 0), dtype=torch.long)
+    return torch.stack(
+        tensors=[
+            torch.tensor(data=feature.encode(log), dtype=torch.long)
+            for feature in description.categorical_features
+        ],
+        dim=1,
     )
 
 
 def _encode_numerics(
     description: DatasetDescription, log: pd.DataFrame
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Every numeric feature channel's normalized value, and the flag saying it was there.
 
     Args:
@@ -164,8 +135,8 @@ def _encode_numerics(
         a 0.0 flag; 0.0 is also a legitimate normalized value, which is what the flag is for.
     """
     if not description.numeric_features:
-        empty = np.zeros(shape=(len(log), 0), dtype=np.float32)
-        return empty, empty.copy()
+        empty = torch.zeros(size=(len(log), 0), dtype=torch.float32)
+        return empty, empty.clone()
 
     values, present = [], []
     for feature in description.numeric_features:
@@ -174,6 +145,6 @@ def _encode_numerics(
         # The range is fit on the finite values, so the missing ones are zeroed rather than
         # normalized: multiplying by the flag is what pins them to exactly 0.0.
         finite = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
-        values.append(feature.normalize(finite) * flags)
-        present.append(flags)
-    return np.stack(arrays=values, axis=1), np.stack(arrays=present, axis=1)
+        values.append(torch.from_numpy(feature.normalize(finite) * flags))
+        present.append(torch.from_numpy(flags))
+    return torch.stack(tensors=values, dim=1), torch.stack(tensors=present, dim=1)

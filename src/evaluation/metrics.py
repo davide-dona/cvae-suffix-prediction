@@ -1,12 +1,11 @@
 from dataclasses import dataclass
-from typing import Self, Sequence
+from typing import Iterable, Self, Sequence
 
-import pandas as pd
 from Declare4Py.ProcessModels.DeclareModel import DeclareModel
 
-from evaluation.accuracy import AccuracyScores, score_generation
+from src.evaluation.accuracy import AccuracyScores, score_generation
 from src.evaluation.conformance import ConformanceScores, score_conformance
-from src.inference import generation_from_rows
+from src.inference import Generation
 
 
 @dataclass(frozen=True)
@@ -45,20 +44,30 @@ class ByPrefixLengthMetrics:
 
 @dataclass(frozen=True)
 class EvaluationMetrics:
-    """The scores over every prefix, and the same scores broken down by prefix length.
+    """The scores over every prefix, the same scores broken down by prefix length, and what both
+    were measured over.
 
     The breakdown is worth keeping: a model that only works once most of the case is already known
     looks the same as a good one in the headline average, and the errors that scale with how much
     case is left cannot be read at all from a pooled number. Conformance follows the same cut,
     where the shorter the prefix the more the generated suffix has to earn the rate by itself.
+
+    The counts belong here rather than beside the scores: an average is not comparable across runs
+    without knowing how many prefixes went into it and how many were left out, and only the pass
+    that scores a file sees them.
     """
+    pairs: int
+    cases: int
+    samples_per_prefix: int
+    truncated_pairs_excluded: int
+
     scores: PrefixScores
     # In increasing order of prefix length
     by_prefix_length: list[ByPrefixLengthMetrics]
 
 
 def evaluate_generations(
-    generations: pd.DataFrame,
+    generations: Iterable[Generation],
     *,
     declare_model: DeclareModel,
     consider_vacuity: bool,
@@ -67,25 +76,37 @@ def evaluate_generations(
     Score generated suffixes against the ground truth they were generated for, and against the
     declarative model the dataset was mined for.
 
+    Truncated prefixes are dropped here rather than scored: their ground-truth suffix stops short
+    of the real ending, so nothing measured against it would mean what it claims to, and a
+    constraint checker would read them as finished cases they are not.
+
     Args:
-        generations: Rows written by `src/inference/writer.py`, with the truncated pairs
-            already dropped (their ground-truth suffix stops short of the real ending, so
-            nothing here would be measuring what it claims to, and a constraint checker would
-            read them as finished cases they are not).
+        generations: The prefixes to score, from `read_generations`. Read once, in one pass, so a
+            file larger than memory can be scored.
         declare_model: The model to check conformance against, from `load_declare_model`.
         consider_vacuity: Whether a constraint a trace never activates counts as satisfied.
     Returns:
-        The averages over every prefix, and the same averages broken down by cut point. Every
-        prefix weighs the same however many samples were drawn for it, so a prefix is the unit
-        the report describes and a row is not.
+        The averages over every prefix, the same averages broken down by cut point, and the
+        population they were taken over. Every prefix weighs the same however many samples were
+        drawn for it, so a prefix is the unit this describes and a sample is not.
     """
-    # Each group is scored down to a handful of floats and dropped, so a split of millions of rows
-    # never has more than one prefix's objects alive at a time. Bucketing by cut point as they are
-    # scored is what saves a second pass over them afterwards.
+    # Each prefix is scored down to a handful of floats and dropped, so a split of hundreds of
+    # thousands of them never has more than one prefix's objects alive at a time. Bucketing by cut
+    # point as they are scored is what saves a second pass over them afterwards.
     buckets: dict[int, list[PrefixScores]] = {}
-    for (_, prefix_len), group in generations.groupby(['case_id', 'prefix_len'], sort=False):
-        generation = generation_from_rows(group)
-        buckets.setdefault(int(prefix_len), []).append(
+    cases: set[str] = set()
+    truncated_pairs_excluded = 0
+    samples_per_prefix = 0
+
+    for generation in generations:
+        if generation.truncated:
+            truncated_pairs_excluded += 1
+            continue
+
+        cases.add(generation.case_id)
+        # Every prefix is drawn for the same number of times, so the first answers for all of them.
+        samples_per_prefix = samples_per_prefix or len(generation.samples)
+        buckets.setdefault(generation.prefix_len, []).append(
             PrefixScores(
                 accuracy=score_generation(generation),
                 conformance=score_conformance(
@@ -94,8 +115,13 @@ def evaluate_generations(
             )
         )
 
+    scored = [scores for bucket in buckets.values() for scores in bucket]
     return EvaluationMetrics(
-        scores=PrefixScores.mean([scores for bucket in buckets.values() for scores in bucket]),
+        pairs=len(scored),
+        cases=len(cases),
+        samples_per_prefix=samples_per_prefix,
+        truncated_pairs_excluded=truncated_pairs_excluded,
+        scores=PrefixScores.mean(scored),
         by_prefix_length=[
             ByPrefixLengthMetrics(
                 length=length,

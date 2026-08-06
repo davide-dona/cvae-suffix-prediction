@@ -3,7 +3,7 @@ import torch
 from torch import nn
 
 from src.configs.schema import DecoderConfig, LatentConfig
-from src.datasets.dataset import EncodedEvents
+from src.datasets.codec import Events
 from src.distributions.gaussian import Gaussian
 from src.model.components.attention import MultiHeadAttention, ProjectedKeysValues
 from src.model.components.embeddings import EventEmbeddings
@@ -225,7 +225,7 @@ class Decoder(nn.Module):
 
     def forward(
         self,
-        decoder_input: torch.Tensor,
+        suffix_activities: torch.Tensor,
         z: torch.Tensor,
         prefix_encoded: torch.Tensor,
         prefix_pad_mask: torch.Tensor,
@@ -233,14 +233,16 @@ class Decoder(nn.Module):
         """Predict an event for every position of a suffix at once.
 
         Args:
-            decoder_input: The ground-truth suffix activities shifted one step behind SOS,
-                `[batch_size, seq_len]`.
+            suffix_activities: The ground-truth suffix activities, `[batch_size, seq_len]`. Read
+                one step behind, so the decoder sees the truth up to each position rather than
+                its own predictions.
             z: The sampled latent, `[batch_size, latent_dim]`.
             prefix_encoded: The encoded prefix events, `[batch_size, prefix_seq_len, d_model]`.
             prefix_pad_mask: True where a prefix position holds padding.
         Returns:
             The per-position predictions.
         """
+        decoder_input = self._teacher_forced_input(suffix_activities)
         if self.training and self.activity_dropout > 0.0:
             decoder_input = self._drop_activities(decoder_input)
         prefix_encoded, prefix_pad_mask = self._append_latent_token(
@@ -282,6 +284,26 @@ class Decoder(nn.Module):
             tensors=(latent_column, prefix_pad_mask), dim=1
         )  # [batch_size, 1 + prefix_seq_len]
         return prefix_encoded, prefix_pad_mask
+
+    def _teacher_forced_input(self, suffix_activities: torch.Tensor) -> torch.Tensor:
+        """What the decoder reads at each position: the suffix moved one step later, behind SOS.
+
+        The same sequence `generate` feeds itself, which starts at SOS and appends what the
+        previous step predicted. Positions past the suffix's length are masked out of the loss,
+        so whatever the shift leaves there does not matter.
+
+        Args:
+            suffix_activities: The ground-truth suffix activities, `[batch_size, seq_len]`.
+        Returns:
+            The decoder input activities, the shape they came in at.
+        """
+        start = torch.full(
+            size=(suffix_activities.size(dim=0), 1),
+            fill_value=self.sos_activity_index,
+            dtype=torch.long,
+            device=suffix_activities.device,
+        )
+        return torch.cat(tensors=(start, suffix_activities[:, :-1]), dim=1)
 
     def _drop_activities(self, activities: torch.Tensor) -> torch.Tensor:
         """Blank a random `activity_dropout` fraction of the teacher-forced activities to PAD.
@@ -353,7 +375,7 @@ class Decoder(nn.Module):
             logvar_min=REMAINING_TIME_LOGVAR_MIN,
         )
 
-    def _blank_events(self, activities: torch.Tensor) -> EncodedEvents:
+    def _blank_events(self, activities: torch.Tensor) -> Events:
         """Wrap decoder input activities as the events `EventEmbeddings` reads.
 
         The decoder has no head to write a resource, a time delta or a feature, so it may not
@@ -369,7 +391,7 @@ class Decoder(nn.Module):
         """
         batch_size, seq_len = activities.shape
         device = activities.device
-        return EncodedEvents(
+        return Events(
             activities=activities,
             resources=torch.full(
                 size=(batch_size, seq_len),
@@ -388,6 +410,11 @@ class Decoder(nn.Module):
             ),
             feature_present=torch.zeros(
                 size=(batch_size, seq_len, self.embeddings.num_numeric), device=device
+            ),
+            # Every position is read: the causal mask is what keeps a position from seeing
+            # what follows it, and no caller asks these events for a padding mask.
+            length=torch.full(
+                size=(batch_size,), fill_value=seq_len, dtype=torch.long, device=device
             ),
         )
 
@@ -418,8 +445,8 @@ class Decoder(nn.Module):
             z=z, prefix_encoded=prefix_encoded, prefix_pad_mask=prefix_pad_mask
         )
 
-        # What the decoder reads at each step: SOS first, exactly how `SuffixDataset` builds
-        # the teacher-forced position 0, then the activity the previous step predicted.
+        # What the decoder reads at each step: SOS first, exactly how `_teacher_forced_input`
+        # opens, then the activity the previous step predicted.
         next_input = torch.full(
             size=(batch_size, 1),
             fill_value=self.sos_activity_index,

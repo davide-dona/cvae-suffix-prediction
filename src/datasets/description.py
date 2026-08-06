@@ -19,10 +19,12 @@ from src.logs.keys import (
     UNK_TOKEN,
 )
 
-# The special tokens every channel carries, in the order they are indexed.
-ACTIVITY_TOKENS = (EOT_TOKEN, PAD_TOKEN, SOS_TOKEN, UNK_TOKEN)
-RESOURCE_TOKENS = (EOT_TOKEN, PAD_TOKEN, UNK_TOKEN)
-FEATURE_TOKENS = (UNK_TOKEN,)
+# The special tokens every channel carries, in the order they are indexed. They come before the
+# vocabulary, so PAD is row 0 of the activity and resource channels, which start at offset 0.
+# Row 0 of the shared feature table is a PAD too, so padding a run of events is a plain zero fill.
+ACTIVITY_TOKENS = (PAD_TOKEN, EOT_TOKEN, SOS_TOKEN, UNK_TOKEN)
+RESOURCE_TOKENS = (PAD_TOKEN, EOT_TOKEN, UNK_TOKEN)
+FEATURE_TOKENS  = (UNK_TOKEN,)
 
 
 class CategoricalColumn(StrictModel):
@@ -65,9 +67,11 @@ class CategoricalColumn(StrictModel):
 
     @cached_property
     def to_index(self) -> dict[str, int]:
-        """Each value of the train split to its row. The special tokens are absent: no raw value
-        maps to one, which is what makes an unseen value fall through to `unk_index`."""
-        return {value: self.offset + i for i, value in enumerate(self.vocab)}
+        """Each value of the train split to its row, the vocabulary following the special tokens.
+        The special tokens are absent: no raw value maps to one, which is what makes an unseen
+        value fall through to `unk_index`."""
+        start = self.offset + len(self.special_tokens)
+        return {value: start + i for i, value in enumerate(self.vocab)}
 
     @cached_property
     def from_index(self) -> dict[int, str]:
@@ -88,7 +92,7 @@ class CategoricalColumn(StrictModel):
 
     @property
     def pad_index(self) -> int:
-        """The row filling a sequence out to `max_trace_length`."""
+        """The row filling a sequence out to `max_trace_length`, row 0 of any channel carrying it."""
         return self._index_of(PAD_TOKEN)
 
     @property
@@ -101,6 +105,28 @@ class CategoricalColumn(StrictModel):
         """Every value val/test holds that the train split did not, collapsed into one row."""
         return self._index_of(UNK_TOKEN)
 
+    def encode(self, log: pd.DataFrame) -> np.ndarray:
+        """Map this channel's raw values to rows of the table it is embedded with, with an UNK
+        for values the train split did not see.
+
+        Args:
+            log: The events as a preprocessed split holds them.
+        Returns:
+            `[len(log)]` of int64 rows.
+        """
+        return log[self.column].map(self.to_index).fillna(self.unk_index).to_numpy(dtype=np.int64)
+
+    def decode(self, indices: np.ndarray, *, length: int) -> list[str]:
+        """Read a run of this channel's indices back into the log's own values.
+
+        Args:
+            indices: The channel's indices for one sequence, int64, `[seq_len]`.
+            length: How many of them to keep, the rest being padding.
+        Returns:
+            The values, in order.
+        """
+        return [self.from_index[int(index)] for index in indices[:length]]
+
     def _index_of(self, token: str) -> int:
         """The row of one special token.
 
@@ -110,7 +136,7 @@ class CategoricalColumn(StrictModel):
         """
         if token not in self.special_tokens:
             raise ValueError(f'column "{self.column}" carries no {token} token')
-        return self.offset + len(self.vocab) + self.special_tokens.index(token)
+        return self.offset + self.special_tokens.index(token)
 
 
 class NumericColumn(StrictModel):
@@ -201,7 +227,9 @@ class DatasetDescription(StrictModel):
     categorical_features: tuple[CategoricalColumn, ...]
     numeric_features: tuple[NumericColumn, ...]
 
-    # The maximum trace length the dataset was preprocessed to, which is a configuration parameter rather than a fitted value.
+    # Where the preprocessed splits are, and the maximum trace length they were preprocessed to.
+    # Both come from the config rather than from the fit, so neither is written to `dataset.json`.
+    dir: Path = Field(..., exclude=True)
     max_trace_length: int = Field(..., exclude=True)
 
     @property
@@ -236,40 +264,60 @@ class DatasetDescription(StrictModel):
             ),
             categorical_features=categorical_features,
             numeric_features=numeric_features,
+            dir=data_config.dir,
             max_trace_length=data_config.max_seq_len,
         )
 
     @classmethod
     def load(cls, data_config: DataConfig) -> "DatasetDescription":
         """Load the description previously generated for a dataset.
-        The data_config's `max_seq_len` is used to fill the `max_trace_length` field.
+
+        The one place a config becomes a description: what comes back names the dataset's
+        directory and sequence length as well as its encoding, so everything read from disk
+        afterwards is asked of the description alone.
+
         Args:
             data_config: The `data` section, naming the dataset directory and the sequence length.
         Returns:
-            The dataset description, with `max_trace_length` taken from the config.
+            The dataset description, with `dir` and `max_trace_length` taken from the config.
         Raises:
             FileNotFoundError: If the dataset has not been preprocessed.
         """
-        path = metadata_path(data_config)
+        path = metadata_path(data_config.dir)
         if not path.exists():
             raise FileNotFoundError(
                 f'no dataset description at {path}. Run `python -m pipelines.preprocess` first.'
             )
         return cls.model_validate(
-            json.loads(path.read_text()) | {'max_trace_length': data_config.max_seq_len}
+            json.loads(path.read_text())
+            | {'dir': data_config.dir, 'max_trace_length': data_config.max_seq_len}
         )
 
-    def save(self, data_config: DataConfig) -> Path:
+    def save(self) -> Path:
         """Write this description beside the splits, and return where it went."""
-        path = metadata_path(data_config)
+        path = metadata_path(self.dir)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(self.model_dump_json(indent=2))
         return path
 
+    def split_path(self, split: str) -> Path:
+        """Where one preprocessed split is kept.
 
-def metadata_path(data_config: DataConfig) -> Path:
-    """Where a dataset's fitted description is kept, next to the splits it was fit on."""
-    return data_config.dir / 'processed' / 'dataset.json'
+        Args:
+            split: Which of `train`, `val`, `test` to name.
+        Returns:
+            The path to that split's file.
+        """
+        return self.dir / 'processed' / f'{split}.csv'
+
+
+def metadata_path(dataset_dir: Path) -> Path:
+    """Where a dataset's fitted description is kept, next to the splits it was fit on.
+
+    Takes the directory rather than the config, so it also answers for a description that has
+    already been loaded.
+    """
+    return dataset_dir / 'processed' / 'dataset.json'
 
 
 def _fit_event_features(

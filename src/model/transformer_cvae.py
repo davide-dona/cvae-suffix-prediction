@@ -4,12 +4,12 @@ from torch import nn
 
 from src.datasets.description import DatasetDescription
 from src.configs.schema import ModelConfig
-from src.datasets.dataset import SuffixItem
+from src.datasets.dataset import SplitTrace
 from src.distributions.gaussian import Gaussian
 from src.model.components.decoder import Decoder, DecoderOutput, GeneratedSuffix
 from src.model.components.embeddings import EventEmbeddings
 from src.model.components.latent import PosteriorNetwork, PriorNetwork
-from src.model.components.trace_encoder import TraceEncoder, padding_mask
+from src.model.components.trace_encoder import TraceEncoder
 
 
 @dataclass(frozen=True)
@@ -97,23 +97,18 @@ class TransformerCVAE(nn.Module):
         model.eval()
         return model
 
-    def forward(self, item: SuffixItem) -> TransformerCVAEOutput:
+    def forward(self, item: SplitTrace) -> TransformerCVAEOutput:
         """
         Args:
-            item: A batch from `SuffixDataset`, read for both its prefix and its suffix.
+            item: A batch from `TraceDataset`, read for both its prefix and its suffix.
         Returns:
             The decoder's predictions and the latent distributions the loss compares.
         """
-        prefix_pad_mask = padding_mask(
-            lengths=item.prefix_len, seq_len=item.prefix.activities.size(dim=1)
-        )  # [batch_size, seq_len]
+        prefix_pad_mask = item.prefix.pad_mask()  # [batch_size, seq_len]
         prefix = self.prefix_encoder(events=item.prefix, pad_mask=prefix_pad_mask)
-        
+
         suffix_summary = self.suffix_encoder(
-            events=item.suffix,
-            pad_mask=padding_mask(
-                lengths=item.suffix_len, seq_len=item.suffix.activities.size(dim=1)
-            ),
+            events=item.suffix, pad_mask=item.suffix.pad_mask()
         ).summary  # [batch_size, d_model]
 
         prior = self.prior(prefix.summary)  # p(z | prefix)
@@ -122,7 +117,7 @@ class TransformerCVAE(nn.Module):
 
         # The decoder reads the prefix events only; the summary belongs to the latent path.
         decoder_output = self.decoder(
-            decoder_input=item.decoder_input,
+            suffix_activities=item.suffix.activities,
             z=z,
             prefix_encoded=prefix.events,
             prefix_pad_mask=prefix_pad_mask,
@@ -131,7 +126,7 @@ class TransformerCVAE(nn.Module):
 
     @torch.no_grad()
     def generate(
-        self, item: SuffixItem, *, num_samples: int, sample_latent: bool = True
+        self, item: SplitTrace, *, num_samples: int, sample_latent: bool = True
     ) -> GeneratedSuffix:
         """Generate `num_samples` suffixes for every prefix in `item`.
 
@@ -140,7 +135,7 @@ class TransformerCVAE(nn.Module):
         decoder reads its heads greedily.
 
         Args:
-            item: A batch from `SuffixDataset`, read for its prefix only.
+            item: A batch from `TraceDataset`, read for its prefix only.
             num_samples: How many suffixes to draw per prefix.
             sample_latent: Whether to draw z from `p(z | prefix)`. False takes its mean instead,
                 making the generation the model's single point prediction.
@@ -148,9 +143,7 @@ class TransformerCVAE(nn.Module):
             The generated suffixes, `[batch_size, num_samples, steps]`, with row `(i, j)` the
             j-th sample for the i-th prefix of the batch.
         """
-        prefix_pad_mask = padding_mask(
-            lengths=item.prefix_len, seq_len=item.prefix.activities.size(dim=1)
-        )  # [batch_size, seq_len]
+        prefix_pad_mask = item.prefix.pad_mask()  # [batch_size, seq_len]
         prefix = self.prefix_encoder(events=item.prefix, pad_mask=prefix_pad_mask)
 
         # Computed once per prefix: every sample of one prefix is drawn from the same
@@ -178,7 +171,7 @@ class TransformerCVAE(nn.Module):
             prefix_pad_mask=prefix_pad_mask,
             max_steps=item.prefix.activities.size(dim=1),
         )
-        batch_size = item.prefix_len.size(dim=0)
+        batch_size = item.prefix.length.size(dim=0)
         return GeneratedSuffix(
             activities=generated.activities.view(batch_size, num_samples, -1),
             lengths=generated.lengths.view(batch_size, num_samples),

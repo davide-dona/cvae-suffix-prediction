@@ -1,10 +1,20 @@
 from dataclasses import dataclass
 
 from src.configs.schema import InferenceConfig
-from src.datasets.codec import DecodedSequence, decode_activities, decode_sequence
-from src.datasets.dataset import SuffixItem
+from src.datasets.dataset import SplitTrace
 from src.datasets.description import DatasetDescription
 from src.model import TransformerCVAE
+
+
+@dataclass(frozen=True)
+class DecodedEvents:
+    """One run of events, decoded back to the log's own units. A channel the model learns to
+    write gains a field here."""
+    activities: list[str]
+    remaining_time_minutes: float
+
+    def __len__(self) -> int:
+        return len(self.activities)
 
 
 @dataclass(frozen=True)
@@ -15,16 +25,24 @@ class Generation:
     The one shape everything downstream reads, and exactly what `score_generation` takes. A training
     curve, the generations file and the final report are all scored off this, so they measure the
     same thing rather than agreeing by coincidence. `generate_batch` builds it from the model;
-    `generation_from_rows` builds it back out of a generations file, which is only this written down.
+    `read_generations` builds it back out of a generations file, which is only this written down.
 
-    Which prefix this answers is still not part of it: the caller that needs identity has the
-    batch, and the file names a prefix by its case and cut point. Its activities are, because a
-    declarative constraint is about the whole trace and not about the run of events after the cut.
+    The prefix's activities are part of it because a declarative constraint is about the whole
+    trace and not about the run of events after the cut. The case id is, because content does not
+    identify a case: two cases of a log can run the same activities in the same order, so nothing
+    here but the id itself says which one this answers for.
     """
-    prefix_activities: list[str]    # the events before the cut, in order
-    samples: list[DecodedSequence]  # one per draw of z
-    point: DecodedSequence          # the suffix written from the mean of `p(z | prefix)`
-    truth: DecodedSequence
+    case_id: str                  # which case of the log the prefix was cut from
+    prefix_activities: list[str]  # the events before the cut, in order
+    truncated: bool               # whether `truth` stops short of the case's real ending
+    samples: list[DecodedEvents]  # one per draw of z
+    point: DecodedEvents          # the suffix written from the mean of `p(z | prefix)`
+    truth: DecodedEvents
+
+    @property
+    def prefix_len(self) -> int:
+        """The cut point this answers: how many events ran before it."""
+        return len(self.prefix_activities)
 
 
 def generation_batch_size(inference: InferenceConfig, upper_bound: int) -> int:
@@ -45,7 +63,7 @@ def generation_batch_size(inference: InferenceConfig, upper_bound: int) -> int:
 
 def generate_batch(
     model: TransformerCVAE,
-    batch: SuffixItem,
+    batch: SplitTrace,
     *,
     num_samples: int,
     description: DatasetDescription,
@@ -59,28 +77,31 @@ def generate_batch(
 
     Args:
         model: The model to generate with, already in eval mode.
-        batch: A batch from `SuffixDataset`, already on the model's device.
+        batch: A batch from `TraceDataset`, already on the model's device.
         num_samples: How many suffixes to draw per prefix.
         description: The description the split was encoded through, read here in the decode
             direction. Passed rather than read off the dataset, which is a `Subset` wherever only
             a slice of the split is generated for.
     Returns:
-        One generation per prefix of the batch, in the batch's own order, so a caller that needs
-        identity reads it off `batch.pair_index`. Everything is decoded into the log's own units and
-        cut at its length, so what comes back holds events and nothing else, the EOT a generation
-        ended on and the padding behind it both dropped.
+        One generation per prefix of the batch, in the batch's own order, each naming the case it
+        was cut from. Everything is decoded into the log's own units and cut at its length, so what
+        comes back holds events and nothing else, the EOT a generation ended on and the padding
+        behind it both dropped.
     """
     generated = model.generate(item=batch, num_samples=num_samples)
     point = model.generate(item=batch, num_samples=1, sample_latent=False)
 
-    # `suffix_len` counts the EOT closing a complete suffix, which is a marker and not an
-    # event; a truncated suffix has none to drop.
-    last_position = (batch.suffix_len - 1).unsqueeze(dim=1)  # [batch_size, 1]
+    # The suffix's length counts the EOT closing a complete suffix, which is a marker and not
+    # an event; a truncated suffix has none to drop.
+    last_position = (batch.suffix.length - 1).unsqueeze(dim=1)  # [batch_size, 1]
     ends_with_eot = (
         batch.suffix.activities.gather(dim=1, index=last_position).squeeze(dim=1)
         == model.eot_activity_index
     )  # [batch_size]
-    true_lengths = (batch.suffix_len - ends_with_eot.long()).cpu().numpy()  # [batch_size]
+    true_lengths = (batch.suffix.length - ends_with_eot.long()).cpu().numpy()  # [batch_size]
+    # A suffix carries an EOT exactly when the case it was cut from was not truncated, so the
+    # marker the length above drops is also what says whether the truth reaches the real ending.
+    truncated = ~ends_with_eot.cpu().numpy()  # [batch_size]
 
     activities = generated.activities.cpu().numpy()          # [batch_size, num_samples, steps]
     lengths = generated.lengths.cpu().numpy()                # [batch_size, num_samples]
@@ -91,35 +112,41 @@ def generate_batch(
     true_activities = batch.suffix.activities.cpu().numpy()  # [batch_size, seq_len]
     true_remaining_time = batch.remaining_time.cpu().numpy()  # [batch_size]
     prefix_activities = batch.prefix.activities.cpu().numpy()  # [batch_size, seq_len]
-    prefix_lengths = batch.prefix_len.cpu().numpy()  # [batch_size]
+    prefix_lengths = batch.prefix.length.cpu().numpy()  # [batch_size]
 
     return [
         Generation(
-            prefix_activities=decode_activities(
-                description,
-                activities=prefix_activities[position],
-                length=prefix_lengths[position],
+            case_id=batch.case_id[position],
+            prefix_activities=description.activity.decode(
+                prefix_activities[position], length=prefix_lengths[position]
             ),
+            truncated=bool(truncated[position]),
             samples=[
-                decode_sequence(
-                    description,
-                    activities=activities[position, sample],
-                    length=lengths[position, sample],
-                    remaining_time=remaining_time[position, sample],
+                DecodedEvents(
+                    activities=description.activity.decode(
+                        activities[position, sample], length=lengths[position, sample]
+                    ),
+                    remaining_time_minutes=float(
+                        description.remaining_time.denormalize(remaining_time[position, sample])
+                    ),
                 )
                 for sample in range(num_samples)
             ],
-            point=decode_sequence(
-                description,
-                activities=point_activities[position],
-                length=point_lengths[position],
-                remaining_time=point_remaining_time[position],
+            point=DecodedEvents(
+                activities=description.activity.decode(
+                    point_activities[position], length=point_lengths[position]
+                ),
+                remaining_time_minutes=float(
+                    description.remaining_time.denormalize(point_remaining_time[position])
+                ),
             ),
-            truth=decode_sequence(
-                description,
-                activities=true_activities[position],
-                length=true_lengths[position],
-                remaining_time=true_remaining_time[position],
+            truth=DecodedEvents(
+                activities=description.activity.decode(
+                    true_activities[position], length=true_lengths[position]
+                ),
+                remaining_time_minutes=float(
+                    description.remaining_time.denormalize(true_remaining_time[position])
+                ),
             ),
         )
         for position in range(len(true_lengths))
