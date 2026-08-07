@@ -137,7 +137,7 @@ def _decode(
         codec: The codec the split was encoded through, read here in the decode direction.
         activities: The run's activity indices, `[steps]`.
         length: How many of them are events, the rest being the EOT and the padding behind it.
-        remaining_time: The run's normalized remaining time.
+        remaining_time: The run's standardized remaining time.
     Returns:
         The run as the report and the generations file hold it.
     """

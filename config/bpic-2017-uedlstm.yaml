@@ -30,11 +30,9 @@ data:
     - day_in_week
     - seconds_in_day
 
-  log_scaled_features:
-    - FirstWithdrawalAmount
-    - MonthlyCost
+  # Their `num_dyn_log` is empty, so every numeric channel is standardized raw.
+  log_scaled_features: []
   log_scaled_durations: false
-  numeric_clip_percentile: 99.0
   batch_size: 256
   num_workers: 0
 

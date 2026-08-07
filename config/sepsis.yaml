@@ -36,18 +36,14 @@ data:
     - CRP
     - LacticAcid
     - Leucocytes
-    # Calendar position of the event, bounded so both scale linearly
+    # Calendar position of the event
     - day_in_week
     - seconds_in_day
 
-  # The three blood measurements, whose long tail a log spreads. Age is bounded, and a log skews
-  # it rather than spreading it.
-  log_scaled_features:
-    - CRP
-    - LacticAcid
-    - Leucocytes
-  log_scaled_durations: true
-  numeric_clip_percentile: 99.0
+  # Every numeric channel is standardized raw, as both baselines do: SuTraN runs with
+  # `log_transformed = False`, U-ED-LSTM with an empty `num_dyn_log`.
+  log_scaled_features: []
+  log_scaled_durations: false
   batch_size: 256
   num_workers: 0  # 0, not 4: macOS spawn overhead measured 2.1x slower end to end
 

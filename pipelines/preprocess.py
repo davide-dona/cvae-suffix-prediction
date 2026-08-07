@@ -164,7 +164,7 @@ def run(data_config: DataConfig, declare_config: DeclareConfig) -> None:
     train/val/test, and drops the cases longer than `data.max_seq_len_percentile` of case length
     from each split.
 
-    The vocabularies and normalization ranges the model is built against are fit here too,
+    The vocabularies and normalization statistics the model is built against are fit here too,
     on the train split alone, and written beside it as `dataset.json`. The declarative model is
     discovered from the same split and written to `data/<dataset>/declare/model.decl`.
 
@@ -205,7 +205,7 @@ def run(data_config: DataConfig, declare_config: DeclareConfig) -> None:
     for split, rows in ((Split.TRAIN, train), (Split.VAL, val), (Split.TEST, test)):
         write_log(rows, paths.split_path(dataset=dataset, split=split))
 
-    # Fit the vocabularies and normalization ranges on the train split, writng them out to
+    # Fit the vocabularies and normalization statistics on the train split, writng them out to
     # `dataset.json`. The generated values can be decoded back using the same codec.
     codec = DatasetCodec.fit(train, data_config=data_config, max_trace_length=max_seq_len)
     codec.save()

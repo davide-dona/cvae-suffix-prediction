@@ -9,8 +9,6 @@ from src.distributions.gaussian import Gaussian
 from src.model.components.attention import MultiHeadAttention, ProjectedKeysValues
 from src.model.components.embeddings import EventEmbeddings
 
-REMAINING_TIME_LOGVAR_MIN = -6.0
-
 
 @dataclass(frozen=True)
 class SuffixCache:
@@ -80,7 +78,7 @@ class GeneratedSuffix:
 
     activities: torch.Tensor  # [..., steps]
     lengths: torch.Tensor  # [...], events emitted before EOT, or `steps` if EOT never came
-    remaining_time: torch.Tensor  # [...], in [0, 1] like the targets
+    remaining_time: torch.Tensor  # [...], standardized like the targets
 
 
 class DecoderLayer(nn.Module):
@@ -379,13 +377,9 @@ class Decoder(nn.Module):
             The remaining-time distribution, `[batch_size]` per field.
         """
         parameters = self.remaining_time_head(feature)  # [batch_size, 2]
-        # Targets are min-max normalized into [0, 1], so the mean is squashed to match, and
-        # the log-variance floor is tightened to match the target's narrow scale.
-        return Gaussian.create(
-            mean=parameters[..., 0].sigmoid(),
-            logvar=parameters[..., 1],
-            logvar_min=REMAINING_TIME_LOGVAR_MIN,
-        )
+        # Targets are standardized rather than bounded, so the mean is read off the head as it
+        # comes: squashing it would cap what the head can predict short of the longest cases.
+        return Gaussian.create(mean=parameters[..., 0], logvar=parameters[..., 1])
 
     def _blank_events(self, activities: torch.Tensor) -> Events:
         """Wrap decoder input activities as the events `EventEmbeddings` reads.
