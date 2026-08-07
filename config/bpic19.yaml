@@ -1,0 +1,43 @@
+data:
+  case_key: "case:concept:name"
+  activity_key: "concept:name"
+  resource_key: "org:resource"
+  timestamp_key: "time:timestamp"
+
+  train_split: 0.65
+  val_split: 0.15
+  test_split: 0.2
+  split_strategy: temporal
+  max_seq_len_percentile: 98.5  # as in `bpic17.yaml`
+
+  # Every column but the structural ones above and: `User`, identical to `org:resource` in
+  # every row; `case:Purchasing Document` and `case:Item`, which concatenate to exactly
+  # `case:concept:name` and would hand the model the case ID; and `case:Name`, a deterministic
+  # relabelling of `case:Vendor` (same 1975-vendor vocabulary under a different string).
+  event_features:
+    # Case-level: share the same value for every row in a case
+    - case:Spend area text
+    - case:Company
+    - case:Document Type
+    - case:Sub spend area text
+    - case:Purch. Doc. Category name
+    - case:Vendor
+    - case:Item Type
+    - case:Item Category
+    - case:Spend classification text
+    - case:Source
+    - case:GR-Based Inv. Verif.
+    - case:Goods Receipt
+    # Event-level: vary per row in a case
+    - Cumulative net worth (EUR)
+    # Calendar position of the event
+    - day_in_week
+    - seconds_in_day
+
+  # Every numeric channel is standardized raw, as in `bpic17.yaml`.
+  log_scaled_features: []
+  log_scaled_durations: false
+  batch_size: 256
+  num_workers: 0
+
+# Same size as `bpic17.yaml`: base.yaml is already sized for the bpic logs.
