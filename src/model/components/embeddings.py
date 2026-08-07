@@ -4,8 +4,8 @@ import torch
 from torch import nn
 
 from src.configs.schema import EmbeddingConfig
-from src.datasets.codec import Events
-from src.datasets.description import DatasetDescription
+from src.datasets.codec import DatasetCodec
+from src.datasets.dataset import Events
 
 
 class EventEmbeddings(nn.Module):
@@ -17,36 +17,37 @@ class EventEmbeddings(nn.Module):
     can read the order of events out of the vectors.
     """
 
-    def __init__(self, config: EmbeddingConfig, description: DatasetDescription, *, d_model: int):
+    def __init__(self, config: EmbeddingConfig, codec: DatasetCodec, *, d_model: int):
         super().__init__()
         self.activity_embedding = nn.Embedding(
-            num_embeddings=description.activity.num_rows,
+            num_embeddings=codec.activity.num_rows,
             embedding_dim=config.activity_dim,
-            padding_idx=description.activity.pad_index,
+            padding_idx=codec.activity.pad_index,
         )
         self.resource_embedding = nn.Embedding(
-            num_embeddings=description.resource.num_rows,
+            num_embeddings=codec.resource.num_rows,
             embedding_dim=config.resource_dim,
-            padding_idx=description.resource.pad_index,
+            padding_idx=codec.resource.pad_index,
         )
-        self.num_categorical = len(description.categorical_features)
-        self.num_numeric = len(description.numeric_features)
+        self.num_categorical = len(codec.categorical_features)
+        self.num_numeric = len(codec.numeric_features)
 
         self.feature_embedding = (
             nn.Embedding(
-                num_embeddings=description.num_feature_categories,
+                num_embeddings=codec.num_feature_categories,
                 embedding_dim=config.feature_dim,
                 padding_idx=0,
             )
             if self.num_categorical > 0
             else None
         )
-        # +1 for the time delta; two scalars per numeric channel: value + presence flag.
+        # `ts_prev` and `ts_start` are one scalar each; two scalars per numeric attribute: value +
+        # presence flag.
         self.projection = nn.Linear(
             in_features=(
                 config.activity_dim
                 + config.resource_dim
-                + 1
+                + 2
                 + self.num_categorical * config.feature_dim
                 + 2 * self.num_numeric
             ),
@@ -55,7 +56,7 @@ class EventEmbeddings(nn.Module):
         # A buffer moves with the model but is not trained.
         self.register_buffer(
             name='positional_encoding',
-            tensor=_sinusoidal_encoding(length=description.max_trace_length, d_model=d_model),
+            tensor=_sinusoidal_encoding(length=codec.max_trace_length, d_model=d_model),
             persistent=False,
         )
 
@@ -74,15 +75,16 @@ class EventEmbeddings(nn.Module):
         channels = [
             self.activity_embedding(events.activities),  # [batch_size, seq_len, activity_dim]
             self.resource_embedding(events.resources),  # [batch_size, seq_len, resource_dim]
-            events.time_deltas.unsqueeze(dim=-1),  # [batch_size, seq_len, 1]
+            events.ts_prev.unsqueeze(dim=-1),  # [batch_size, seq_len, 1]
+            events.ts_start.unsqueeze(dim=-1),  # [batch_size, seq_len, 1]
         ]
         if self.feature_embedding is not None:
             channels.append(
-                self.feature_embedding(events.feature_categories).flatten(start_dim=-2)
+                self.feature_embedding(events.categorical_attributes).flatten(start_dim=-2)
             )  # [batch_size, seq_len, num_categorical * feature_dim]
-        # Zero-width on a log with no numeric features, which `cat` takes as the no-op it is.
-        channels.append(events.feature_values)  # [batch_size, seq_len, num_numeric]
-        channels.append(events.feature_present)  # [batch_size, seq_len, num_numeric]
+        # Zero-width on a log with no numeric attributes, which `cat` takes as the no-op it is.
+        channels.append(events.numeric_attributes)  # [batch_size, seq_len, num_numeric]
+        channels.append(events.numeric_attributes_present)  # [batch_size, seq_len, num_numeric]
 
         # Concatenate the channels and project to `d_model`.
         event = torch.cat(tensors=channels, dim=-1)  # [batch_size, seq_len, projection.in_features]

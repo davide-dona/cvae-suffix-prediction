@@ -20,7 +20,7 @@ The repository is designed to ensure reproducibility of results. To reproduce th
 A dataset is a raw log at `data/<name>/original.csv` plus a `config/<name>.yaml`. Every pipeline below takes that config with `-c` and reads everything else from it.
 
 ### Preprocessing
-Run once per dataset, before anything else. It writes the splits and dataset description under `data/<name>/processed/` and the discovered declarative model to `data/<name>/declare/model.decl`:
+Run once per dataset, before anything else. It writes the splits and dataset codec under `data/<name>/processed/` and the discovered declarative model to `data/<name>/declare/model.decl`:
 
 ```bash
 python -m pipelines.preprocess -c config/sepsis.yaml

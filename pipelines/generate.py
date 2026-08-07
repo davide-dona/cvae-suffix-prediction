@@ -8,8 +8,8 @@ from tqdm import tqdm
 from pipelines.preprocess import require_dataset
 from src import paths
 from src.configs import ExperimentConfig, load_config
+from src.datasets.codec import DatasetCodec
 from src.datasets.dataset import TraceDataset
-from src.datasets.description import DatasetDescription
 from src.inference import (
     generate_batch,
     generation_batch_size,
@@ -17,6 +17,7 @@ from src.inference import (
     table_from_generations,
 )
 from src.model import TransformerCVAE, load_checkpoint
+from src.paths import Split
 
 
 def run(config: ExperimentConfig, model_path: Path) -> None:
@@ -31,15 +32,15 @@ def run(config: ExperimentConfig, model_path: Path) -> None:
     require_dataset(config.data.name)
     torch.manual_seed(config.seed)
 
-    description = DatasetDescription.load(config.data)
+    codec = DatasetCodec.load(config.data)
 
     # Load the model from the checkpoint and put it on the right device
     checkpoint = load_checkpoint(model_path)
-    model = TransformerCVAE.from_checkpoint(checkpoint, description, device=config.training.device)
+    model = TransformerCVAE.from_checkpoint(checkpoint, codec, device=config.training.device)
     model.eval()
 
     # Build the DataLoader for the test split
-    test_dataset = TraceDataset(description=description, split='test')
+    test_dataset = TraceDataset(codec=codec, split=Split.TEST)
     test_loader = DataLoader(
         dataset=test_dataset,
         batch_size=generation_batch_size(
@@ -68,7 +69,7 @@ def run(config: ExperimentConfig, model_path: Path) -> None:
                 model=model,
                 batch=batch.to(device),
                 num_samples=config.inference.num_samples,
-                description=description,
+                codec=codec,
             )
             # Write the generations to the Parquet file in a single table, one row per prefix.
             parquet_writer.write_table(table=table_from_generations(generations))

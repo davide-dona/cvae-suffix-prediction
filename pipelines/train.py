@@ -7,10 +7,11 @@ from torch.utils.data import DataLoader
 
 from pipelines.preprocess import require_dataset
 from src.configs import ExperimentConfig, load_config
+from src.datasets.codec import DatasetCodec
 from src.datasets.dataset import TraceDataset, fixed_subset
-from src.datasets.description import DatasetDescription
 from src.inference import generation_batch_size
 from src.model import TransformerCVAE, load_checkpoint
+from src.paths import Split
 from src.training.train import train
 
 
@@ -57,12 +58,12 @@ def run(config: ExperimentConfig, checkpoint: dict | None = None) -> None:
     torch.manual_seed(config.seed)
     generator = torch.Generator().manual_seed(config.seed)
 
-    description = DatasetDescription.load(config.data)
+    codec = DatasetCodec.load(config.data)
 
-    model = TransformerCVAE(config.model, description).to(config.training.device)
+    model = TransformerCVAE(config.model, codec).to(config.training.device)
 
     # Build the datasets and loaders
-    train_dataset = TraceDataset(description=description, split='train')
+    train_dataset = TraceDataset(codec=codec, split=Split.TRAIN)
     train_loader = DataLoader(
         dataset=train_dataset,
         batch_size=config.data.batch_size,
@@ -71,7 +72,7 @@ def run(config: ExperimentConfig, checkpoint: dict | None = None) -> None:
         num_workers=config.data.num_workers,
     )
 
-    validation_dataset = TraceDataset(description=description, split='val')
+    validation_dataset = TraceDataset(codec=codec, split=Split.VAL)
     # Validation and generation loaders are fixed subsets of the validation split, so every run
     # of a config reads the same traces and their curves can be laid over each other.
     val_loader = DataLoader(
@@ -117,7 +118,7 @@ def run(config: ExperimentConfig, checkpoint: dict | None = None) -> None:
         generator=generator,
         resume=checkpoint,
         generation_samples=config.inference.num_samples,
-        description=description,
+        codec=codec,
         loss_config=config.loss,
         optimizer_config=config.optimizer,
         training=config.training,

@@ -10,7 +10,7 @@ from src.configs.schema import (
     OptimizerConfig,
     TrainingConfig,
 )
-from src.datasets.description import DatasetDescription
+from src.datasets.codec import DatasetCodec
 from src.model import TransformerCVAE, save_checkpoint
 from src.training.early_stopping import EarlyStopper
 from src.training.kl import cyclical_linear_weight
@@ -67,7 +67,7 @@ def train(
     val_loader: DataLoader,
     generation_loader: DataLoader,
     generation_samples: int,
-    description: DatasetDescription,
+    codec: DatasetCodec,
     run_name: str,
     experiment_config: dict,
     generator: torch.Generator,
@@ -93,7 +93,7 @@ def train(
         generation_samples: Suffixes to draw per prefix on that pass, normally
             `inference.num_samples`, so that a training curve and the final report describe the
             same number of draws.
-        description: The description the splits were encoded through, passed on to the
+        codec: The codec the splits were encoded through, passed on to the
             generation pass so its remaining times are scored in minutes.
         run_name: The name every file this run writes is derived from (see `src/paths.py`). One
             TensorBoard directory is one run, so a name reused across runs overlays their
@@ -199,7 +199,7 @@ def train(
                         model,
                         generation_loader,
                         num_samples=generation_samples,
-                        description=description,
+                        codec=codec,
                         device=device,
                     )
                     gen_metrics.log(writer, step, prefix='gen')

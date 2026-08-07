@@ -4,7 +4,7 @@ import torch
 from torch import nn
 
 from src.configs.schema import TraceEncoderConfig
-from src.datasets.codec import Events
+from src.datasets.dataset import Events
 from src.model.components.embeddings import EventEmbeddings
 
 

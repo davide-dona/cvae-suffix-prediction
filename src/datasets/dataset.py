@@ -3,15 +3,73 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import NamedTuple
 
-import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import Dataset, Subset
 
-from src.datasets.codec import Events, encode_events
-from src.datasets.description import DatasetDescription
+from src.datasets.codec import DatasetCodec
 from src.logs.io import read_log
-from src.logs.keys import CASE_KEY, EVENT_DELTA_KEY, REMAINING_TIME_KEY
+from src.logs.keys import CASE_KEY
+from src.paths import Split
+
+
+class Events(NamedTuple):
+    """The set of events composing a single trace, as the model reads it."""
+
+    activities: torch.Tensor  # int64, [..., seq_len]
+    resources: torch.Tensor  # int64, [..., seq_len]
+    ts_prev: torch.Tensor  # float32 in [0, 1], time since the previous event, [..., seq_len]
+    ts_start: torch.Tensor  # float32 in [0, 1], time since the case began, [..., seq_len]
+    categorical_attributes: torch.Tensor  # int64, [..., seq_len, num_categorical]
+    numeric_attributes: torch.Tensor  # float32 in [0, 1], [..., seq_len, num_numeric]
+    numeric_attributes_present: (
+        torch.Tensor
+    )  # float32 0/1, 0.0 where the log had no value [..., seq_len, num_numeric]
+    length: torch.Tensor  # int64, the real, unpadded length of the run, [...], 1D
+
+    def cut(self, index: slice | torch.Tensor) -> Events:
+        """Slice every per-event field by index, updating `length`."""
+        # Every field but `length`, which is recounted from what the slice kept.
+        channels = [channel[index] for channel in self[:-1]]
+        return Events(*channels, length=torch.tensor(data=len(channels[0]), dtype=torch.long))
+
+    def padded(self, to: int) -> Events:
+        """Pad every per-event field to `to` positions, leaving `length` unchanged.
+        This allows a batch of runs to be stacked into a single tensor, with the padding masked
+        out by `pad_mask`.
+
+        Args:
+            to: The width to pad to, `max_trace_length` for everything the model reads.
+        Returns:
+            The same events at the front of `to` positions, `length` unchanged.
+        """
+        # Every field but `length`, which counts real events and so survives the padding.
+        return Events(
+            *(
+                torch.cat(
+                    tensors=(
+                        channel,
+                        torch.zeros(
+                            size=(to - channel.size(dim=0), *channel.shape[1:]), dtype=channel.dtype
+                        ),
+                    )
+                )
+                for channel in self[:-1]
+            ),
+            length=self.length,
+        )
+
+    def pad_mask(self) -> torch.Tensor:
+        """Marks the positions that were padded out.
+        Returns:
+            `[batch_size, seq_len]`, True where the position holds padding.
+        """
+        positions = torch.arange(end=self.activities.size(dim=-1), device=self.length.device)
+        return positions.unsqueeze(dim=0) >= self.length.unsqueeze(dim=1)
+
+    def to(self, device: torch.device) -> Events:
+        """Move a whole batch in one call"""
+        return Events(*(field.to(device) for field in self))
 
 
 class SplitTrace(NamedTuple):
@@ -43,9 +101,6 @@ class _Trace:
     """One case of the log, encoded once and shared by every trace cut from it."""
 
     case_id: str  # which case of the log this is
-    # whether the case was longer than `max_trace_length`, so the suffix cut from it does not
-    # actually end
-    truncated: bool
     events: Events  # the case's events, unpadded
     remaining_time: (
         torch.Tensor
@@ -62,36 +117,27 @@ class TraceDataset(Dataset):
     Prefixes and suffixes are both padded to `max_trace_length`.
     """
 
-    def __init__(self, description: DatasetDescription, *, split: str):
+    def __init__(self, codec: DatasetCodec, *, split: Split):
         """Read one preprocessed split and cut every trace into all possible (prefix, suffix) pairs.
 
         Args:
-            description: The dataset description the split was preprocessed against, which names
-                where the split is as well as what its values are encoded through.
-            split: Which of `train`, `val`, `test` to read.
+            codec: The dataset codec the split was preprocessed against, which names where the
+                split is as well as what its values are encoded through.
+            split: Which of the three to read.
         """
-        self.description = description
-        self.max_len = description.max_trace_length
+        self.codec = codec
+        self.max_len = codec.max_trace_length
 
         # Read the split and encode it whole: the same work done per event in `__getitem__`
         # would be repeated for every cut point of every case.
-        split_dataset = _read_split(description, split=split)
+        split_dataset = _read_split(codec, split=split)
 
-        events = encode_events(
-            description,
-            time_deltas_minutes=split_dataset[EVENT_DELTA_KEY].to_numpy(dtype=np.float32),
-            log=split_dataset,
-        )
-        remaining_time = torch.from_numpy(
-            description.remaining_time.normalize(
-                split_dataset[REMAINING_TIME_KEY].to_numpy(dtype=np.float32)
-            )
-        )
+        events = _encode_events(codec, split_dataset)
+        remaining_time = torch.from_numpy(codec.remaining_time.encode(split_dataset))
 
-        # Group the encoded split into per-case runs, truncated to `max_trace_length` events.
+        # Group the encoded split into per-case runs.
         self._traces = _group_cases(
             split_dataset,
-            max_content_len=self.max_len,
             events=events,
             remaining_time=remaining_time,
         )
@@ -127,13 +173,10 @@ class TraceDataset(Dataset):
         # The last len - k events of the case, padded to `max_trace_length`.
         suffix = case.events.cut(slice(k, None)).padded(to=self.max_len)
 
-        # If the case was not truncated, append an EOT token to the suffix and increase its
-        # length by 1. Adding it anyways would teach the model to stop at `max_trace_length`
-        # rather than where traces really end.
-        if not case.truncated:
-            suffix.activities[suffix_len] = self.description.activity.eot_index
-            suffix.resources[suffix_len] = self.description.resource.eot_index
-            suffix = suffix._replace(length=suffix.length + 1)
+        # Every suffix is closed with an EOT event, which is the decoder's signal to stop.
+        suffix.activities[suffix_len] = self.codec.activity.eot_index
+        suffix.resources[suffix_len] = self.codec.resource.eot_index
+        suffix = suffix._replace(length=suffix.length + 1)
 
         # The remaining time, read from the last prefix event to the case's real ending
         return SplitTrace(
@@ -154,13 +197,12 @@ class TraceDataset(Dataset):
         Returns:
             SplitTrace indices, ascending by suffix length. Passed as a `DataLoader` sampler.
         """
-        # Content length plus an EOT if the case has one, skipping the padding and tensor work
+        # Content length plus the EOT closing it, skipping the padding and tensor work
         # `__getitem__` does: sorting has no use for either when it only wants a length.
         lengths = []
         for i in range(len(self)):
             case, k = self._get_cut(i)
-            content_len = int(case.events.length) - k
-            lengths.append(content_len if case.truncated else content_len + 1)
+            lengths.append(int(case.events.length) - k + 1)
         return sorted(range(len(self)), key=lengths.__getitem__)
 
 
@@ -185,47 +227,122 @@ def fixed_subset(dataset: Dataset, *, size: int, generator: torch.Generator) -> 
     return Subset(dataset=dataset, indices=indices.tolist())
 
 
-def _read_split(description: DatasetDescription, *, split: str) -> pd.DataFrame:
+def _read_split(codec: DatasetCodec, *, split: Split) -> pd.DataFrame:
     """Read one preprocessed split, returning it as a DataFrame.
 
     Args:
-        description: The dataset description, naming where the split is and every categorical
-            channel's column.
-        split: Which of `train`, `val`, `test` to read.
+        codec: The dataset codec, naming where the split is and every categorical channel's
+            column.
+        split: Which of the three to read.
     Returns:
         The split, one row per event.
     """
-    categorical = (description.activity, description.resource, *description.categorical_features)
+    categorical = (codec.activity, codec.resource, *codec.categorical_features)
     text_columns = {CASE_KEY: str} | {column.column: str for column in categorical}
-    return read_log(description.split_path(split), dtype=text_columns)
+    return read_log(codec.split_path(split), dtype=text_columns)
+
+
+def _encode_events(codec: DatasetCodec, log: pd.DataFrame) -> Events:
+    """Map a run of raw events to the indices and normalized floats the model consumes.
+
+    Args:
+        codec: The dataset's codec, naming every channel read here and holding the vocabulary or
+            range each is encoded through.
+        log: The events as a preprocessed split holds them. The whole frame, not a selection of
+            it: which columns each channel reads is the codec's answer, and this is where it is
+            asked.
+
+    Returns:
+        The same events as vocabulary indices and normalized channels, unpadded, so every one of
+        them counts towards `length`.
+    """
+    numeric_attributes, numeric_attributes_present = _encode_numeric_attributes(codec, log)
+    return Events(
+        # `torch.tensor` rather than `from_numpy`: pandas hands back a read-only view of its
+        # own block for some dtypes, which torch would wrap rather than copy.
+        activities=torch.tensor(data=codec.activity.encode(log), dtype=torch.long),
+        resources=torch.tensor(data=codec.resource.encode(log), dtype=torch.long),
+        ts_prev=torch.from_numpy(codec.ts_prev.encode(log)),
+        ts_start=torch.from_numpy(codec.ts_start.encode(log)),
+        categorical_attributes=_encode_categorical_attributes(codec, log),
+        numeric_attributes=numeric_attributes,
+        numeric_attributes_present=numeric_attributes_present,
+        length=torch.tensor(data=len(log), dtype=torch.long),
+    )
+
+
+def _encode_categorical_attributes(codec: DatasetCodec, log: pd.DataFrame) -> torch.Tensor:
+    """Every categorical attribute channel of a run of events, packed into one index array.
+
+    Args:
+        codec: The dataset's codec, holding the feature channels and their blocks of the shared
+            table.
+        log: The events as a preprocessed split holds them, so a gap in a channel already carries
+            the missing token preprocessing gave it.
+    Returns:
+        `[len(log), num_categorical]` of rows of the shared embedding table.
+    """
+    if not codec.categorical_features:
+        return torch.zeros(size=(len(log), 0), dtype=torch.long)
+    return torch.stack(
+        tensors=[
+            torch.tensor(data=feature.encode(log), dtype=torch.long)
+            for feature in codec.categorical_features
+        ],
+        dim=1,
+    )
+
+
+def _encode_numeric_attributes(
+    codec: DatasetCodec, log: pd.DataFrame
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Every numeric attribute channel's normalized value, and the flag saying it was there.
+
+    Args:
+        codec: The dataset's codec, holding the feature channels and their ranges.
+        log: The events as rows of the log.
+    Returns:
+        The values and the flags, `[len(log), num_numeric]` each.
+    """
+    if not codec.numeric_features:
+        empty = torch.zeros(size=(len(log), 0), dtype=torch.float32)
+        return empty, empty.clone()
+    return (
+        torch.stack(
+            tensors=[torch.from_numpy(feature.encode(log)) for feature in codec.numeric_features],
+            dim=1,
+        ),
+        torch.stack(
+            tensors=[torch.from_numpy(feature.present(log)) for feature in codec.numeric_features],
+            dim=1,
+        ),
+    )
 
 
 def _group_cases(
     split_dataset: pd.DataFrame,
     *,
-    max_content_len: int,
     events: Events,
     remaining_time: torch.Tensor,
 ) -> list[_Trace]:
-    """Group a split's already-encoded events into per-case runs, truncated to `max_content_len`.
+    """Group a split's already-encoded events into per-case runs.
 
     Args:
         split_dataset: The split, from `_read_split`; only its case column and row order are
             read here, the values themselves already encoded into `events`.
-        max_content_len: How many events of a case to keep; a longer case is truncated.
         events: The split's events, encoded whole, indexed the same as `split_dataset`.
         remaining_time: The split's normalized remaining time, indexed the same way.
     Returns:
-        One `_Trace` per case of the split.
+        One `_Trace` per case of the split, each of them whole: preprocessing dropped the cases
+        that do not fit `max_trace_length`, so nothing is cut short here.
     """
     cases = []
     for case_id, group in split_dataset.groupby(CASE_KEY, sort=False):
-        # The case's rows as positions into the split-wide columns, cut to the length limit.
-        positions = torch.from_numpy(split_dataset.index.get_indexer(group.index)[:max_content_len])
+        # The case's rows as positions into the split-wide columns.
+        positions = torch.from_numpy(split_dataset.index.get_indexer(group.index))
         cases.append(
             _Trace(
                 case_id=str(case_id),
-                truncated=len(group) > max_content_len,
                 events=events.cut(positions),
                 remaining_time=remaining_time[positions],
             )

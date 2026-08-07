@@ -13,9 +13,8 @@ from src.inference import Generation
 class PrefixScores:
     """One prefix's scores, or their mean over a set of prefixes.
 
-    Accuracy asks how close a generated suffix is to the one that actually happened; conformance
-    asks whether it is a trace the process allows at all. A suffix can score well on one and badly
-    on the other, which is why they are carried side by side rather than folded together.
+    Accuracy asks how close a generated suffix is to the one that actually happened;
+    conformance asks whether it is a trace the process allows at all.
     """
 
     accuracy: AccuracyScores
@@ -47,23 +46,12 @@ class ByPrefixLengthMetrics:
 
 @dataclass(frozen=True)
 class EvaluationMetrics:
-    """The scores over every prefix, the same scores broken down by prefix length, and what both
-    were measured over.
-
-    The breakdown is worth keeping: a model that only works once most of the case is already known
-    looks the same as a good one in the headline average, and the errors that scale with how much
-    case is left cannot be read at all from a pooled number. Conformance follows the same cut,
-    where the shorter the prefix the more the generated suffix has to earn the rate by itself.
-
-    The counts belong here rather than beside the scores: an average is not comparable across runs
-    without knowing how many prefixes went into it and how many were left out, and only the pass
-    that scores a file sees them.
-    """
+    """The scores of all prefixes, their breakdown by length, and the population
+    they were taken over."""
 
     pairs: int
     cases: int
     samples_per_prefix: int
-    truncated_pairs_excluded: int
 
     scores: PrefixScores
     # In increasing order of prefix length
@@ -76,13 +64,8 @@ def evaluate_generations(
     declare_model: DeclareModel,
     consider_vacuity: bool,
 ) -> EvaluationMetrics:
-    """
-    Score generated suffixes against the ground truth they were generated for, and against the
-    declarative model the dataset was mined for.
-
-    Truncated prefixes are dropped here rather than scored: their ground-truth suffix stops short
-    of the real ending, so nothing measured against it would mean what it claims to, and a
-    constraint checker would read them as finished cases they are not.
+    """Score generated suffixes against the ground truth they were generated for, and against
+    the declarative model the dataset was mined for.
 
     Args:
         generations: The prefixes to score, from `read_generations`. Read once, in one pass, so a
@@ -99,14 +82,9 @@ def evaluate_generations(
     # point as they are scored is what saves a second pass over them afterwards.
     buckets: dict[int, list[PrefixScores]] = {}
     cases: set[str] = set()
-    truncated_pairs_excluded = 0
     samples_per_prefix = 0
 
     for generation in generations:
-        if generation.truncated:
-            truncated_pairs_excluded += 1
-            continue
-
         cases.add(generation.case_id)
         # Every prefix is drawn for the same number of times, so the first answers for all of them.
         samples_per_prefix = samples_per_prefix or len(generation.samples)
@@ -124,7 +102,6 @@ def evaluate_generations(
         pairs=len(scored),
         cases=len(cases),
         samples_per_prefix=samples_per_prefix,
-        truncated_pairs_excluded=truncated_pairs_excluded,
         scores=PrefixScores.mean(scored),
         by_prefix_length=[
             ByPrefixLengthMetrics(

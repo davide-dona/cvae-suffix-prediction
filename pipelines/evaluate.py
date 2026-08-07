@@ -42,13 +42,8 @@ def run(config: ExperimentConfig, generations_file: Path) -> None:
     report = EvaluationReport(run_name=run_name, metrics=metrics)
     path = report.write(paths.evaluation_path(run_name))
     print(
-        f'Scored {metrics.pairs} prefixes over {metrics.cases} cases'
-        + (
-            f', {metrics.truncated_pairs_excluded} truncated prefixes left out'
-            if metrics.truncated_pairs_excluded
-            else ''
-        )
-        + f'. Wrote evaluation report to {path}'
+        f'Scored {metrics.pairs} prefixes over {metrics.cases} cases. '
+        f'Wrote evaluation report to {path}'
     )
 
 

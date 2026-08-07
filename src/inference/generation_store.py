@@ -16,8 +16,6 @@ _SCHEMA = pa.schema(
     [
         ('case_id', pa.large_string()),
         ('prefix_len', pa.int64()),
-        # Whether the ground-truth suffix was cut short of its real ending.
-        ('truncated', pa.bool_()),
         # The events before the cut, which a constraint over the whole trace is checked against.
         ('prefix_activities', _ACTIVITIES),
         # One entry per draw of z, in the order they were drawn: `hit_rate_at_k` reads the first k.
@@ -58,7 +56,6 @@ def table_from_generations(generations: list[Generation]) -> pa.Table:
         {
             'case_id': generation.case_id,
             'prefix_len': generation.prefix_len,
-            'truncated': generation.truncated,
             'prefix_activities': generation.prefix_activities,
             'generated_activities': [sample.activities for sample in generation.samples],
             'generated_remaining_time_minutes': [
@@ -111,7 +108,6 @@ def _generation_from_row(row: pd.Series) -> Generation:
     return Generation(
         case_id=str(row.case_id),
         prefix_activities=list(row.prefix_activities),
-        truncated=bool(row.truncated),
         samples=[
             DecodedEvents(
                 activities=list(activities),

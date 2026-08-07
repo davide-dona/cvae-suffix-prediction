@@ -1,4 +1,9 @@
+import numpy as np
 import pandas as pd
+
+# The seed U-ED-LSTM's loader notebooks set before building their splitter. Fixed here rather
+# than configurable.
+UEDLSTM_SEED = 17
 
 
 def temporal_split(
@@ -36,6 +41,51 @@ def temporal_split(
         n_train + n_val :
     ]  # Assumed to be the remainder, so no rounding issues arise
     assert len(train_cases) + len(val_cases) + len(test_cases) == n
+
+    train = log[log[case_key].isin(train_cases)]
+    val = log[log[case_key].isin(val_cases)]
+    test = log[log[case_key].isin(test_cases)]
+
+    return train, val, test
+
+
+def uedlstm_split(
+    log: pd.DataFrame, *, case_key: str, val_frac: float, test_frac: float
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Split a log the way U-ED-LSTM does, so both models can be scored on identical test cases.
+
+    A seeded shuffle of the cases in the order the log first mentions them, cut into a validation
+    block, a test block and the remainder.
+
+    Random rather than chronological, and with no leakage prevention.
+    Equivalent to the `split_log` function in U-ED-LSTM's `utils.py`.
+
+    Args:
+        log: Event log, one row per event.
+        case_key: Column identifying the case each event belongs to.
+        val_frac: Fraction of cases assigned to the validation set, taken first.
+        test_frac: Fraction of cases assigned to the test set, taken next.
+    Returns:
+        `(train, val, test)` DataFrames, each a row-subset of `log`.
+    """
+    # `unique` keeps the order the log first mentions each case, which is what the baseline
+    # shuffles; a differently ordered log would give a different permutation from the same seed.
+    # The object array is theirs too: numpy warns that shuffling a pandas extension array in
+    # place is not guaranteed to be a permutation of it.
+    cases = np.asarray(log[case_key].unique(), dtype=object)
+    # The legacy MT19937 generator, which is what `np.random.seed` + `np.random.shuffle` draw
+    # from. `default_rng` would be a different generator, so a different permutation.
+    np.random.RandomState(seed=UEDLSTM_SEED).shuffle(cases)
+
+    # Their splitter floors each block's size independently and leaves train the remainder.
+    n = len(cases)
+    n_val = int(val_frac * n)
+    n_test = int(test_frac * n)
+
+    val_cases = cases[:n_val]
+    test_cases = cases[n_val : n_val + n_test]
+    train_cases = cases[n_val + n_test :]
 
     train = log[log[case_key].isin(train_cases)]
     val = log[log[case_key].isin(val_cases)]

@@ -3,13 +3,13 @@ data:
   activity_key: "concept:name"
   resource_key: "org:resource"
   timestamp_key: "time:timestamp"
-  label_key: "N/A"  # no case label in this log; rename target that does not exist, so a no-op
 
   train_split: 0.65
   val_split: 0.15
   test_split: 0.2
-  max_seq_len: 95  # train-split p99 (longest case: 180)
-  
+  split_strategy: temporal
+  max_seq_len_percentile: 98.5  # the cut both baselines make
+
   event_features:
     # Case-level: share the same value for every row in a case
     - case:LoanGoal
@@ -26,7 +26,18 @@ data:
     - Selected
     - CreditScore
     - OfferedAmount
-  time_clip_percentile: 99.0
+    # Calendar position of the event, bounded so both scale linearly
+    - day_in_week
+    - seconds_in_day
+
+  # The amounts whose long tail a log spreads. Measured on this log: the three below are the only
+  # numeric features a log helps; it skews case:RequestedAmount, NumberOfTerms and CreditScore.
+  log_scaled_features:
+    - FirstWithdrawalAmount
+    - MonthlyCost
+    - OfferedAmount
+  log_scaled_durations: true
+  numeric_clip_percentile: 99.0
   batch_size: 256
   num_workers: 0
 
