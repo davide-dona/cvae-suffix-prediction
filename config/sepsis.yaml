@@ -47,8 +47,21 @@ data:
   batch_size: 256
   num_workers: 0  # 0, not 4: macOS spawn overhead measured 2.1x slower end to end
 
+# Narrower, shorter-sequence, smaller-vocab log than bpic; scaled down from base.yaml.
 model:
+  d_model: 64
   embeddings:
+    resource_dim: 16  # far fewer resources than bpic17's 149
     # 21 ternary channels (TRUE/FALSE/missing). At base's 8 they would be 168 of the 209 inputs
     # the projection reads, leaving the activity 16 of them.
     feature_dim: 4
+  prefix_encoder:
+    feedforward_dim: 256  # keep the 4x d_model ratio
+  suffix_encoder:
+    num_layers: 1  # suffixes run up to ~40 events here, not bpic17's 95
+    feedforward_dim: 256
+  prior:
+    hidden_dims: [64]
+  decoder:
+    feedforward_dim: 256
+    head_hidden_dim: 64

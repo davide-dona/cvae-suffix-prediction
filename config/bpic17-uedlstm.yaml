@@ -11,7 +11,7 @@ data:
   val_split: 0.15
   test_split: 0.2
   split_strategy: uedlstm_replicated
-  max_seq_len_percentile: 98.5  # as in `bpic-2017.yaml`
+  max_seq_len_percentile: 98.5  # as in `bpic17.yaml`
 
   # Their BPIC17 loader notebook's lists, minus `concept:name` and `org:resource`, which are
   # the activity and resource channels here. Action, EventOrigin and OfferedAmount are absent
@@ -35,20 +35,3 @@ data:
   log_scaled_durations: false
   batch_size: 256
   num_workers: 0
-
-# Same shape as `bpic-2017.yaml`: the comparison is about the split and the features, so the
-# model is left where it already is.
-model:
-  d_model: 128
-  embeddings:
-    resource_dim: 32
-  prefix_encoder:
-    feedforward_dim: 512
-  suffix_encoder:
-    num_layers: 2
-    feedforward_dim: 512
-  prior:
-    hidden_dims: [128]
-  decoder:
-    feedforward_dim: 512
-    head_hidden_dim: 128

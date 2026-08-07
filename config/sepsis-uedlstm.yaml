@@ -58,6 +58,20 @@ data:
   batch_size: 256
   num_workers: 0
 
+# Same shape as `sepsis.yaml`: the comparison is about the split and the features, so the
+# model is left where it already is.
 model:
+  d_model: 64
   embeddings:
+    resource_dim: 16
     feature_dim: 4  # as in `sepsis.yaml`: many narrow categorical channels, so a narrow lookup
+  prefix_encoder:
+    feedforward_dim: 256
+  suffix_encoder:
+    num_layers: 1
+    feedforward_dim: 256
+  prior:
+    hidden_dims: [64]
+  decoder:
+    feedforward_dim: 256
+    head_hidden_dim: 64

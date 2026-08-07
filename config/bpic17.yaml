@@ -36,19 +36,3 @@ data:
   log_scaled_durations: false
   batch_size: 256
   num_workers: 0
-
-# Widest, longest-sequence, richest-vocab log in the suite; scaled up from base.yaml.
-model:
-  d_model: 128
-  embeddings:
-    resource_dim: 32  # 149 resources vs base's 25-50
-  prefix_encoder:
-    feedforward_dim: 512  # keep the 4x d_model ratio
-  suffix_encoder:
-    num_layers: 2  # base's 1 layer summarizes suffixes up to 95 events, not just ~40
-    feedforward_dim: 512
-  prior:
-    hidden_dims: [128]
-  decoder:
-    feedforward_dim: 512
-    head_hidden_dim: 128

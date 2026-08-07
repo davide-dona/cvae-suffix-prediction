@@ -9,35 +9,36 @@ declare:
   itemsets_support: 0.9   # build itemsets of activities that co-occur in at least this fraction of train traces
   max_cardinality: 2      # highest n tried for the templates that take one
 
-# Model parameters
+# Model parameters, sized for the bpic logs: widest, longest-sequence, richest-vocab in the
+# suite. sepsis.yaml scales this down; a dataset this size does not need it.
 model:
   # The size of the embedding space
-  d_model: 64
+  d_model: 128
 
   # Activity/resource lookup widths, concatenated with the time delta, the data section's
   # event_features and their present flags, and projected to d_model.
   embeddings:
     activity_dim: 16
-    resource_dim: 16
+    resource_dim: 32  # 149 resources in bpic17
     feature_dim: 8  # per categorical event feature; each one widens the projection's input
 
   # Encodes the prefix; its CLS summary feeds both the prior and the decoder's cross-attention.
   prefix_encoder:
     num_layers: 2
     num_heads: 4
-    feedforward_dim: 256
+    feedforward_dim: 512  # keep the 4x d_model ratio
     dropout: 0.1
 
   # Encodes the ground-truth suffix for the posterior, training only; shallower on purpose.
   suffix_encoder:
-    num_layers: 1
+    num_layers: 2  # bpic17 suffixes run up to 95 events, not just ~40
     num_heads: 4
-    feedforward_dim: 256
+    feedforward_dim: 512
     dropout: 0.1
 
   # MLP mapping the prefix summary to p(z|prefix), sampled from at inference.
   prior:
-    hidden_dims: [64]  # (empty for a linear prior)
+    hidden_dims: [128]  # (empty for a linear prior)
     dropout: 0.1
 
   latent:
@@ -47,10 +48,10 @@ model:
   decoder:
     num_layers: 2
     num_heads: 4
-    feedforward_dim: 256
+    feedforward_dim: 512
     dropout: 0.1
     activity_dropout: 0.3  # teacher-forced activities blanked in training, so the decoder must lean on z
-    head_hidden_dim: 64
+    head_hidden_dim: 128
 
 # All the hyperparameters below are defined in steps, not epochs, 
 # so that they are independent of the dataset size and batch size.
