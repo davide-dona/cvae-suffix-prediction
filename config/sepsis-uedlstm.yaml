@@ -1,0 +1,66 @@
+# Sepsis as U-ED-LSTM sees it: their split, their feature set. The same raw log as `sepsis`
+# (`original.csv` is a symlink to it), preprocessed a second time so both descriptions can exist
+# at once and our model can be scored against their checkpoint over the same test cases.
+data:
+  case_key: "Case ID"
+  activity_key: Activity
+  resource_key: Resource
+  timestamp_key: "time:timestamp"
+
+  # Not the 65/15/20 of the other configs: their Sepsis notebook sets `test_validation_size` to
+  # 0.15 and derives `train_validation_size` as 0.15 / (1 - 0.15), which their splitter then
+  # applies to the whole case list rather than to what test left over. Written out to full
+  # precision because `int(val_split * n)` has to land on the same case count they got.
+  train_split: 0.6735294117647059
+  val_split: 0.17647058823529413
+  test_split: 0.15
+  split_strategy: uedlstm_replicated
+  max_seq_len_percentile: 98.5  # as in `sepsis.yaml`
+
+  # Their Sepsis loader notebook's lists, minus `concept:name` and `org:group`, which are the
+  # activity and resource channels here, and minus `lifecycle:transition`, which this export of
+  # the log does not carry. Age is a static categorical for them and stays numeric here: this
+  # pipeline reads a column's kind off its dtype, and forcing it would be a knob for one column.
+  event_features:
+    - Diagnose
+    - InfectionSuspected
+    - DiagnosticArtAstrup
+    - DiagnosticBlood
+    - DiagnosticECG
+    - DiagnosticIC
+    - DiagnosticLacticAcid
+    - DiagnosticLiquor
+    - DiagnosticOther
+    - DiagnosticSputum
+    - DiagnosticUrinaryCulture
+    - DiagnosticUrinarySediment
+    - DiagnosticXthorax
+    - DisfuncOrg
+    - Hypotensie
+    - Hypoxie
+    - Infusion
+    - Oligurie
+    - SIRSCritHeartRate
+    - SIRSCritLeucos
+    - SIRSCritTachypnea
+    - SIRSCritTemperature
+    - SIRSCriteria2OrMore
+    - Age
+    - CRP
+    - LacticAcid
+    - Leucocytes
+    - day_in_week
+    - seconds_in_day
+
+  log_scaled_features:
+    - CRP
+    - LacticAcid
+    - Leucocytes
+  log_scaled_durations: false
+  numeric_clip_percentile: 99.0
+  batch_size: 256
+  num_workers: 0
+
+model:
+  embeddings:
+    feature_dim: 4  # as in `sepsis.yaml`: many narrow categorical channels, so a narrow lookup

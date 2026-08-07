@@ -2,8 +2,9 @@
 __pycache__/
 *.py[oc]
 outputs/
-
 CLAUDE.md
+*DS_Store
+
 
 # Notes on things worth trying, kept out of the repo until one of them is actually done
 ideas/

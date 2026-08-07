@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import DataLoader
 
-from src.datasets.description import DatasetDescription
+from src.datasets.codec import DatasetCodec
 from src.evaluation.accuracy import AccuracyScores, score_generation
 from src.inference import generate_batch
 from src.model import TransformerCVAE
@@ -52,15 +52,15 @@ def validate_generation(
     loader: DataLoader,
     *,
     num_samples: int,
-    description: DatasetDescription,
+    codec: DatasetCodec,
     device: torch.device,
 ) -> AccuracyScores:
     """
     Generate suffixes from the prefixes in `loader` and compare them to the ground truth.
 
-    Scored through `score_generation`, the same function the final report is built from. The one
-    remaining difference is the population: truncated pairs are kept here and dropped by
-    `pipelines/evaluate.py`, whose ground-truth suffixes stop short of the real ending.
+    Scored through `score_generation`, the same function the final report is built from, over the
+    same population: every prefix counts here and in `pipelines/evaluate.py` alike, so a training
+    curve and a final report differ only in which split and how much of it they read.
 
     Args:
         model: The model to evaluate. Put in evaluation mode here, and left in it.
@@ -68,7 +68,7 @@ def validate_generation(
         num_samples: Suffixes to draw per prefix. The spread across them is what
             `sample_diversity` measures, and `generate` puts `len(batch) * num_samples` rows
             through the decoder at once, so it is also what the caller sizes its batches by.
-        description: The description the split was encoded through, read here to put the
+        codec: The codec the split was encoded through, read here to put the
             generations back into the log's own units. Passed rather than read off
             `loader.dataset`, which is a `Subset` wherever the split is bigger than the slice
             validated on.
@@ -85,7 +85,7 @@ def validate_generation(
             model=model,
             batch=batch.to(device),
             num_samples=num_samples,
-            description=description,
+            codec=codec,
         )
     ]
     return AccuracyScores.mean(scores)

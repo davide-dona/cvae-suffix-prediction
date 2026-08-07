@@ -1,5 +1,5 @@
 from src.inference.generation import Generation, generate_batch, generation_batch_size
-from src.inference.writer import (
+from src.inference.generation_store import (
     open_generations,
     read_generations,
     table_from_generations,

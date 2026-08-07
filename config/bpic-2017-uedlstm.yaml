@@ -1,0 +1,56 @@
+# BPIC17 as U-ED-LSTM sees it: their split, their feature set
+data:
+  case_key: "case:concept:name"
+  activity_key: "concept:name"
+  resource_key: "org:resource"
+  timestamp_key: "time:timestamp"
+
+  # Their `train_validation_size` (0.15) is the validation set despite its name, and
+  # `test_validation_size` (0.2) the test set; train is whatever is left.
+  train_split: 0.65
+  val_split: 0.15
+  test_split: 0.2
+  split_strategy: uedlstm_replicated
+  max_seq_len_percentile: 98.5  # as in `bpic-2017.yaml`
+
+  # Their BPIC17 loader notebook's lists, minus `concept:name` and `org:resource`, which are
+  # the activity and resource channels here. Action, EventOrigin and OfferedAmount are absent
+  # from their configuration, so they are absent from ours.
+  event_features:
+    - case:LoanGoal
+    - case:ApplicationType
+    - Accepted
+    - Selected
+    - lifecycle:transition
+    - case:RequestedAmount
+    - FirstWithdrawalAmount
+    - NumberOfTerms
+    - MonthlyCost
+    - CreditScore
+    - day_in_week
+    - seconds_in_day
+
+  log_scaled_features:
+    - FirstWithdrawalAmount
+    - MonthlyCost
+  log_scaled_durations: false
+  numeric_clip_percentile: 99.0
+  batch_size: 256
+  num_workers: 0
+
+# Same shape as `bpic-2017.yaml`: the comparison is about the split and the features, so the
+# model is left where it already is.
+model:
+  d_model: 128
+  embeddings:
+    resource_dim: 32
+  prefix_encoder:
+    feedforward_dim: 512
+  suffix_encoder:
+    num_layers: 2
+    feedforward_dim: 512
+  prior:
+    hidden_dims: [128]
+  decoder:
+    feedforward_dim: 512
+    head_hidden_dim: 128

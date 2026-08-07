@@ -4,8 +4,8 @@ import torch
 from torch import nn
 
 from src.configs.schema import ModelConfig
+from src.datasets.codec import DatasetCodec
 from src.datasets.dataset import SplitTrace
-from src.datasets.description import DatasetDescription
 from src.distributions.gaussian import Gaussian
 from src.model.components.decoder import Decoder, DecoderOutput, GeneratedSuffix
 from src.model.components.embeddings import EventEmbeddings
@@ -36,12 +36,12 @@ class TransformerCVAE(nn.Module):
         z, prefix events, suffix -> activity predictions, and the case's remaining time
     """
 
-    def __init__(self, config: ModelConfig, description: DatasetDescription):
+    def __init__(self, config: ModelConfig, codec: DatasetCodec):
         super().__init__()
         # Shared between both encoders and the decoder: a single embedding space for events,
         # with fewer parameters.
         self.embeddings = EventEmbeddings(
-            config=config.embeddings, description=description, d_model=config.d_model
+            config=config.embeddings, codec=codec, d_model=config.d_model
         )
         # Same architecture, separate weights: one reads prefixes, the other ground-truth
         # suffixes. Only the prefix encoder runs at inference.
@@ -62,24 +62,24 @@ class TransformerCVAE(nn.Module):
             latent_config=config.latent,
             embeddings=self.embeddings,
             d_model=config.d_model,
-            num_activities=description.activity.num_rows,
-            sos_activity_index=description.activity.sos_index,
-            pad_activity_index=description.activity.pad_index,
-            pad_resource_index=description.resource.pad_index,
-            eot_activity_index=description.activity.eot_index,
+            num_activities=codec.activity.num_rows,
+            sos_activity_index=codec.activity.sos_index,
+            pad_activity_index=codec.activity.pad_index,
+            pad_resource_index=codec.resource.pad_index,
+            eot_activity_index=codec.activity.eot_index,
         )
-        self.pad_activity_index = description.activity.pad_index
-        self.eot_activity_index = description.activity.eot_index
+        self.pad_activity_index = codec.activity.pad_index
+        self.eot_activity_index = codec.activity.eot_index
 
     @classmethod
     def from_checkpoint(
-        cls, checkpoint: dict, description: DatasetDescription, *, device: str = 'cpu'
+        cls, checkpoint: dict, codec: DatasetCodec, *, device: str = 'cpu'
     ) -> 'TransformerCVAE':
         """Rebuild the model a checkpoint holds, with its weights loaded.
 
         Args:
             checkpoint: A checkpoint read by `load_checkpoint`.
-            description: The dataset the model is to be used on, supplying the vocabulary
+            codec: The dataset the model is to be used on, supplying the vocabulary
                 sizes and sequence length it was built against.
             device: Where to place the model.
         Returns:
@@ -93,7 +93,7 @@ class TransformerCVAE(nn.Module):
 
         config = ModelConfig.model_validate(checkpoint['model_config'])
 
-        model = cls(config=config, description=description).to(device=device)
+        model = cls(config=config, codec=codec).to(device=device)
         model.load_state_dict(state_dict=checkpoint['model_state_dict'])
         model.eval()
         return model

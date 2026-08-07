@@ -3,12 +3,12 @@ data:
   activity_key: Activity
   resource_key: Resource
   timestamp_key: "time:timestamp"
-  label_key: label
 
   train_split: 0.65
   val_split: 0.15
   test_split: 0.2
-  max_seq_len: 61  # train-split p99 (longest case: 185)
+  split_strategy: temporal
+  max_seq_len_percentile: 98.5  # the cut both baselines make
 
   event_features:
     - DiagnosticArtAstrup
@@ -32,11 +32,22 @@ data:
     - SIRSCritTachypnea
     - SIRSCritTemperature
     - SIRSCriteria2OrMore
-    - Age  
+    - Age
     - CRP
     - LacticAcid
     - Leucocytes
-  time_clip_percentile: 99.0
+    # Calendar position of the event, bounded so both scale linearly
+    - day_in_week
+    - seconds_in_day
+
+  # The three blood measurements, whose long tail a log spreads. Age is bounded, and a log skews
+  # it rather than spreading it.
+  log_scaled_features:
+    - CRP
+    - LacticAcid
+    - Leucocytes
+  log_scaled_durations: true
+  numeric_clip_percentile: 99.0
   batch_size: 256
   num_workers: 0  # 0, not 4: macOS spawn overhead measured 2.1x slower end to end
 

@@ -1,3 +1,4 @@
+from enum import StrEnum
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -5,25 +6,37 @@ DATA_DIR = ROOT / 'data'
 OUTPUTS_DIR = ROOT / 'outputs'
 
 
+class Split(StrEnum):
+    """The three splits preprocessing cuts a log into, named as their files on disk are.
+
+    Iterating the members is what says a dataset has been preprocessed and what a pipeline
+    reads, so the three names are written down here and nowhere else.
+    """
+
+    TRAIN = 'train'
+    VAL = 'val'
+    TEST = 'test'
+
+
 def original_log(dataset: str) -> Path:
     """The raw log a dataset starts from, the one file preprocessing reads."""
     return DATA_DIR / dataset / 'original.csv'
 
 
-def split_path(dataset: str, split: str) -> Path:
+def split_path(dataset: str, split: Split) -> Path:
     """One preprocessed split of a dataset.
 
     Args:
         dataset: The dataset the split belongs to.
-        split: Which of `train`, `val`, `test` to name.
+        split: Which of the three to name.
     Returns:
         The path to that split's file.
     """
     return DATA_DIR / dataset / 'processed' / f'{split}.csv'
 
 
-def description_path(dataset: str) -> Path:
-    """A dataset's fitted description, next to the splits it was fit on."""
+def codec_path(dataset: str) -> Path:
+    """A dataset's fitted codec, next to the splits it was fit on."""
     return DATA_DIR / dataset / 'processed' / 'dataset.json'
 
 

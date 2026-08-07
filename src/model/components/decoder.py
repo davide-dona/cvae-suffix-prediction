@@ -4,7 +4,7 @@ import torch
 from torch import nn
 
 from src.configs.schema import DecoderConfig, LatentConfig
-from src.datasets.codec import Events
+from src.datasets.dataset import Events
 from src.distributions.gaussian import Gaussian
 from src.model.components.attention import MultiHeadAttention, ProjectedKeysValues
 from src.model.components.embeddings import EventEmbeddings
@@ -390,7 +390,7 @@ class Decoder(nn.Module):
     def _blank_events(self, activities: torch.Tensor) -> Events:
         """Wrap decoder input activities as the events `EventEmbeddings` reads.
 
-        The decoder has no head to write a resource, a time delta or a feature, so it may not
+        The decoder has no head to write a resource, a timestamp proxy or a feature, so it may not
         read ground truth for them either: teacher forcing would otherwise hand it values
         `generate` has none of to feed, and the two would read different things. Only the
         activities carry real content; every other channel is blanked to the same PAD row or
@@ -411,16 +411,17 @@ class Decoder(nn.Module):
                 dtype=torch.long,
                 device=device,
             ),
-            time_deltas=torch.zeros(size=(batch_size, seq_len), device=device),
-            feature_categories=torch.zeros(
+            ts_prev=torch.zeros(size=(batch_size, seq_len), device=device),
+            ts_start=torch.zeros(size=(batch_size, seq_len), device=device),
+            categorical_attributes=torch.zeros(
                 size=(batch_size, seq_len, self.embeddings.num_categorical),
                 dtype=torch.long,
                 device=device,
             ),
-            feature_values=torch.zeros(
+            numeric_attributes=torch.zeros(
                 size=(batch_size, seq_len, self.embeddings.num_numeric), device=device
             ),
-            feature_present=torch.zeros(
+            numeric_attributes_present=torch.zeros(
                 size=(batch_size, seq_len, self.embeddings.num_numeric), device=device
             ),
             # Every position is read: the causal mask is what keeps a position from seeing
