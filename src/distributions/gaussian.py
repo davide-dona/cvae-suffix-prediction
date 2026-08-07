@@ -17,28 +17,17 @@ class Gaussian:
     logvar: torch.Tensor
 
     @classmethod
-    def create(
-        cls,
-        mean: torch.Tensor,
-        logvar: torch.Tensor,
-        *,
-        logvar_min: float = LOGVAR_MIN,
-        logvar_max: float = LOGVAR_MAX,
-    ) -> 'Gaussian':
+    def create(cls, mean: torch.Tensor, logvar: torch.Tensor) -> 'Gaussian':
         """Build a Gaussian from an already-split mean and log-variance.
 
         Args:
             mean: The distribution's mean.
-            logvar: The raw log-variance, clamped to `[logvar_min, logvar_max]` before it is
+            logvar: The raw log-variance, clamped to `[LOGVAR_MIN, LOGVAR_MAX]` before it is
                 stored, so a later `exp()` cannot overflow.
-            logvar_min: Lower clamp bound, for heads whose targets call for a tighter floor
-                than the default.
-            logvar_max: Upper clamp bound, for heads whose targets call for a tighter ceiling
-                than the default.
         Returns:
             The Gaussian with its log-variance clamped.
         """
-        return cls(mean=mean, logvar=logvar.clamp(min=logvar_min, max=logvar_max))
+        return cls(mean=mean, logvar=logvar.clamp(min=LOGVAR_MIN, max=LOGVAR_MAX))
 
     def sample(self) -> torch.Tensor:
         """Draw one sample through the reparametrization trick, so the gradient reaches

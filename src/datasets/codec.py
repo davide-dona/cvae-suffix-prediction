@@ -147,100 +147,89 @@ class CategoricalColumn(StrictModel):
 
 
 class NumericColumn(StrictModel):
-    """One numeric channel of the log, and the min-max range it is normalized into.
-    - log: Whether the values pass through a log1p before the min-max.
-    - clip_value: Values above this train-split percentile are clipped before anything else.
-    - scale_min: The minimum of the clipped train values, after the log1p if there is one.
-    - scale_max: The maximum of the same.
+    """One numeric channel of the log, and the train-split statistics it is standardized with.
+    - log: Whether the values pass through a log1p before the standardization.
+    - mean: The mean of the train values, after the log1p if there is one.
+    - std: The standard deviation of the same, 1.0 for a channel that never varies.
     """
 
     column: str
     log: bool
-    clip_value: float
-    scale_min: float
-    scale_max: float
+    mean: float
+    std: float
 
     @classmethod
-    def fit(
-        cls, train: pd.DataFrame, *, column: str, percentile: float, log: bool
-    ) -> NumericColumn:
-        """Fit one channel's normalization range on the train split.
+    def fit(cls, train: pd.DataFrame, *, column: str, log: bool) -> NumericColumn:
+        """Fit one channel's standardization on the train split.
 
-        Missing values take no part in the fit: a percentile over a column holding NaN is NaN, and
-        a NaN clip value would send every value of the channel to NaN without raising anything.
+        Missing values take no part in the fit, so a channel with gaps is standardized on the
+        values it does have.
 
         Args:
-            train: The split every range is fit on, and the only one any range is ever fit on.
+            train: The split every statistic is fit on, and the only one any is ever fit on.
             column: Which column of it this channel reads.
-            percentile: Values above this train-split percentile are clipped.
-            log: Whether to put the clipped values through a log1p before taking the range.
+            log: Whether to put the values through a log1p before taking mean and deviation.
         Returns:
-            The channel, holding the range its values are normalized into `[0, 1]` with.
+            The channel, holding the statistics its values are standardized with.
         Raises:
-            ValueError: If the column holds no finite value, or a negative one - `normalize` clips
-                at 0.0, which would swallow it silently.
+            ValueError: If the column holds no finite value, or a negative one on a log-scaled
+                channel, where log1p is undefined below -1 and compresses the rest towards it.
         """
         values = train[column].to_numpy(dtype=np.float64)
         finite = values[np.isfinite(values)]
         if finite.size == 0:
             raise ValueError(f'column "{column}" holds no finite value on the train split')
-        if finite.min() < 0:
+        if log and finite.min() < 0:
             raise ValueError(
-                f'column "{column}" holds negative values (min {finite.min()}), which the '
-                'normalization would clip to 0 rather than represent'
+                f'column "{column}" is log-scaled but holds negative values '
+                f'(min {finite.min()}), which log1p cannot represent'
             )
 
-        clip_value = float(np.percentile(finite, percentile))
-        scaled = cls._scale(np.clip(finite, 0.0, clip_value), log=log)
+        scaled = cls._scale(finite, log=log)
+        # A channel whose train values are all identical has no deviation to divide by. 1.0
+        # leaves every one of them standardizing to 0.0 and denormalizing back to the mean.
+        std = float(scaled.std())
         return cls(
             column=column,
             log=log,
-            clip_value=clip_value,
-            scale_min=float(scaled.min()),
-            scale_max=float(scaled.max()),
+            mean=float(scaled.mean()),
+            std=std if std > 0 else 1.0,
         )
 
     @staticmethod
     def _scale(values: np.ndarray, *, log: bool) -> np.ndarray:
-        """Apply this channel's transform to already-clipped values."""
+        """Apply this channel's transform to the raw values."""
         return np.log1p(values) if log else values
 
     def normalize(self, values: np.ndarray) -> np.ndarray:
-        """Map raw values into `[0, 1]`, clipping them to this range first.
+        """Standardize raw values against the train split's mean and deviation.
 
         Args:
             values: The raw values to normalize.
         Returns:
-            The same values in `[0, 1]`, as float32.
+            The same values standardized, as float32. Nothing bounds them: a val/test value
+            beyond anything the train split held keeps its distance rather than being pulled
+            back to a range.
         """
-        scaled = self._scale(np.clip(values, 0.0, self.clip_value), log=self.log)
-        span = self.scale_max - self.scale_min
-        # A split where every value is identical would divide by zero here.
-        if span <= 0:
-            return np.zeros_like(scaled, dtype=np.float32)
-        return np.clip((scaled - self.scale_min) / span, 0.0, 1.0).astype(np.float32)
+        return ((self._scale(values, log=self.log) - self.mean) / self.std).astype(np.float32)
 
     def denormalize(self, normalized: np.ndarray) -> np.ndarray:
-        """Read normalized values back as the raw quantity they came from.
-
-        Approximate at the top of the range: clipping is lossy, so anything that was above
-        `clip_value` on the way in comes back as `clip_value`.
-        """
-        span = self.scale_max - self.scale_min
-        scaled = np.asarray(normalized, dtype=np.float64) * span + self.scale_min
+        """Read standardized values back as the raw quantity they came from, exactly: the
+        transform loses nothing on the way in."""
+        scaled = np.asarray(normalized, dtype=np.float64) * self.std + self.mean
         return np.expm1(scaled) if self.log else scaled
 
     def encode(self, log: pd.DataFrame) -> np.ndarray:
-        """Map this channel's raw values into `[0, 1]`, with a missing one pinned to exactly 0.0.
+        """Standardize this channel's raw values, with a missing one pinned to exactly 0.0.
 
         Args:
             log: The events as a preprocessed split holds them.
         Returns:
-            `[len(log)]` of float32 in `[0, 1]`.
+            `[len(log)]` of float32.
         """
         raw = log[self.column].to_numpy(dtype=np.float64)
-        # The range is fit on the finite values, so a gap is zeroed rather than normalized:
-        # multiplying by the flag is what pins it to exactly 0.0.
+        # The fit skipped the gaps, so a gap is zeroed rather than standardized: multiplying by
+        # the flag is what pins it to exactly 0.0, which is the train mean of the channel.
         finite = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
         return self.normalize(finite) * self.present(log)
 
@@ -251,7 +240,7 @@ class NumericColumn(StrictModel):
             log: The events as a preprocessed split holds them.
         Returns:
             `[len(log)]` of float32, 0.0 where the log had no value. 0.0 is also a legitimate
-            normalized value, which is what this flag is for.
+            standardized value, which is what this flag is for.
         """
         return np.isfinite(log[self.column].to_numpy(dtype=np.float64)).astype(np.float32)
 
@@ -263,9 +252,9 @@ class DatasetCodec(StrictModel):
     activity: CategoricalColumn
     resource: CategoricalColumn
     # The two timestamp proxies both baselines read, `Events.ts_prev` and `Events.ts_start`.
-    # Log-scaled by default: an event gap runs from seconds to months on every log here. Whether
-    # they and `remaining_time` are is `data.log_scaled_durations`, not a fixed choice, so a run
-    # can be compared against work that normalizes durations linearly instead.
+    # Whether they and `remaining_time` take a log1p before the standardization is
+    # `data.log_scaled_durations`: off in every config here, which is what both baselines do,
+    # and available for a run that wants the tail of a duration compressed instead.
     ts_prev: NumericColumn
     ts_start: NumericColumn
     remaining_time: NumericColumn
@@ -297,19 +286,18 @@ class DatasetCodec(StrictModel):
         """Fit the codec on the train split.
         Args:
             train: The train split, as `pipelines/preprocess.py` holds it before writing.
-            data_config: The `data` section, for the feature columns and the clip percentile.
+            data_config: The `data` section, for the feature columns and which of them are
+                log-scaled.
             max_trace_length: The sequence length splits were preprocessed to, from
                 `pipelines.preprocess.case_length_cutoff`.
         Returns:
             The codec to write beside the splits.
         """
-        percentile = data_config.numeric_clip_percentile
         log_durations = data_config.log_scaled_durations
         categorical_features, numeric_features = _fit_event_features(
             train=train,
             columns=data_config.event_features,
             log_scaled=set(data_config.log_scaled_features),
-            percentile=percentile,
         )
         return cls(
             activity=CategoricalColumn.fit(
@@ -318,15 +306,9 @@ class DatasetCodec(StrictModel):
             resource=CategoricalColumn.fit(
                 train, column=RESOURCE_KEY, special_tokens=RESOURCE_TOKENS
             ),
-            ts_prev=NumericColumn.fit(
-                train, column=EVENT_DELTA_KEY, percentile=percentile, log=log_durations
-            ),
-            ts_start=NumericColumn.fit(
-                train, column=CASE_ELAPSED_KEY, percentile=percentile, log=log_durations
-            ),
-            remaining_time=NumericColumn.fit(
-                train, column=REMAINING_TIME_KEY, percentile=percentile, log=log_durations
-            ),
+            ts_prev=NumericColumn.fit(train, column=EVENT_DELTA_KEY, log=log_durations),
+            ts_start=NumericColumn.fit(train, column=CASE_ELAPSED_KEY, log=log_durations),
+            remaining_time=NumericColumn.fit(train, column=REMAINING_TIME_KEY, log=log_durations),
             categorical_features=categorical_features,
             numeric_features=numeric_features,
             dataset=data_config.name,
@@ -378,19 +360,17 @@ def _fit_event_features(
     train: pd.DataFrame,
     columns: list[str],
     log_scaled: set[str],
-    percentile: float,
 ) -> tuple[tuple[CategoricalColumn, ...], tuple[NumericColumn, ...]]:
     """Sort the configured columns into categorical and numeric, and fit each on the train split.
     Args:
-        train: The split every vocabulary and range is fit on.
+        train: The split every vocabulary and statistic is fit on.
         columns: The configured columns, in the order they will occupy the shared table and the
             embedding projection's input.
-        log_scaled: Which of them take a log1p before the min-max. A name in here that turns out
-            categorical simply never comes up, the column having no range to scale.
-        percentile: Passed to `NumericColumn.fit` for each numeric column.
+        log_scaled: Which of them take a log1p before the standardization. A name in here that
+            turns out categorical simply never comes up, the column having nothing to scale.
     Returns:
         The categorical features with their table offsets assigned, and the numeric features
-        with their fitted ranges.
+        with their fitted statistics.
     """
     categorical: list[CategoricalColumn] = []
     numeric: list[NumericColumn] = []
@@ -399,11 +379,7 @@ def _fit_event_features(
 
     for column in columns:
         if is_numeric_dtype(train[column]):
-            numeric.append(
-                NumericColumn.fit(
-                    train, column=column, percentile=percentile, log=column in log_scaled
-                )
-            )
+            numeric.append(NumericColumn.fit(train, column=column, log=column in log_scaled))
         else:
             feature = CategoricalColumn.fit(
                 train, column=column, special_tokens=FEATURE_TOKENS, offset=offset

@@ -18,10 +18,10 @@ class Events(NamedTuple):
 
     activities: torch.Tensor  # int64, [..., seq_len]
     resources: torch.Tensor  # int64, [..., seq_len]
-    ts_prev: torch.Tensor  # float32 in [0, 1], time since the previous event, [..., seq_len]
-    ts_start: torch.Tensor  # float32 in [0, 1], time since the case began, [..., seq_len]
+    ts_prev: torch.Tensor  # float32, standardized time since the previous event, [..., seq_len]
+    ts_start: torch.Tensor  # float32, standardized time since the case began, [..., seq_len]
     categorical_attributes: torch.Tensor  # int64, [..., seq_len, num_categorical]
-    numeric_attributes: torch.Tensor  # float32 in [0, 1], [..., seq_len, num_numeric]
+    numeric_attributes: torch.Tensor  # float32, standardized, [..., seq_len, num_numeric]
     numeric_attributes_present: (
         torch.Tensor
     )  # float32 0/1, 0.0 where the log had no value [..., seq_len, num_numeric]
@@ -83,7 +83,7 @@ class SplitTrace(NamedTuple):
     prefix: Events  # the condition: the events before the cut, no EOT
     suffix: Events  # what the decoder must produce: content, EOT, then padding
 
-    # The normalized minutes from the last prefix event to the case's real ending, one per item.
+    # The standardized minutes from the last prefix event to the case's real ending, one per item.
     remaining_time: torch.Tensor  # float32, [] per item, [batch_size] batched
 
     def to(self, device: torch.device) -> SplitTrace:
@@ -104,7 +104,7 @@ class _Trace:
     events: Events  # the case's events, unpadded
     remaining_time: (
         torch.Tensor
-    )  # normalized minutes from each event to the case's real ending, [len(events)]
+    )  # standardized minutes from each event to the case's real ending, [len(events)]
 
 
 class TraceDataset(Dataset):
@@ -331,7 +331,7 @@ def _group_cases(
         split_dataset: The split, from `_read_split`; only its case column and row order are
             read here, the values themselves already encoded into `events`.
         events: The split's events, encoded whole, indexed the same as `split_dataset`.
-        remaining_time: The split's normalized remaining time, indexed the same way.
+        remaining_time: The split's standardized remaining time, indexed the same way.
     Returns:
         One `_Trace` per case of the split, each of them whole: preprocessing dropped the cases
         that do not fit `max_trace_length`, so nothing is cut short here.

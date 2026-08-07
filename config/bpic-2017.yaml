@@ -26,18 +26,14 @@ data:
     - Selected
     - CreditScore
     - OfferedAmount
-    # Calendar position of the event, bounded so both scale linearly
+    # Calendar position of the event
     - day_in_week
     - seconds_in_day
 
-  # The amounts whose long tail a log spreads. Measured on this log: the three below are the only
-  # numeric features a log helps; it skews case:RequestedAmount, NumberOfTerms and CreditScore.
-  log_scaled_features:
-    - FirstWithdrawalAmount
-    - MonthlyCost
-    - OfferedAmount
-  log_scaled_durations: true
-  numeric_clip_percentile: 99.0
+  # Every numeric channel is standardized raw, as both baselines do: SuTraN runs with
+  # `log_transformed = False`, U-ED-LSTM with an empty `num_dyn_log`.
+  log_scaled_features: []
+  log_scaled_durations: false
   batch_size: 256
   num_workers: 0
 

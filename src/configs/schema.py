@@ -52,24 +52,16 @@ class DataConfig(StrictModel):
 
     log_scaled_features: list[str] = Field(
         ...,
-        description='Which `event_features` are log1p-scaled instead of linearly scaled, for '
-        'columns spanning several orders of magnitude',
+        description='Which `event_features` take a log1p before being standardized, for columns '
+        'spanning several orders of magnitude. Empty matches the baselines, which standardize '
+        'every numeric column raw',
     )
 
     log_scaled_durations: bool = Field(
         ...,
         description='Whether the two timestamp proxies (`Events.ts_prev`, `Events.ts_start`) and '
-        'remaining time are log1p-scaled instead of linearly scaled. On, durations match this '
-        "repo's baselines; off, they match papers that normalize them linearly instead",
-    )
-
-    numeric_clip_percentile: float = Field(
-        ...,
-        gt=0.0,
-        le=100.0,
-        description='Train-split percentile above which every numeric channel is clipped before '
-        'normalization: the timestamp proxies, remaining time, and any numeric event_features. '
-        'One shared percentile for all of them, not just the time-based channels',
+        'remaining time take a log1p before being standardized. Off matches the baselines, which '
+        'standardize durations raw',
     )
 
     batch_size: int = Field(..., gt=0)
