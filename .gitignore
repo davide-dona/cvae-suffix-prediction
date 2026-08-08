@@ -17,3 +17,5 @@ processed/
 # Declarative models discovered from them
 declare/
 
+# Temporary scripts
+tmp/
