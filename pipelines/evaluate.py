@@ -6,17 +6,16 @@ from src import paths
 from src.configs import ExperimentConfig, load_config
 from src.evaluation.metrics import evaluate_generations
 from src.evaluation.report import EvaluationReport
-from src.inference import read_generations
-from src.logs.declare import load_declare_model
 
 
-def run(config: ExperimentConfig, generations_file: Path) -> None:
+def run(config: ExperimentConfig, generations_file: Path, workers: int | None) -> None:
     """Score a run's generated suffixes and write the result under `outputs/eval/`.
 
     Args:
         config: The validated experiment config of the run that wrote the generations, read for
             the dataset the suffixes belong to and the declarative model they are checked against.
         generations_file: The generations to score, from `python -m pipelines.generate`.
+        workers: How many processes to score with, or `None` for one per available CPU.
     """
 
     dataset = config.data.name
@@ -31,9 +30,10 @@ def run(config: ExperimentConfig, generations_file: Path) -> None:
 
     # Compute the metrics of the generation
     metrics = evaluate_generations(
-        read_generations(generations_file),
-        declare_model=load_declare_model(dataset),
+        generations_file,
+        dataset=dataset,
         consider_vacuity=config.declare.consider_vacuity,
+        workers=workers,
     )
 
     # The report is named after the run the generations belong to, so it sits beside them under
@@ -65,9 +65,16 @@ def main() -> None:
         required=True,
         help='Path to the generations file to score, from `pipelines.generate`.',
     )
+    parser.add_argument(
+        '-j',
+        '--workers',
+        type=int,
+        default=None,
+        help='How many processes to score with. Defaults to one per available CPU.',
+    )
     args = parser.parse_args()
 
-    run(load_config(args.config), args.generations)
+    run(load_config(args.config), args.generations, args.workers)
 
 
 if __name__ == '__main__':
