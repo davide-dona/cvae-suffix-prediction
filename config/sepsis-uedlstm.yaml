@@ -6,18 +6,13 @@ data:
   activity_key: Activity
   resource_key: Resource
   timestamp_key: "time:timestamp"
-
-  # Not the 65/15/20 of the other configs: their Sepsis notebook sets `test_validation_size` to
-  # 0.15 and derives `train_validation_size` as 0.15 / (1 - 0.15), which their splitter then
-  # applies to the whole case list rather than to what test left over. Written out to full
-  # precision because `int(val_split * n)` has to land on the same case count they got.
-  train_split: 0.6735294117647059
-  val_split: 0.17647058823529413
-  test_split: 0.15
+  train_split: 0.65
+  val_split: 0.15
+  test_split: 0.2
   split_strategy: uedlstm_replicated
   max_seq_len_percentile: 98.5  # as in `sepsis.yaml`
 
-  # Their Sepsis loader notebook's lists, minus `concept:name` and `org:group`, which are the
+  # Their v1 Sepsis loader notebook's lists, minus `concept:name` and `org:group`, which are the
   # activity and resource channels here, and minus `lifecycle:transition`, which this export of
   # the log does not carry. Age is a static categorical for them and stays numeric here: this
   # pipeline reads a column's kind off its dtype, and forcing it would be a knob for one column.
@@ -57,21 +52,3 @@ data:
   log_scaled_durations: false
   batch_size: 256
   num_workers: 0
-
-# Same shape as `sepsis.yaml`: the comparison is about the split and the features, so the
-# model is left where it already is.
-model:
-  d_model: 64
-  embeddings:
-    resource_dim: 16
-    feature_dim: 4  # as in `sepsis.yaml`: many narrow categorical channels, so a narrow lookup
-  prefix_encoder:
-    feedforward_dim: 256
-  suffix_encoder:
-    num_layers: 1
-    feedforward_dim: 256
-  prior:
-    hidden_dims: [64]
-  decoder:
-    feedforward_dim: 256
-    head_hidden_dim: 64

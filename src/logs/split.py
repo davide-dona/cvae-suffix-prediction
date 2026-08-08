@@ -55,11 +55,13 @@ def uedlstm_split(
     """
     Split a log the way U-ED-LSTM does, so both models can be scored on identical test cases.
 
-    A seeded shuffle of the cases in the order the log first mentions them, cut into a validation
-    block, a test block and the remainder.
+    A seeded shuffle of the sorted case list, cut into a validation block, a test block and the
+    remainder.
 
     Random rather than chronological, and with no leakage prevention.
-    Equivalent to the `split_log` function in U-ED-LSTM's `utils.py`.
+    Equivalent to `EventLogSplitter.split`, which is the same code in U-ED-LSTM's
+    `new_event_log_loader.py` and `new_event_log_loader_v2.py`; only the fractions each
+    dataset passes it differ.
 
     Args:
         log: Event log, one row per event.
@@ -67,13 +69,17 @@ def uedlstm_split(
         val_frac: Fraction of cases assigned to the validation set, taken first.
         test_frac: Fraction of cases assigned to the test set, taken next.
     Returns:
-        `(train, val, test)` DataFrames, each a row-subset of `log`.
+        `(train, val, test)` DataFrames, each a row-subset of `log`. A case whose ID is missing
+        appears in none of them.
     """
-    # `unique` keeps the order the log first mentions each case, which is what the baseline
-    # shuffles; a differently ordered log would give a different permutation from the same seed.
+    # Sorted, and with the missing IDs dropped, because that is the case list their splitter
+    # receives: it shuffles what their `groupby` hands back, which drops the group whose key
+    # read as NaN - Sepsis has a case named "NA" - and which came back sorted under the pandas
+    # their notebooks were run with. Both the order and the count feed the permutation, so a
+    # deviation in either gives a different split from the same seed.
     # The object array is theirs too: numpy warns that shuffling a pandas extension array in
     # place is not guaranteed to be a permutation of it.
-    cases = np.asarray(log[case_key].unique(), dtype=object)
+    cases = np.asarray(sorted(log[case_key].dropna().unique()), dtype=object)
     # The legacy MT19937 generator, which is what `np.random.seed` + `np.random.shuffle` draw
     # from. `default_rng` would be a different generator, so a different permutation.
     np.random.RandomState(seed=UEDLSTM_SEED).shuffle(cases)

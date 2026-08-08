@@ -1,5 +1,5 @@
 seed: 42
-experiment_name: cvae_suffix_transformer
+experiment_name: cvae
 
 # Declarative model discovered from the train split during preprocessing,
 # written to data/<dataset>/declare/model.decl.
@@ -77,7 +77,7 @@ training:
   # Using the full evaluation set for validation would be too slow
   validation_pairs: 20000
   generation_pairs: 1024
-
+  
 early_stopping:
   patience: 30   # number of validation checks with no improvement after which training will be stopped
   min_delta_perc: 0.005  # z is sampled, so the score is noisy; this is the margin that counts as progress

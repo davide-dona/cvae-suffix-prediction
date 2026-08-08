@@ -13,10 +13,14 @@ data:
   split_strategy: uedlstm_replicated
   max_seq_len_percentile: 98.5  # as in `bpic17.yaml`
 
-  # Their BPIC17 loader notebook's lists, minus `concept:name` and `org:resource`, which are
-  # the activity and resource channels here. Action, EventOrigin and OfferedAmount are absent
-  # from their configuration, so they are absent from ours.
+  # Their v1 BPIC17 loader notebook's lists, minus `concept:name` and `org:resource`, which are
+  # the activity and resource channels here. v1, not v2, because v1 is what the paper reports
+  # and what `training_variational_dropout/BPIC17/BPIC_2017_full_grad_norm_4layer.pkl` was
+  # trained on; v2 drops `Action` and `EventOrigin`, which v1 and that checkpoint's own
+  # `enc_feat` both carry. `OfferedAmount`, `OfferID` and `EventID` are in neither.
   event_features:
+    - Action
+    - EventOrigin
     - case:LoanGoal
     - case:ApplicationType
     - Accepted
