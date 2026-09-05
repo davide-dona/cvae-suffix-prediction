@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
 
@@ -125,7 +124,7 @@ class TuningReport:
             The path written to.
         """
         path = Path(path)
-        path.write_text(json.dumps(asdict(self), indent=4))
+        path.write_bytes(_ADAPTER.dump_json(self, indent=4))
         return path
 
     def sampling_for(self, run: RunIdentity) -> SamplingConfig:
