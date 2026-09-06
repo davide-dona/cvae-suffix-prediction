@@ -37,7 +37,7 @@ data:
 
   log_scaled_features: []
   log_scaled_remaining_time: false
-  log_scaled_time_to_next: false
+  log_scaled_cycle_time: false
 
 declare:
   consider_vacuity: false # unactivated constraints are considered as violated

@@ -1,9 +1,3 @@
-"""Mine a declarative model from a dataset's train split.
-
-What checks a trace against the written model lives in `src.logs.conformance`, which reads the
-file this writes and depends on neither pm4py nor Declare4Py.
-"""
-
 import pandas as pd
 import pm4py
 from Declare4Py.D4PyEventLog import D4PyEventLog
@@ -11,7 +5,7 @@ from Declare4Py.ProcessMiningTasks.Discovery.DeclareMiner import DeclareMiner
 
 from src import paths
 from src.configs import DeclareConfig
-from src.logs.conformance import COMMENT, SETTINGS_LINE
+from src.logs.declare.constraints import COMMENT, SETTINGS_LINE
 from src.logs.keys import ACTIVITY_KEY, CASE_KEY, TIMESTAMP_KEY
 
 
@@ -65,7 +59,7 @@ def discover_declare_model(
 
     # What the constraints below were mined under, so a reader of the file can tell a model mined
     # one way from one mined another. Nothing reads it back to check conformance with: see
-    # `src.logs.conformance.discovery_settings`.
+    # `src.logs.declare.constraints.discovery_settings`.
     lines = [
         f'{COMMENT} discovered from the train split of {dataset} by pipelines.preprocess',
         f'{SETTINGS_LINE}{declare_config.model_dump_json()}',

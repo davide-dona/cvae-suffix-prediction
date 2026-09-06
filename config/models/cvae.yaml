@@ -1,4 +1,11 @@
-# The conditional VAE: the backbone below, plus the latent the variability lives in
+# The conditional VAE: the backbone below, plus the latent the variability lives in. Every width
+# below matches config/models/transformer.yaml, so what separates the two runs is the latent and
+# nothing else. z ~ p(z | prefix) carries what the prefix leaves undetermined, and the decoder
+# reads its heads greedily, so a whole suffix is one draw from z rather than a run of independent
+# per-step draws, which is the comparison.
+#
+# Both time heads are point regressors, as the Transformer's are and as SuTraN's are, rather than
+# heads emitting a scale of their own to be drawn from.
 seed: 42
 
 dataloader:
@@ -9,18 +16,14 @@ dataloader:
 
 model:
   kind: cvae
-  # Names every run this architecture produces, and the series it is drawn as.
   name: cvae
 
-  # The size of the embedding space
   d_model: 32
 
-  # Activity/resource lookup widths, concatenated with the time delta, the data section's
-  # event_features and their present flags, and projected to d_model.
   embeddings:
     activity_dim: 16
     resource_dim: 32
-    feature_dim: 8  # per categorical event feature; each one widens the projection's input
+    feature_dim: 8
 
   # Reads both sequences: the prefix, whose CLS summary feeds the prior and whose events the
   # decoder cross-attends over, and, during training only, the ground-truth suffix, whose
@@ -37,16 +40,14 @@ model:
     dropout: 0.1
 
   latent:
-    latent_dim: 16  # z only carries what the prefix leaves undetermined
+    latent_dim: 16
 
-  # Causal self-attention over the suffix, cross-attention over the encoded prefix. Its heads are
-  # read greedily: a suffix is one draw from z rather than a run of independent per-step draws.
   decoder:
     num_layers: 4
     num_heads: 8
     feedforward_dim: 128
     dropout: 0.1
-    activity_dropout: 0.3  # teacher-forced activities blanked in training, so the decoder must lean on z
+    activity_dropout: 0.3
     head_hidden_dim: 128
 
   # All the hyperparameters below are defined in steps, not epochs, so that they are independent
@@ -64,16 +65,11 @@ model:
 optimizer:
   lr: 0.0012
   weight_decay: 0.0
-  # A batch this wide takes a few hundred steps to settle; starting it at the full rate is what
-  # makes those the steps a run never recovers from. Nothing decays it afterwards.
   warmup_steps: 300
 
 training:
-  # Dual RTX A6000 workstation, 48GB GPU memory each; `cuda:0` pins one of the two.
   device: cuda:0
   max_steps: 10000
-  # Halved to pay for `inference.validation_samples`: the generation pass on every check now draws
-  # ten times what it did, and validating half as often leaves a run in the same wall clock.
   val_every_n_steps: 100
   grad_clip_norm: 5.0  # null to leave gradients unclipped
   # Fixed slice of the evaluation set used for validation;
@@ -82,15 +78,11 @@ training:
   generation_pairs: 1024
 
 early_stopping:
-  # Non-improving validation checks tolerated before training stops. Counted in checks, so it was
-  # halved alongside `training.val_every_n_steps`: the stall it sits through is the same 1500 steps.
+  # Non-improving validation checks tolerated before training stops.
   patience: 15
-  min_delta_perc: 0.005  # z is sampled, so the score is noisy; this is the margin that counts as progress
+  min_delta_perc: 0.005
 
-# Suffixes drawn per prefix, once for each of the two passes that generate them. Both draw the same
-# number: EMSC read at a smaller budget is a different number rather than a noisier one, and the
-# shortfall falls hardest on the model whose draws are genuinely spread, which is the one this
-# selects for. What separates the two passes is which split they read and how much of it.
+# Suffixes drawn per prefix, once for each of the two passes that generate them.
 inference:
   # The pass inside the training loop, over a fixed slice of the validation split. A checkpoint is
   # selected on it, so it is read at the budget the report it is answering for is read at.

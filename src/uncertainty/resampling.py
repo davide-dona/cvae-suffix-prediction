@@ -4,37 +4,15 @@ from typing import Self
 
 import numpy as np
 
-# What the resampling is reproducible under, so two runs of the pipeline draw the same bands and
-# emphasize the same cells. One seed for both bootstraps: a band on a line and the bold in a cell
-# cannot then drift apart in their arithmetic.
-SEED = 24
-# How many resamples are drawn at once. One draw is a row of `[chunk, units]`, so this trades the
-# memory that matrix takes against the number of passes over what is being resampled.
-CHUNK = 250
+SEED = 42  # Fixed seed for reproducibility
+CHUNK = 250  # How many resamples to draw at once
 
 
 @dataclass(frozen=True)
 class Units:
-    """What a bootstrap draws from: the units, each carrying its summed scores and its weight.
+    """A set of units to draw from, each with a total and a weight."""
 
-    The unit is the whole of the statistical argument, and it is the only thing the two bootstraps
-    of this package differ in.
-
-    Within one length a case has exactly one prefix, so a prefix is its own unit at weight 1 and the
-    ordinary bootstrap is the right one. Over the whole split a case contributes one prefix per cut
-    point, so its prefixes are not independent of each other: the unit is then the whole case, with
-    all of its cuts attached, carrying their summed scores and how many of them there were.
-    Resampling the prefixes there instead would read the interval far too narrow.
-
-    A resample's mean is the ratio estimator `sum(w * totals) / sum(w * weights)`, which is exactly
-    the mean a report holds either way. Summed rather than averaged within a unit: every prefix
-    weighs the same in that mean, so a long case weighs more, and the resample has to read the same
-    way.
-    """
-
-    # [units, ...] - each unit's summed scores, its trailing axes whatever the caller carries
     totals: np.ndarray
-    # [units] - how many rows each unit summed, which is the denominator of its mean
     weights: np.ndarray
 
     @classmethod
@@ -52,7 +30,6 @@ class Units:
     @classmethod
     def of_clusters(cls, totals: np.ndarray, weights: np.ndarray) -> Self:
         """Take each cluster as one unit, which is the cluster bootstrap.
-
         Args:
             totals: Each cluster's summed scores, `[clusters, ...]`.
             weights: How many rows each cluster summed, `[clusters]`.
@@ -73,10 +50,6 @@ class Units:
 def _resample_counts(units: int, resamples: int, *, generator: np.random.Generator) -> Iterator:
     """Draw a bootstrap's resamples, a chunk of them at a time.
 
-    One resample draws `units` of the units with replacement, so what it yields is how many times
-    each unit was drawn rather than which ones were. `resample_means` applies those counts to
-    whatever the unit carries, which is what lets one draw serve every metric at once.
-
     Args:
         units: How many units there are to draw from.
         resamples: How many resamples to draw in total.
@@ -88,9 +61,6 @@ def _resample_counts(units: int, resamples: int, *, generator: np.random.Generat
     drawn = 0
     while drawn < resamples:
         size = min(CHUNK, resamples - drawn)
-        # Which unit each of `units` draws landed on, offset so that a resample's draws fall in its
-        # own stretch of one flat count: `[size, units]` counted in a single `bincount`, which is an
-        # order of magnitude cheaper than a multinomial over this many units.
         picks = generator.integers(low=0, high=units, size=(size, units))
         picks += (np.arange(size) * units)[:, None]
         yield (

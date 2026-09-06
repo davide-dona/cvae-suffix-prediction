@@ -65,15 +65,15 @@ class DecoderOutput:
     """What the decoder predicts at every suffix position: the activity to write there, the
     minutes until it, and the minutes until the case ends.
 
-    Both times are a single standardized number on the scale their targets are encoded at, scored
-    by `time_mae`. Neither head carries a spread of its own: what a wait could have been is the
+    Both times are a single standardized number on the scale their targets are encoded at, scored by
+    `time_mae`. Neither head carries a spread of its own: what a cycle time could have been is the
     latent's to say where there is one, and the sampled activity path's where there is not. They
-    overlap - a remaining time is the sum of the waits from that position on - and are read as two
-    independent estimates rather than tied together.
+    overlap - a remaining time is the sum of the cycle times from that position on - and are read as
+    two independent estimates rather than tied together.
     """
 
     activity_logits: torch.Tensor  # [batch_size, seq_len, num_activities]
-    times_to_next: torch.Tensor  # [batch_size, seq_len], standardized
+    cycle_times: torch.Tensor  # [batch_size, seq_len], standardized
     remaining_times: torch.Tensor  # [batch_size, seq_len], standardized
 
 
@@ -88,7 +88,7 @@ class GeneratedSuffix:
 
     activities: torch.Tensor  # [..., steps]
     lengths: torch.Tensor  # [...], events emitted before EOT, or `steps` if EOT never came
-    times_to_next: torch.Tensor  # [..., steps], standardized like the targets
+    cycle_times: torch.Tensor  # [..., steps], standardized like the targets
     # Read at position 0 alone, so it measures from the last prefix event, which is how the
     # reported remaining time is defined.
     remaining_time: torch.Tensor  # [...], standardized like the targets
@@ -254,15 +254,15 @@ class Decoder(nn.Module):
     latent has nowhere else to put its variability, so it declares a sampler and draws the activity
     from its logits at every step.
 
-    The time heads are point regressors either way, and that is the whole of what they are: a
-    single standardized number, scored by the absolute error. A head that emitted a scale of its
-    own would be a second difference between the two arms, one the latent does not reach, and it
-    would be paid for out of the activity head - a scale is free to shrink, and every step it
-    shrinks by multiplies the gradient the shared trunk sees from the times against the one it sees
-    from the activities. What a wait could have been is the latent's to carry where there is one.
-    Where there is not, a wait still varies from draw to draw, because it is read off an activity
-    path that was itself drawn; a remaining time, read at position 0 before any activity is
-    written, does not, and that is a result about this arm rather than a gap in it.
+    The time heads are point regressors either way, and that is the whole of what they are: a single
+    standardized number, scored by the absolute error. A head that emitted a scale of its own would
+    be a second difference between the two arms, one the latent does not reach, and it would be paid
+    for out of the activity head - a scale is free to shrink, and every step it shrinks by
+    multiplies the gradient the shared trunk sees from the times against the one it sees from the
+    activities. What a cycle time could have been is the latent's to carry where there is one. Where
+    there is not, a cycle time still varies from draw to draw, because it is read off an activity
+    path that was itself drawn; a remaining time, read at position 0 before any activity is written,
+    does not, and that is a result about this arm rather than a gap in it.
     """
 
     def __init__(
@@ -347,7 +347,7 @@ class Decoder(nn.Module):
         )
         # One number each, the standardized time itself. Neither output is squashed: the targets
         # are standardized rather than bounded.
-        self.time_to_next_head = nn.Linear(in_features=config.head_hidden_dim, out_features=1)
+        self.cycle_time_head = nn.Linear(in_features=config.head_hidden_dim, out_features=1)
         self.remaining_time_head = nn.Linear(in_features=config.head_hidden_dim, out_features=1)
 
     def forward(
@@ -385,7 +385,7 @@ class Decoder(nn.Module):
         # Both time heads are [batch_size, seq_len, 1] -> [batch_size, seq_len].
         return DecoderOutput(
             activity_logits=self.activity_head(features),
-            times_to_next=self.time_to_next_head(features).squeeze(dim=-1),
+            cycle_times=self.cycle_time_head(features).squeeze(dim=-1),
             remaining_times=self.remaining_time_head(features).squeeze(dim=-1),
         )
 
@@ -560,7 +560,7 @@ class Decoder(nn.Module):
                 dtype=torch.long,
                 device=device,
             ),
-            times_to_next=torch.zeros(size=(batch_size, seq_len), device=device),
+            cycle_times=torch.zeros(size=(batch_size, seq_len), device=device),
             categorical_attributes=torch.zeros(
                 size=(batch_size, seq_len, self.embeddings.num_categorical),
                 dtype=torch.long,
@@ -597,7 +597,7 @@ class Decoder(nn.Module):
         conditioned decoder declares none, so every step is greedy and two generations of one
         prefix differ in the z each was given. A decoder with no latent draws its activity at
         every step, and its point prediction is the same pass with `sample=False`. Both time
-        heads are read as they are either way, so a wait varies from draw to draw only through
+        heads are read as they are either way, so a cycle time varies from draw to draw only through
         the activity path it was read off.
 
         Args:
@@ -633,7 +633,7 @@ class Decoder(nn.Module):
         generated_activities = torch.zeros(
             size=(batch_size, max_steps), dtype=torch.long, device=device
         )
-        generated_times_to_next = torch.zeros(
+        generated_cycle_times = torch.zeros(
             size=(batch_size, max_steps), dtype=prefix_encoded.dtype, device=device
         )
         # A row that never emits EOT ran to the cap, so that is the length it keeps.
@@ -669,7 +669,7 @@ class Decoder(nn.Module):
                 remaining_time = self.remaining_time_head(features).squeeze(dim=-1)  # [batch_size]
 
             generated_activities[:, position] = activities
-            generated_times_to_next[:, position] = self.time_to_next_head(features).squeeze(dim=-1)
+            generated_cycle_times[:, position] = self.cycle_time_head(features).squeeze(dim=-1)
             next_input = activities.unsqueeze(dim=1)  # [batch_size, 1]
 
             # A suffix ends at its first EOT, so a later one cannot move the length back.
@@ -685,6 +685,6 @@ class Decoder(nn.Module):
         return GeneratedSuffix(
             activities=generated_activities[:, :steps_taken],  # [batch_size, steps]
             lengths=lengths,
-            times_to_next=generated_times_to_next[:, :steps_taken],  # [batch_size, steps]
+            cycle_times=generated_cycle_times[:, :steps_taken],  # [batch_size, steps]
             remaining_time=remaining_time,
         )

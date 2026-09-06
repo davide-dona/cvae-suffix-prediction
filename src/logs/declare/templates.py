@@ -1,47 +1,13 @@
-import re
 from collections.abc import Callable
-from dataclasses import dataclass, replace
-from functools import lru_cache
-from pathlib import Path
+from dataclasses import dataclass
 
-from src import paths
-from src.configs import DeclareConfig
-from src.suffixes import ActivityCodes
-
-# Parse the declarative model written by `discover_declare_model` back into the constraints it
-# holds. Read here rather than through `DeclareModel.parse_from_file`, whose grammar rejects the
-# activity names a real log carries: see `read_constraints`.
-_CONSTRAINT_LINE = re.compile(r'^(.*)\[(.*)\]\s*(.*)$')
-_TEMPLATE_AND_CARDINALITY = re.compile(r'(^.+?)(\d*$)')
-
-# The header `discover_declare_model` opens a model with and `discovery_settings` reads back.
-# Comment lines, so nothing that parses the constraints has to know about them.
-COMMENT = '#'
-SETTINGS_LINE = '# settings: '
-
-# Maximum number of distinct traces cached by the ConformanceChecker. Each prefix generates one
-# trace per sample, most of which repeat, and the same trace may be generated for several
-# prefixes; caching previously computed scores avoids redundant conformance checks.
-_TRACE_CACHE_SIZE = 100_000
-
-# Where each activity of a trace occurs, in order, keyed by the character it is spelled with.
-# Built once per trace, so a template answers over the occurrences of the activities it names
-# rather than over the trace.
+# The positions of each activity in a trace, keyed by the activity's character.
 Positions = dict[str, list[int]]
-
-# Stands in for an activity a constraint names that the dataset's codebook does not hold. Outside
-# the private use area the codes are drawn from, so it matches nothing a trace can spell.
-_UNMATCHABLE = '\x00'
 
 
 @dataclass(frozen=True, slots=True)
 class Constraint:
-    """One constraint of a model: the template it follows and the activities it is about.
-
-    `read_constraints` names those activities the way the model file does; `ConformanceChecker`
-    translates them onto the dataset's codebook, so the constraints it holds spell an activity the
-    same way a trace handed to `rate` does.
-    """
+    """One constraint of a model: the template it follows and the activities it is about."""
 
     template: '_Template'
     # The first activity named, which is what activates every template but the precedence family
@@ -53,24 +19,20 @@ class Constraint:
 
     def holds(self, trace: str, positions: Positions) -> bool:
         """Whether one finished trace satisfies this constraint.
-
         Args:
             trace: The trace's activities, one character each, in order.
-            positions: Where each of them occurs, from `ConformanceChecker.rate`.
+            positions: Where each of them occurs, from `ConformanceChecker.check`.
         Returns:
             True if the trace both activates the constraint and does not violate it.
         """
         return self.template.holds(self, trace, positions)
 
 
-_Predicate = Callable[[Constraint, str, Positions], bool]
-
-
 @dataclass(frozen=True, slots=True)
 class _Template:
     """One DECLARE template: what satisfying it means, and how a constraint of it is written."""
 
-    holds: _Predicate
+    holds: Callable[[Constraint, str, Positions], bool]
     is_binary: bool
     supports_cardinality: bool
 
@@ -212,10 +174,7 @@ def _alternate_precedence(constraint: Constraint, trace: str, positions: Positio
 
 
 # Every template `pipelines.preprocess` can mine, keyed by the name it writes into the model
-# file. The whole of what `DeclareMiner` draws from, which is Declare4Py's unary templates and its
-# binary ones that are not shortcuts for a pair of others: a template missing here is a model this
-# cannot read back, and the miner picks its templates off the log rather than off the dataset, so
-# one left out surfaces only once some log happens to support it.
+# file.
 TEMPLATES: dict[str, _Template] = {
     'Existence': _Template(holds=_existence, is_binary=False, supports_cardinality=True),
     'Absence': _Template(holds=_absence, is_binary=False, supports_cardinality=True),
@@ -253,135 +212,3 @@ TEMPLATES: dict[str, _Template] = {
         holds=_alternate_precedence, is_binary=True, supports_cardinality=False
     ),
 }
-
-
-def discovery_settings(path: Path) -> DeclareConfig | None:
-    """What a declarative model was discovered under, as its own header records it.
-
-    Discovery and conformance checking each decide, separately, whether a constraint a trace never
-    activates counts as satisfied: discovery because it decides which constraints hold on enough of
-    the log to keep, checking because it decides what a trace is credited for. They are independent
-    settings and need not agree, which is why the file records the one it was mined under rather
-    than the checker reading it as its own.
-
-    Args:
-        path: The model file, from `paths.DECLARE_MODEL`.
-    Returns:
-        The settings its header records, or `None` for a model written before the header existed,
-        which says nothing about how it was mined.
-    Raises:
-        pydantic.ValidationError: If the header is there but does not describe a discovery.
-    """
-    for line in path.read_text().splitlines():
-        if line.startswith(SETTINGS_LINE):
-            return DeclareConfig.model_validate_json(line.removeprefix(SETTINGS_LINE))
-    return None
-
-
-def read_constraints(path: Path) -> list[Constraint]:
-    """Read a written declarative model and return the constraints it holds.
-
-    This reads the model directly instead of using `DeclareModel.parse_from_file`, whose grammar
-    does not support arbitrary activity names: names containing parentheses or colons can be
-    misparsed as declarations or attribute assignments. Constraint lines delimit their activities
-    with brackets, so their names can be recovered reliably from the constraint itself.
-
-    Args:
-        path: The model file produced by `discover_declare_model`.
-    Returns:
-        One entry per constraint, in the order the file holds them.
-    Raises:
-        ValueError: If a line names a template `TEMPLATES` does not hold, if a binary constraint
-            does not name two activities, or if it names the same one twice. Each would silently
-            change every conformance number in a report, so none is skipped.
-    """
-    constraints = []
-
-    for raw in path.read_text().splitlines():
-        line = raw.strip()
-
-        # Skip the header, which says how the model was mined rather than what it holds, and any
-        # other line that is not a constraint.
-        if line.startswith(COMMENT) or not _CONSTRAINT_LINE.search(line):
-            continue
-
-        head, rest = line.split('[', 1)
-        named = _TEMPLATE_AND_CARDINALITY.search(head)
-        if named is None:
-            raise ValueError(f'"{line}" does not name a template.')
-
-        name, cardinality = named.group(1), named.group(2)
-        template = TEMPLATES.get(name)
-        if template is None:
-            raise ValueError(
-                f'"{line}" uses the {name} template, which {__name__} does not check. '
-                f'Add it to TEMPLATES, or mine the model without it.'
-            )
-
-        activities = rest.split(']')[0].split(', ')
-        expected = 2 if template.is_binary else 1
-        if len(activities) != expected:
-            raise ValueError(f'"{line}" names {len(activities)} activities, not {expected}.')
-        if template.is_binary and activities[0] == activities[1]:
-            raise ValueError(
-                f'"{line}" names one activity twice, which no template here is defined for.'
-            )
-
-        constraints.append(
-            Constraint(
-                template=template,
-                first=activities[0],
-                second=activities[1] if template.is_binary else None,
-                n=int(cardinality) if template.supports_cardinality and cardinality else 1,
-            )
-        )
-    return constraints
-
-
-class ConformanceChecker:
-    """Scores traces against the declarative model a dataset was mined for.
-
-    Reads nothing off disk per check, so a scoring pool builds one per worker and reuses it.
-    """
-
-    def __init__(self, dataset: str, codes: ActivityCodes) -> None:
-        """
-        Args:
-            dataset: The dataset whose model to check against, read from where preprocessing
-                wrote it.
-            codes: The dataset's codebook, which the constraints are translated onto so a trace is
-                checked as the string the generations already hold it as, with nothing decoded per
-                check. An activity the codebook does not know is given a character no trace can
-                contain, leaving its constraint unactivated rather than growing the codebook.
-        """
-        self._constraints = tuple(
-            replace(
-                constraint,
-                first=codes.codes.get(constraint.first, _UNMATCHABLE),
-                second=(
-                    None
-                    if constraint.second is None
-                    else codes.codes.get(constraint.second, _UNMATCHABLE)
-                ),
-            )
-            for constraint in read_constraints(paths.DECLARE_MODEL.require(dataset))
-        )
-
-    @lru_cache(maxsize=_TRACE_CACHE_SIZE)  # noqa: B019 -- one checker per scoring process
-    def rate(self, trace: str) -> float:
-        """
-        The fraction of the model's constraints one trace satisfies.
-
-        Args:
-            trace: The trace's activities, one character each, in order, on the dataset's own
-                scale. A whole case, prefix included: a constraint like `Init` or `Precedence` is
-                about the trace, not about a run of events inside it.
-        Returns:
-            The satisfied share, in `[0, 1]`, or 0.0 for a model that checks nothing.
-        """
-        positions: Positions = {}
-        for index, activity in enumerate(trace):
-            positions.setdefault(activity, []).append(index)
-
-        satisfied = sum(constraint.holds(trace, positions) for constraint in self._constraints)
-        return satisfied / len(self._constraints) if self._constraints else 0.0

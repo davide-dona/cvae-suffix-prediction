@@ -36,8 +36,8 @@ class AccuracyScores(ScalarMetrics):
 
     # Absolute error (AE) between the predicted and true minutes until each generated event,
     # averaged over the positions the true suffix covers, in days.
-    time_to_next_ae_mean_days: float = metric(unit=Unit.DAYS, direction=Direction.LOWER)
-    time_to_next_ae_point_days: float = metric(unit=Unit.DAYS, direction=Direction.LOWER)
+    cycle_time_ae_mean_days: float = metric(unit=Unit.DAYS, direction=Direction.LOWER)
+    cycle_time_ae_point_days: float = metric(unit=Unit.DAYS, direction=Direction.LOWER)
 
     # Absolute error (AE) between the predicted and true suffix length, in events.
     length_ae_mean: float = metric(unit=Unit.EVENTS, direction=Direction.LOWER)
@@ -87,19 +87,19 @@ class AccuracyScores(ScalarMetrics):
                 point.remaining_time_minutes - truth.remaining_time_minutes
             )
             / MINUTES_PER_DAY,
-            time_to_next_ae_mean_days=mean(
+            cycle_time_ae_mean_days=mean(
                 [
-                    time_to_next_ae_minutes(
-                        predicted=events.time_to_next_minutes,
-                        true=truth.time_to_next_minutes,
+                    cycle_time_ae_minutes(
+                        predicted=events.cycle_time_minutes,
+                        true=truth.cycle_time_minutes,
                     )
                     for events in samples.events
                 ]
             )
             / MINUTES_PER_DAY,
-            time_to_next_ae_point_days=time_to_next_ae_minutes(
-                predicted=point.time_to_next_minutes,
-                true=truth.time_to_next_minutes,
+            cycle_time_ae_point_days=cycle_time_ae_minutes(
+                predicted=point.cycle_time_minutes,
+                true=truth.cycle_time_minutes,
             )
             / MINUTES_PER_DAY,
             length_ae_mean=mean(
@@ -110,8 +110,9 @@ class AccuracyScores(ScalarMetrics):
         )
 
 
-def time_to_next_ae_minutes(predicted: Sequence[float], true: Sequence[float]) -> float:
-    """Mean absolute error between a run's waits until each event and the true ones, in minutes.
+def cycle_time_ae_minutes(predicted: Sequence[float], true: Sequence[float]) -> float:
+    """Mean absolute error between a run's cycle times before each event and the true ones, in
+    minutes.
 
     The true suffix sets the range the error is read over: a run that ended early counts as 0
     minutes at every position it did not write, and anything it wrote past the true end is dropped.

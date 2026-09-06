@@ -18,5 +18,5 @@ class Loss(ScalarMetrics):
     # The weight it is charged at is `kl_weight`, logged on its own.
     floored_kl_loss: float = 0.0
     activity_loss: float = 0.0
-    time_to_next_loss: float = 0.0
+    cycle_time_loss: float = 0.0
     remaining_time_loss: float = 0.0

@@ -43,7 +43,7 @@ def stream_prefix_scores(
 
     Args:
         summaries: Each prefix's scores, in the order the generations file holds them.
-        keys: Which prefix each of them answers, in that same order, from `read_prefix_keys`.
+        keys: Which prefix each of them answers, in that same order, from `Generations.prefix_keys`.
             Paired positionally rather than carried on a `PrefixSummary`, which holds floats alone
             so that a worker never sends the log's own strings back.
         path: Where to write, its directory already made, from `paths.PREFIX_SCORES.prepare`.

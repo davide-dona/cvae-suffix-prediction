@@ -11,9 +11,9 @@ from src.datasets.codec import DatasetCodec
 from src.datasets.dataset import TraceDataset, fixed_subset
 from src.identity import RunIdentity
 from src.inference.generate import generation_batch_size
-from src.logs.keys import Split
+from src.logs import Split
 from src.model import build_model
-from src.training.train import train
+from src.training import train
 
 
 def run(config: ExperimentConfig) -> None:

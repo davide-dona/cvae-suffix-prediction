@@ -11,10 +11,10 @@ from pydantic import Field
 
 from src import paths
 from src.configs.schema import DataConfig, StrictModel
-from src.logs.keys import (
+from src.logs import (
     ACTIVITY_KEY,
+    CYCLE_TIME_KEY,
     EOT_TOKEN,
-    EVENT_DELTA_KEY,
     PAD_TOKEN,
     REMAINING_TIME_KEY,
     RESOURCE_KEY,
@@ -260,9 +260,9 @@ class DatasetCodec(StrictModel):
 
     activity: CategoricalColumn
     resource: CategoricalColumn
-    # time_to_next is read by both the encoders and the decoder; remaining_time is
+    # cycle_time is read by both the encoders and the decoder; remaining_time is
     # decoder-only.
-    time_to_next: NumericColumn
+    cycle_time: NumericColumn
     remaining_time: NumericColumn
 
     # The columns `data.event_features` names, sorted by dtype into the two kinds.
@@ -310,8 +310,8 @@ class DatasetCodec(StrictModel):
             resource=CategoricalColumn.fit(
                 train, column=RESOURCE_KEY, special_tokens=RESOURCE_TOKENS
             ),
-            time_to_next=NumericColumn.fit(
-                train, column=EVENT_DELTA_KEY, log=data_config.log_scaled_time_to_next
+            cycle_time=NumericColumn.fit(
+                train, column=CYCLE_TIME_KEY, log=data_config.log_scaled_cycle_time
             ),
             remaining_time=NumericColumn.fit(
                 train, column=REMAINING_TIME_KEY, log=data_config.log_scaled_remaining_time

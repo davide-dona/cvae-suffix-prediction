@@ -23,9 +23,8 @@ from src.inference.tuning import (
     TuningReport,
     objective,
 )
-from src.logs.conformance import ConformanceChecker
-from src.logs.continuations import ContinuationIndex
-from src.logs.keys import Split
+from src.logs import ContinuationIndex, Split
+from src.logs.declare import ConformanceChecker
 from src.model import Transformer, load_checkpoint, model_from_checkpoint
 from src.suffixes import ActivityCodes
 
@@ -78,9 +77,11 @@ def _score(
             model=model, batch=batch.to(device), num_samples=num_samples, codec=codec, codes=codes
         )
     ]
-    distribution = DistributionScores.mean(
-        [DistributionScores.of(one, index=index) for one in generations]
-    )
+    # Over the prefixes a report reads these scores on, so the operating point is chosen on the
+    # numbers that will be reported for it rather than on a wider population where a comparison
+    # against a single observed continuation is an accuracy under another name.
+    scored = [DistributionScores.of(one, index=index) for one in generations]
+    distribution = DistributionScores.mean([one for one in scored if one.comparable])
     conformance = ConformanceScores.mean(
         [ConformanceScores.of(one, checker=checker) for one in generations]
     )
@@ -181,7 +182,7 @@ def run(checkpoint_path: Path, *, device: str | None, pairs: int | None, samples
 
     with step(f'Reading the {Split.VAL} continuations and the declarative model'):
         codes = ActivityCodes.of(codec.activity.names)
-        index = ContinuationIndex(dataset=config.data.name, split=Split.VAL)
+        index = ContinuationIndex.read(dataset=config.data.name, split=Split.VAL)
         checker = ConformanceChecker(config.data.name, codes)
 
     points = []

@@ -9,8 +9,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, Subset
 
 from src.datasets.codec import DatasetCodec
-from src.logs.io import read_log
-from src.logs.keys import CASE_KEY, MIN_PREFIX_KEY, Split
+from src.logs import CASE_KEY, MIN_PREFIX_KEY, Split, read_log
 
 
 class Events(NamedTuple):
@@ -18,7 +17,7 @@ class Events(NamedTuple):
 
     activities: torch.Tensor  # int64, [..., seq_len]
     resources: torch.Tensor  # int64, [..., seq_len]
-    times_to_next: torch.Tensor  # float32, standardized, [..., seq_len]
+    cycle_times: torch.Tensor  # float32, standardized, [..., seq_len]
     categorical_attributes: torch.Tensor  # int64, [..., seq_len, num_categorical]
     numeric_attributes: torch.Tensor  # float32, standardized, [..., seq_len, num_numeric]
     numeric_attributes_present: (
@@ -91,8 +90,8 @@ class SplitTrace(NamedTuple):
 
     # Standardized minutes until the event written at each suffix position, and until the case
     # ends. Both measure from the last prefix event at position 0.
-    times_to_next: torch.Tensor  # float32, [max_trace_length], batched [batch_size, ...]
-    remaining_times: torch.Tensor  # float32, shaped like `times_to_next`
+    cycle_times: torch.Tensor  # float32, [max_trace_length], batched [batch_size, ...]
+    remaining_times: torch.Tensor  # float32, shaped like `cycle_times`
 
     def to(self, device: torch.device) -> SplitTrace:
         """Move a whole batch in one call"""
@@ -100,7 +99,7 @@ class SplitTrace(NamedTuple):
             case_id=self.case_id,
             prefix=self.prefix.to(device),
             suffix=self.suffix.to(device),
-            times_to_next=self.times_to_next.to(device),
+            cycle_times=self.cycle_times.to(device),
             remaining_times=self.remaining_times.to(device),
         )
 
@@ -196,7 +195,7 @@ class TraceDataset(Dataset):
             suffix=suffix,
             # Both run the suffix's content only: the EOT has no time of its own, and the loss
             # masks it out with the padding behind it.
-            times_to_next=self._pad_target(case.events.times_to_next[k : k + suffix_len]),
+            cycle_times=self._pad_target(case.events.cycle_times[k : k + suffix_len]),
             remaining_times=self._pad_target(case.remaining_times[k - 1 : k + suffix_len - 1]),
         )
 
@@ -286,7 +285,7 @@ def _encode_events(codec: DatasetCodec, log: pd.DataFrame) -> Events:
         # own block for some dtypes, which torch would wrap rather than copy.
         activities=torch.tensor(data=codec.activity.encode(log), dtype=torch.long),
         resources=torch.tensor(data=codec.resource.encode(log), dtype=torch.long),
-        times_to_next=torch.from_numpy(codec.time_to_next.encode(log)),
+        cycle_times=torch.from_numpy(codec.cycle_time.encode(log)),
         categorical_attributes=_encode_categorical_attributes(codec, log),
         numeric_attributes=numeric_attributes,
         numeric_attributes_present=numeric_attributes_present,

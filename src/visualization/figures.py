@@ -9,7 +9,7 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator
 
-from src.evaluation.report import Axis
+from src.evaluation import Axis
 from src.scalar_metrics import Owner
 from src.visualization import labels
 from src.visualization.catalogue import MetricEntry, Plot

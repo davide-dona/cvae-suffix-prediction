@@ -8,11 +8,10 @@ from torch import nn
 from src.configs.schema import CVAEConfig, ModelConfig
 from src.datasets.codec import DatasetCodec
 from src.datasets.dataset import SplitTrace
-from src.distributions.gaussian import Gaussian
+from src.distributions import Gaussian
 from src.model.checkpoint import MODEL_KEYS, require_keys
 from src.model.components.decoder import DecoderOutput, GeneratedSuffix
-from src.training.kl import LatentMetrics
-from src.training.loss import Loss
+from src.training import LatentMetrics, Loss
 
 # `ModelConfig` is a tagged union rather than a class, so a checkpoint's stored config is
 # validated through an adapter rather than by calling `model_validate` on it.
@@ -139,8 +138,8 @@ class SuffixModel(nn.Module, ABC):
         return GeneratedSuffix(
             activities=generated.activities.view(batch_size, -1, generated.activities.size(dim=1)),
             lengths=generated.lengths.view(batch_size, -1),
-            times_to_next=generated.times_to_next.view(
-                batch_size, -1, generated.times_to_next.size(dim=1)
+            cycle_times=generated.cycle_times.view(
+                batch_size, -1, generated.cycle_times.size(dim=1)
             ),
             remaining_time=generated.remaining_time.view(batch_size, -1),
         )

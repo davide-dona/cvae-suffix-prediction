@@ -55,7 +55,7 @@ The out-of-time splits as well as the fitted codec and the declarative model are
 > [!WARNING]
 > Training and generation read these outputs and will stop with an error naming what's missing if the dataset hasn't been preprocessed yet.
 
-The continuation index is read by both training (to select checkpoints) and evaluation, so it is always built. The declarative model is read by evaluation alone, and discovering it is the slowest step of preprocessing by a wide margin; when preprocessing solely for training or generation, it can be skipped with `--skip-declare`.
+Every artifact is computed on each run: the continuation index of both held-out splits, read by training (to select checkpoints) and by evaluation, and the declarative model, read by evaluation to score conformance. Discovering the declarative model is the slowest step by a wide margin.
 
 ### 2. Training
 

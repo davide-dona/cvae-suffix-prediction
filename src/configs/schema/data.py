@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import Field, model_validator
 
-from src.logs.keys import EVENT_DELTA_KEY
+from src.logs import CYCLE_TIME_KEY
 
 from .base import NAME_PATTERN, StrictModel
 
@@ -56,7 +56,7 @@ class DataConfig(StrictModel):
         ..., description='Which `event_features` take a log1p before being standardized'
     )
     log_scaled_remaining_time: bool
-    log_scaled_time_to_next: bool
+    log_scaled_cycle_time: bool
 
     @model_validator(mode='after')
     def _splits_sum_to_one(self) -> DataConfig:
@@ -77,12 +77,12 @@ class DataConfig(StrictModel):
         return self
 
     @model_validator(mode='after')
-    def _event_delta_is_not_an_event_feature(self) -> DataConfig:
-        # ts_prev would otherwise be fit twice: once here, once as time_to_next.
-        if EVENT_DELTA_KEY in self.event_features:
+    def _cycle_time_is_not_an_event_feature(self) -> DataConfig:
+        # The cycle time would otherwise be fit twice: once here, once as `DatasetCodec.cycle_time`.
+        if CYCLE_TIME_KEY in self.event_features:
             raise ValueError(
-                f'event_features names "{EVENT_DELTA_KEY}", which is read through '
-                f'DatasetCodec.time_to_next instead and must not also be listed here'
+                f'event_features names "{CYCLE_TIME_KEY}", which is read through '
+                f'DatasetCodec.cycle_time instead and must not also be listed here'
             )
         return self
 

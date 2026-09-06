@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from src.evaluation.report import Axis
+from src.evaluation import Axis
 from src.evaluation.scores import METRICS
 from src.scalar_metrics import Direction
 from src.visualization.catalogue.entry import MetricEntry
@@ -64,12 +64,12 @@ TABLES = (
             MetricEntry(METRICS['dls_point'], 'DLS'),
             MetricEntry(METRICS['length_ae_point'], 'Length'),
             MetricEntry(METRICS['remaining_time_ae_point_days'], 'Rem. time'),
-            MetricEntry(METRICS['time_to_next_ae_point_days'], 'Event time'),
+            MetricEntry(METRICS['cycle_time_ae_point_days'], 'Event time'),
         ),
     ),
     # Fidelity: how close the distribution a model draws from is to the one the log continued with.
     # EMSC compares the two as stochastic languages; the three W1 columns compare the marginals
-    # a suffix carries beyond its activities. The event-time column groups the waits by the
+    # a suffix carries beyond its activities. The event-time column groups the cycle times by the
     # activity they precede, where its counterpart in `accuracy-point` reads them by position:
     # a position only means something once the control flow is right, which EMSC already asks.
     #
