@@ -1,5 +1,5 @@
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Self
 
 import numpy as np
@@ -11,6 +11,15 @@ from src.inference.generation import Generation
 from src.logs import ContinuationIndex, Continuations
 from src.scalar_metrics import Direction, Owner, ScalarMetrics, Unit, metric
 from src.suffixes import distances, diversity
+
+# How many times the log has to have run a prefix before its draws are read as a distribution
+# at all. Below it the reference is a sample too small to be one: at a single occurrence the
+# transport problem has one column and every score here collapses onto an accuracy, `emsc`
+# becoming `dls_mean`, `length_wasserstein` becoming `length_ae_mean` and
+# `remaining_time_wasserstein_days` becoming `remaining_time_ae_mean_days`, each to machine
+# precision, and an expected distance to one suffix is maximized by drawing that suffix every
+# time. Five is where the log's own distribution stops losing to a sharpened version of itself.
+MIN_REFERENCE_OCCURRENCES = 5
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +63,11 @@ class DistributionScores(ScalarMetrics):
     # How many distinct continuations the log took after this prefix. A property of the log rather
     # than of the model, so it is the same for every model of a log.
     reference_size: float = metric(unit=Unit.COUNT, owner=Owner.LOG)
+
+    # How many times the log ran this prefix at all, which is the sample size every score above
+    # was read against and so what says whether the prefix is one of the ones they are read over.
+    # A property of the log, like the two above it.
+    reference_occurrences: float = metric(unit=Unit.COUNT, owner=Owner.LOG)
 
     @classmethod
     def of(cls, generation: Generation, *, index: ContinuationIndex) -> Self:
@@ -131,7 +145,38 @@ class DistributionScores(ScalarMetrics):
             unique_sample_rate=len(suffixes) / draws if draws else 0.0,
             reference_diversity=references.diversity,
             reference_size=float(len(references.suffixes)),
+            reference_occurrences=references.occurrences,
         )
+
+    @property
+    def comparable(self) -> bool:
+        """Whether the log ran this prefix often enough for its scores to be read.
+
+        Every score of this family compares two distributions, and one of them is estimated
+        from the occurrences of the prefix alone. A prefix the log ran once leaves an estimate
+        that is a single point, against which each of these scores is an accuracy under another
+        name and is maximized by drawing one suffix every time. Such a prefix is still scored
+        and still written to the per-prefix file, since the numbers are read there against the
+        prefix that carries them; it is the means that are taken over the prefixes this admits.
+
+        Returns:
+            Whether the log ran the prefix at least `MIN_REFERENCE_OCCURRENCES` times.
+        """
+        return self.reference_occurrences >= MIN_REFERENCE_OCCURRENCES
+
+    @classmethod
+    def undefined(cls) -> Self:
+        """What a set of prefixes none of which is comparable scores, which is nothing.
+
+        NaN throughout rather than the 0.0 an empty mean would give: 0.0 is the worst several of
+        these can be and would read as a model that scored nothing where the truth is that the
+        length was never measured. Every reader here already takes NaN for a metric that has no
+        mean to report.
+
+        Returns:
+            Every field NaN.
+        """
+        return cls(**{entry.name: float('nan') for entry in fields(cls)})
 
 
 def emsc(suffixes: tuple[str, ...], counts: np.ndarray, references: Continuations) -> float:

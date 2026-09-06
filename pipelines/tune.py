@@ -77,9 +77,11 @@ def _score(
             model=model, batch=batch.to(device), num_samples=num_samples, codec=codec, codes=codes
         )
     ]
-    distribution = DistributionScores.mean(
-        [DistributionScores.of(one, index=index) for one in generations]
-    )
+    # Over the prefixes a report reads these scores on, so the operating point is chosen on the
+    # numbers that will be reported for it rather than on a wider population where a comparison
+    # against a single observed continuation is an accuracy under another name.
+    scored = [DistributionScores.of(one, index=index) for one in generations]
+    distribution = DistributionScores.mean([one for one in scored if one.comparable])
     conformance = ConformanceScores.mean(
         [ConformanceScores.of(one, checker=checker) for one in generations]
     )

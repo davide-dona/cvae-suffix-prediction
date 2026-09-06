@@ -198,11 +198,14 @@ def train(
                         f'val {val_metrics.loss:.4f}  '
                         f'gen_dls {gen_metrics.accuracy.dls_mean:.4f} mean / '
                         f'{gen_metrics.accuracy.dls_point:.4f} point  '
-                        f'emsc {gen_metrics.distribution.emsc:.4f}',
+                        f'emsc {gen_metrics.distribution.emsc:.4f} all / '
+                        f'{gen_metrics.comparable.emsc:.4f} compared',
                         flush=True,
                     )
                     # The early stopper minimizes, and EMSC is a similarity, so it is the distance
-                    # that is tracked.
+                    # that is tracked. Over every prefix rather than over the ones a report reads
+                    # it on, which is what every checkpoint under `outputs/` was selected on; the
+                    # comparable score is logged beside it rather than selected on.
                     selection_score = 1.0 - gen_metrics.distribution.emsc
 
                     # Read before `update` folds this score into it, since afterwards it can

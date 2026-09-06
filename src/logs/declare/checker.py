@@ -1,4 +1,4 @@
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from functools import lru_cache
 
 from src import paths
@@ -9,6 +9,34 @@ from src.suffixes import ActivityCodes
 # Stands in for an activity the dataset's codebook does not know, so its constraint can never be
 # activated by a trace the codebook spelled.
 _UNMATCHABLE = '\x00'
+
+
+@dataclass(frozen=True, slots=True)
+class Conformance:
+    """How one trace fared against a declarative model, read either as a share or as a verdict.
+
+    The two are the same check at two granularities. A share says how much of the process a trace
+    respects, which moves smoothly and so separates models that are all wrong in different amounts;
+    the verdict says whether the trace is one the process allows at all, which is what a trace
+    handed to someone as a continuation has to be. A trace can sit high on the first and fail the
+    second on one constraint.
+    """
+
+    satisfied: int
+    total: int
+
+    @property
+    def share(self) -> float:
+        """The fraction of constraints the trace satisfies, in `[0, 1]`, or 0.0 for a model that
+        checks nothing."""
+        return self.satisfied / self.total if self.total else 0.0
+
+    @property
+    def full(self) -> float:
+        """1.0 if the trace satisfies every constraint and 0.0 otherwise, so that a mean over
+        traces is the share of them that are conformant. A model that checks nothing rates 0.0
+        here as it does on `share`, rather than calling every trace conformant."""
+        return float(self.total > 0 and self.satisfied == self.total)
 
 
 class ConformanceChecker:
@@ -38,20 +66,21 @@ class ConformanceChecker:
         )
 
     @lru_cache(maxsize=100_000)  # noqa: B019 -- one checker per scoring process
-    def rate(self, trace: str) -> float:
+    def check(self, trace: str) -> Conformance:
         """
-        The fraction of the model's constraints one trace satisfies.
+        Check one trace against every constraint of the model.
 
         Args:
             trace: The trace's activities, one character each, in order, on the dataset's own
                 scale. A whole case, prefix included: a constraint like `Init` or `Precedence` is
                 about the trace, not about a run of events inside it.
         Returns:
-            The satisfied share, in `[0, 1]`, or 0.0 for a model that checks nothing.
+            How many constraints the trace satisfies out of how many there are, which both the
+            share and the verdict are read off.
         """
         positions: Positions = {}
         for index, activity in enumerate(trace):
             positions.setdefault(activity, []).append(index)
 
         satisfied = sum(constraint.holds(trace, positions) for constraint in self._constraints)
-        return satisfied / len(self._constraints) if self._constraints else 0.0
+        return Conformance(satisfied=satisfied, total=len(self._constraints))

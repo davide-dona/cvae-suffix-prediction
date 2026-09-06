@@ -59,4 +59,22 @@ FIGURES = (
             ),
         ),
     ),
+    # The same check read as a verdict rather than as a share, in its own figure rather than as two
+    # more rows above: a satisfied share and a share of traces satisfying everything are two
+    # quantities on one axis, and a trace sitting a point below the log on the first can be a trace
+    # the process does not admit at all.
+    Plot(
+        name='full-conformance-by-suffix-length',
+        breakdowns=(Axis.SUFFIX,),
+        panels=(
+            (
+                MetricEntry(METRICS['full_conformance_point'], 'Fully conformant (point)'),
+                MetricEntry(METRICS['full_conformance_truth'], 'Fully conformant (ground truth)'),
+            ),
+            (
+                MetricEntry(METRICS['full_conformance_mean'], 'Fully conformant (samples)'),
+                MetricEntry(METRICS['full_conformance_truth'], 'Fully conformant (ground truth)'),
+            ),
+        ),
+    ),
 )

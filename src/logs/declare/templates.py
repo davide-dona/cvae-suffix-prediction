@@ -21,7 +21,7 @@ class Constraint:
         """Whether one finished trace satisfies this constraint.
         Args:
             trace: The trace's activities, one character each, in order.
-            positions: Where each of them occurs, from `ConformanceChecker.rate`.
+            positions: Where each of them occurs, from `ConformanceChecker.check`.
         Returns:
             True if the trace both activates the constraint and does not violate it.
         """

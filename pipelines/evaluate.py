@@ -11,6 +11,7 @@ from tqdm import tqdm
 from src import paths
 from src.cli import banner, duration, step
 from src.evaluation import EvaluationReport, EvaluationSummary, PrefixSummary, stream_prefix_scores
+from src.evaluation.scores import MIN_REFERENCE_OCCURRENCES
 from src.inference.generation_store import Generations
 from src.logs import ContinuationIndex, Split
 from src.logs.declare import ConformanceChecker, discovery_settings
@@ -196,8 +197,13 @@ def run(generations_file: Path, workers: int | None) -> None:
     # exactly where they sit under `outputs/generations/`.
     report = EvaluationReport(run=run, summary=summary)
     path = report.write(paths.EVALUATION.prepare(run))
+    # The distributional scores are read over the prefixes the log ran often enough, so how many
+    # of them there were is part of what the report says rather than something to go looking for.
+    share = summary.compared / summary.prefixes if summary.prefixes else 0.0
     print(
-        f'Scored {summary.prefixes:,} prefixes in {duration(time.perf_counter() - started)}. '
+        f'Scored {summary.prefixes:,} prefixes in {duration(time.perf_counter() - started)}, '
+        f'{summary.compared:,} of them ({share:.0%}) run at least {MIN_REFERENCE_OCCURRENCES} '
+        f'times by the log, which is what the distributional scores are read over. '
         f'Wrote evaluation report to {path} and its per-prefix scores to {scores_path}'
     )
 

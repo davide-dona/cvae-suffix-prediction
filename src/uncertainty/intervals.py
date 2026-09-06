@@ -6,7 +6,7 @@ import pandas as pd
 
 from src.evaluation import Axis, read_prefix_scores, require_columns, score_files
 from src.uncertainty.resampling import SEED, Units, resample_means
-from src.uncertainty.units import LENGTHS, by_length
+from src.uncertainty.units import LENGTHS, OCCURRENCES, by_length
 
 # What a band covers, and how many resamples its two ends are read off. Fewer than the 10,000
 # `significance.py` draws, and deliberately: a p-value there has to survive being multiplied by the
@@ -117,7 +117,9 @@ def read_intervals(
         )
 
     wanted = tuple(dict.fromkeys(metrics))
-    needed = (*wanted, *(LENGTHS[axis] for axis in axes))
+    # `OCCURRENCES` whatever was asked for: it is what says which prefixes a metric read over the
+    # comparable ones is bounded on, and a file predating it predates the population itself.
+    needed = tuple(dict.fromkeys((*wanted, OCCURRENCES, *(LENGTHS[axis] for axis in axes))))
 
     rows: list[dict[str, object]] = []
     for dataset, files in score_files(reports).items():

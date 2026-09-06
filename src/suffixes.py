@@ -9,18 +9,11 @@ from rapidfuzz.distance import OSA
 # Start of the Unicode private use area, where the activity codes are drawn from.
 _FIRST_CODE = 0xE000
 
-# How many rows of the pairwise matrix `diversity` holds at once.
-_SPREAD_BLOCK = 256
-
 
 @dataclass(slots=True)
 class ActivityCodes:
     """Map each activity name to a character. A suffix becomes a string, rather than a sequence of
     objects, making it cheaper to hold and cheaper to measure against another.
-
-    One instance per set of suffixes that will be compared against each other: the codes are what
-    make two suffixes comparable, so a log's ground truth and every cloud drawn over it must be
-    encoded by the same one.
     """
 
     _codes: dict[str, str] = field(default_factory=dict)
@@ -114,6 +107,9 @@ def distances(
     return np.subtract(1.0, similarities, out=similarities)
 
 
+# How many rows of the pairwise matrix `diversity` holds at once.
+_SPREAD_MATRIX_SIZE = 256
+
 def diversity(
     sequences: Sequence[Sequence[Hashable]],
     *,
@@ -150,8 +146,8 @@ def diversity(
     # Walked in blocks: the full matrix of a prefix the log ran thousands of times is the largest
     # thing this would hold, and only one block of its rows is needed at a time.
     total = 0.0
-    for first in range(0, len(sequences), _SPREAD_BLOCK):
-        block = sequences[first : first + _SPREAD_BLOCK]
+    for first in range(0, len(sequences), _SPREAD_MATRIX_SIZE):
+        block = sequences[first : first + _SPREAD_MATRIX_SIZE]
         pairs = distances(queries=block, choices=sequences, dtype=np.float64)
         total += float(counts[first : first + len(block)] @ pairs @ counts)
     return total / (draws * (draws - 1.0))

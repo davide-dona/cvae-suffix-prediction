@@ -49,12 +49,41 @@ class PrefixSummary:
         )
 
 
+def _distribution(prefixes: Sequence[PrefixSummary]) -> tuple[int, DistributionScores]:
+    """Average the distributional scores of a set of prefixes, over the ones they are read on.
+
+    The one place the population of that family is decided. Every prefix is scored on it and
+    every prefix's scores are written out, but a mean is taken over the prefixes the log ran
+    often enough for the continuations it took after them to be a distribution rather than a
+    sample of one, which is what `DistributionScores.comparable` admits. The other two families
+    compare a run against the one suffix a prefix actually took and are averaged over every
+    prefix.
+
+    Args:
+        prefixes: The prefixes being summarized, in any order.
+    Returns:
+        How many of them the mean was taken over, and that mean, undefined throughout where none
+        of them qualified.
+    """
+    comparable = [prefix.distribution for prefix in prefixes if prefix.distribution.comparable]
+    if not comparable:
+        return 0, DistributionScores.undefined()
+    return len(comparable), DistributionScores.mean(comparable)
+
+
 @dataclass(frozen=True)
 class LengthSummary:
-    """The mean scores of the prefixes sharing one length, and how many of them there were."""
+    """The mean scores of the prefixes sharing one length, and how many of them there were.
+
+    Two counts, because the families are not read over the same prefixes: `prefixes` is how
+    many there were and `compared` how many of them the distributional family was read over,
+    which `_distribution` decides.
+    """
 
     length: int
     prefixes: int
+    # How many of them the distributional family was averaged over, which is fewer
+    compared: int
     accuracy: AccuracyScores
     conformance: ConformanceScores
     distribution: DistributionScores
@@ -67,14 +96,17 @@ class LengthSummary:
             prefixes: The prefixes sharing that length, in any order.
             length: What they share, whether a cut point or a ground-truth suffix length.
         Returns:
-            Their means, beside how many of them there were.
+            Their means, beside how many of them there were and how many the distributional
+            family was read over.
         """
+        compared, distribution = _distribution(prefixes)
         return cls(
             length=length,
             prefixes=len(prefixes),
+            compared=compared,
             accuracy=AccuracyScores.mean([prefix.accuracy for prefix in prefixes]),
             conformance=ConformanceScores.mean([prefix.conformance for prefix in prefixes]),
-            distribution=DistributionScores.mean([prefix.distribution for prefix in prefixes]),
+            distribution=distribution,
         )
 
 
@@ -95,8 +127,11 @@ class EvaluationSummary:
 
     Accuracy asks how close a generated suffix is to the one that actually happened, conformance
     whether it is a trace the process allows at all, distribution how the whole set of suffixes
-    generated for a prefix compares against every continuation the log took after it, and all
-    three are means over every prefix.
+    generated for a prefix compares against every continuation the log took after it.
+
+    Two of the three are means over every prefix. The distributional family is not: it is read
+    over the prefixes the log ran often enough for what followed them to be a distribution, which
+    `_distribution` decides and `compared` counts.
 
     The two breakdowns cut the per-prefix families either at the prefix or at the ground-truth
     suffix. They are not independent of each other: every cut point of a case is scored, so a long
@@ -108,6 +143,8 @@ class EvaluationSummary:
     """
 
     prefixes: int
+    # How many of them the distributional family was averaged over, which is fewer
+    compared: int
     accuracy: AccuracyScores
     conformance: ConformanceScores
     distribution: DistributionScores
@@ -139,11 +176,13 @@ class EvaluationSummary:
 
         # Flatten one set of buckets back out to take the mean over every prefix at once
         every_prefix = [prefix for bucket in prefix_buckets.values() for prefix in bucket]
+        compared, distribution = _distribution(every_prefix)
         return cls(
             prefixes=len(every_prefix),
+            compared=compared,
             accuracy=AccuracyScores.mean([prefix.accuracy for prefix in every_prefix]),
             conformance=ConformanceScores.mean([prefix.conformance for prefix in every_prefix]),
-            distribution=DistributionScores.mean([prefix.distribution for prefix in every_prefix]),
+            distribution=distribution,
             by_prefix_length=_by_length(prefix_buckets),
             by_suffix_length=_by_length(suffix_buckets),
         )

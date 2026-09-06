@@ -1,11 +1,18 @@
 from src.evaluation.scores.accuracy import AccuracyScores
 from src.evaluation.scores.conformance import ConformanceScores
-from src.evaluation.scores.distribution import DistributionScores
+from src.evaluation.scores.distribution import MIN_REFERENCE_OCCURRENCES, DistributionScores
 from src.registry import Registry
 from src.scalar_metrics import Metric
 
 # The families a report carries, in the order it lays them out.
 FAMILIES = (AccuracyScores, ConformanceScores, DistributionScores)
+
+# Which of a report's numbers are read over the prefixes `DistributionScores.comparable`
+# admits rather than over every prefix scored. The whole of that family and nothing else:
+# each of its scores compares the draws against the continuations one prefix was observed to
+# take, and none of them is a comparison at all where those are a sample of one. Every reader
+# that reduces per-prefix rows to a mean, a band or a p-value splits its metrics on this.
+COMPARABLE_METRICS = frozenset(entry.key for entry in DistributionScores.metrics())
 
 
 def _declared() -> dict[str, Metric]:
@@ -40,8 +47,10 @@ METRICS = Registry[Metric](
 )
 
 __all__ = [
+    'COMPARABLE_METRICS',
     'FAMILIES',
     'METRICS',
+    'MIN_REFERENCE_OCCURRENCES',
     'AccuracyScores',
     'ConformanceScores',
     'DistributionScores',

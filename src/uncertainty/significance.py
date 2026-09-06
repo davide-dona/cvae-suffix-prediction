@@ -27,12 +27,26 @@ SIGNIFICANCE_COLUMNS = ('dataset', 'model', 'metric', 'p_value', 'best')
 TESTED = tuple(
     key for key, metric in METRICS.entries.items() if metric.direction is not Direction.NONE
 )
-# Which way each of them reads, in that same order, which `oriented` turns into arithmetic.
-_DIRECTIONS = tuple(METRICS[key].direction for key in TESTED)
+
+
+def _directions(metrics: Sequence[str]) -> tuple[Direction, ...]:
+    """Which way each of a set of metrics reads, which `oriented` turns into arithmetic.
+
+    Args:
+        metrics: The metrics being tested, in the order the units' last axis holds them.
+    Returns:
+        Their directions, in that same order.
+    """
+    return tuple(METRICS[key].direction for key in metrics)
 
 
 def two_sided_p(
-    units: Units, *, reference: np.ndarray, resamples: int, generator: np.random.Generator
+    units: Units,
+    *,
+    reference: np.ndarray,
+    directions: Sequence[Direction],
+    resamples: int,
+    generator: np.random.Generator,
 ) -> np.ndarray:
     """The share of resamples in which each model's mean falls on the wrong side of the reference.
 
@@ -44,6 +58,7 @@ def two_sided_p(
     Args:
         units: Each case's summed scores, `[cases, models, metrics]`, from `by_case`.
         reference: Which model each metric is compared against, `[metrics]`.
+        directions: Which way each of those metrics reads, in the order the units hold them.
         resamples: How many resamples to read the p against.
         generator: The source of the draws.
     Returns:
@@ -57,7 +72,7 @@ def two_sided_p(
     for means in resample_means(units, resamples, generator=generator):
         # How much better than its metric's reference each model came out, [chunk, models, metrics].
         against = means[:, reference, columns][:, None, :]  # [chunk, 1, metrics]
-        better = oriented(means, _DIRECTIONS) - oriented(against, _DIRECTIONS)
+        better = oriented(means, directions) - oriented(against, directions)
         at_least += (better >= 0).sum(axis=0)
         at_most += (better <= 0).sum(axis=0)
 
@@ -150,27 +165,34 @@ def test_significance(reports: Sequence[Path]) -> pd.DataFrame:
             )
             continue
 
-        units = by_case(dataset=dataset, files=files, metrics=TESTED)
-        # The mean the table prints: every prefix weighing the same, so a long case weighs more.
-        reference = oriented(units.mean, _DIRECTIONS).argmax(axis=0)  # [metrics]
+        # Once per population: a metric read over the comparable prefixes alone is tested over
+        # the cases those fall in, so a p is read against the mean the table prints.
+        for metrics, units in by_case(dataset=dataset, files=files, metrics=TESTED):
+            directions = _directions(metrics)
+            # The mean the table prints: every prefix weighing the same, so a long case weighs more.
+            reference = oriented(units.mean, directions).argmax(axis=0)  # [metrics]
 
-        generator = np.random.default_rng(SEED)
-        uncorrected = two_sided_p(
-            units, reference=reference, resamples=TEST_RESAMPLES, generator=generator
-        )
-        corrected, best = best_group(uncorrected, reference=reference)
+            generator = np.random.default_rng(SEED)
+            uncorrected = two_sided_p(
+                units,
+                reference=reference,
+                directions=directions,
+                resamples=TEST_RESAMPLES,
+                generator=generator,
+            )
+            corrected, best = best_group(uncorrected, reference=reference)
 
-        rows.extend(
-            {
-                'dataset': dataset,
-                'model': model,
-                'metric': key,
-                'p_value': float(corrected[index, column]),
-                'best': bool(best[index, column]),
-            }
-            for column, key in enumerate(TESTED)
-            for index, model in enumerate(models)
-        )
+            rows.extend(
+                {
+                    'dataset': dataset,
+                    'model': model,
+                    'metric': key,
+                    'p_value': float(corrected[index, column]),
+                    'best': bool(best[index, column]),
+                }
+                for column, key in enumerate(metrics)
+                for index, model in enumerate(models)
+            )
 
     frame = pd.DataFrame(rows, columns=list(SIGNIFICANCE_COLUMNS))
     return frame.astype({'p_value': 'float64', 'best': 'bool'})
