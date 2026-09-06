@@ -1,6 +1,7 @@
-import json
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Self
 
 import numpy as np
 import pandas as pd
@@ -8,95 +9,232 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src import paths
+from src.identity import read_vocabulary, with_vocabulary
 from src.logs.keys import (
     ACTIVITY_KEY,
     CASE_KEY,
-    EVENT_DELTA_KEY,
+    CYCLE_TIME_KEY,
     REMAINING_TIME_KEY,
     UNK_TOKEN,
     Split,
 )
-from src.suffixes import ActivityCodes, spread
-
-# The activity names the encoded prefixes and suffixes are read back through, in code order.
-# Held in the file's own metadata, so nothing else has to be read to make sense of it.
-_VOCABULARY = b'activities'
+from src.suffixes import ActivityCodes, diversity
 
 _SCHEMA = pa.schema(
     [
+        # The prefix, the activities it runs, one character each
         ('prefix', pa.large_string()),
+        # List of the distinct continuations observed after that prefix
         ('suffixes', pa.list_(pa.large_string())),
+        # How many occurrences each of them accounts for, in the same order
         ('weights', pa.list_(pa.int32())),
+        # Minutes left at the cut, one per occurrence
         ('remaining_times', pa.list_(pa.float32())),
-        ('dispersion', pa.float32()),
-        # The waits observed before each activity, pooled over every occurrence of the prefix:
-        # one character of `wait_activities` per distinct activity, on the scale `suffixes` is
-        # held on, and its waits in `waits`. Reduced here rather than kept per occurrence because
-        # the pool is what a score reads, the way `dispersion` is already reduced at index time.
-        ('wait_activities', pa.large_string()),
-        ('waits', pa.list_(pa.list_(pa.float32()))),
+        ('diversity', pa.float32()),
+        ('cycle_time_activities', pa.large_string()),
+        ('cycle_times', pa.list_(pa.list_(pa.float32()))),
     ]
 )
-
 _COMPRESSION = 'zstd'
 
 
 @dataclass(frozen=True, slots=True)
-class References:
-    """Every continuation one prefix was observed to take, as the empirical distribution the
-    suffixes generated for that prefix are measured against.
-
-    Two of a prefix's occurrences that ran the same activities are one entry of `suffixes` with a
-    weight of two, since they are one outcome the process produced twice. The remaining times are
-    kept per occurrence instead: two cases can run the same activities and take different times
-    over them, so collapsing them would drop a difference the log actually holds.
+class Continuations:
+    """Every continuation one prefix was observed to take.
+    It defines the reference distribution a generated suffix is compared against.
     """
 
-    # The distinct continuations, encoded onto the scale `ContinuationIndex.encode` reads on
+    # The distinct continuations observed after the prefix
     suffixes: tuple[str, ...]
     # How many occurrences each of them accounts for, in the same order
     weights: np.ndarray
     # Minutes left at the cut, one per occurrence
     remaining_times: np.ndarray
-    # The waits observed before each activity, keyed by the character `suffixes` spells it with.
-    # A wait belongs to the activity it precedes rather than to the position it fell at, so the
-    # occurrences are pooled under their activities instead of being kept as runs.
-    waits: dict[str, np.ndarray]
-    # How far apart two of the occurrences are, the term an energy score subtracts for the
-    # reference set's own spread
-    dispersion: float
+    # How far apart two occurrences of this prefix ran, over the suffixes they took: the mean
+    # pairwise distance `diversity` measures, weighted so two occurrences of one suffix sit at 0.
+    # Reported as `reference_diversity`, the scale a model's own `sample_diversity` is read
+    # against. Reduced here rather than at scoring time because it is a property of the log, the
+    # same for every model of it.
+    diversity: float
+    # The `CYCLE_TIME_KEY` gaps observed before each activity, in minutes, keyed by the character
+    # `suffixes` spells that activity with. The same quantity the decoder's `cycle_time` head
+    # predicts, so the two sides of `activity_time_wasserstein_days` are comparable. A cycle time
+    # belongs to the activity it precedes rather than to the position it fell at, so the occurrences
+    # are pooled under their activities instead of being kept as runs: a pool is all a score reads.
+    cycle_times: dict[str, np.ndarray]
 
     @property
     def occurrences(self) -> float:
-        """How many times the prefix was observed, which is the mass `weights` spreads over."""
+        """How many times the prefix was observed."""
         return float(self.weights.sum())
 
 
 class ContinuationIndex:
-    """Every continuation one split of a log was observed to take after each of its prefixes.
+    """Every continuation one held-out split takes, keyed by the prefix it leaves behind.
 
-    Read by the scoring pool, one instance per worker, from what `build_index` wrote. A prefix is
-    keyed by the activities it runs alone, so two cases that ran the same activities share one
-    reference distribution.
+    Held as the file's own columns, one entry per indexed prefix, since a lookup reads a single row
+    and a split runs to hundreds of thousands of them. Reach an index through `of`, which builds one
+    from a split, or `read`, which reads back what `write` left beside the splits.
     """
 
-    def __init__(self, dataset: str, split: Split) -> None:
+    def __init__(
+        self,
+        *,
+        vocabulary: tuple[str, ...],
+        rows: dict[str, int],
+        suffixes: list[list[str]],
+        weights: list[list[int]],
+        remaining_times: list[list[float]],
+        cycle_time_activities: list[str],
+        cycle_times: list[list[list[float]]],
+        diversity: list[float],
+    ) -> None:
+        """The file's columns, and which row each prefix sits at. Private: use `of` or `read`."""
+        self._vocabulary = vocabulary
+        self._rows = rows
+        self._suffixes = suffixes
+        self._weights = weights
+        self._remaining_times = remaining_times
+        self._cycle_time_activities = cycle_time_activities
+        self._cycle_times = cycle_times
+        self._diversity = diversity
+
+    @classmethod
+    def of(
+        cls,
+        rows: pd.DataFrame,
+        *,
+        vocabulary: Collection[str],
+        names: Sequence[str],
+    ) -> Self:
+        """Index every continuation one held-out split takes.
+
+        The reference distribution a generated suffix is compared against is one held-out split and
+        nothing else: an out-of-time sample of `p(suffix | prefix)`, so a model that memorized the
+        train split gains nothing from it and the reference is not drawn from the older regime the
+        split's own separation exists to keep apart. Every cut point of every case contributes,
+        `min_prefix_len` included, since that bound governs what a model may be asked rather than
+        what the log was observed to do.
+
+        Both held-out splits are indexed, and which one is read is the reader's choice: evaluation
+        scores against the test split, while training selects checkpoints against the validation
+        split, since selecting on the test split's continuations would fold the held-out set into
+        what gets kept.
+
+        The split is read through the train split's vocabulary, an activity missing from it becoming
+        UNK, which is the only name generation can give it: a model can emit no activity it was
+        never shown, and the generations name a prefix and its ground truth the same way. Keying the
+        index on the raw names instead would leave every prefix of an out-of-time activity
+        unlookupable, and every reference suffix holding one unmatchable by construction.
+
+        Args:
+            rows: The split to index, as preprocessing holds it, sorted by case and by timestamp.
+            vocabulary: The activity names the train split holds, from `codec.activity.vocab`.
+            names: Every name the activity channel can decode to, in row order, from
+                `codec.activity.names`. Seeds the codebook, so a suffix is spelled here exactly as a
+                generations file spells it and neither side ever codes a name on the fly.
+        Returns:
+            The index, ready to be queried or written.
         """
+        known = set(vocabulary)
+        seen = rows.assign(
+            **{
+                ACTIVITY_KEY: rows[ACTIVITY_KEY].where(
+                    cond=rows[ACTIVITY_KEY].isin(known), other=UNK_TOKEN
+                )
+            }
+        )
+
+        codes = ActivityCodes.of(names)
+        cases = [
+            (
+                codes.encode(events[ACTIVITY_KEY]),
+                events[REMAINING_TIME_KEY].tolist(),
+                events[CYCLE_TIME_KEY].tolist(),
+            )
+            for _, events in seen.groupby(CASE_KEY, sort=False)
+        ]
+
+        # Every cut point of every case, grouped under the prefix it leaves behind. A prefix's
+        # continuations are counted as they arrive, so a suffix the log took twice is one entry
+        # weighing two; its remaining times are kept one per occurrence, and the cycle time before
+        # each of its events is pooled under that event's own activity. The first event of a case
+        # carries no cycle time, and it is never in a suffix either, since a cut leaves at least one
+        # event behind it.
+        grouped: dict[str, tuple[dict[str, int], list[float], dict[str, list[float]]]] = {}
+        for activities, remaining_times, deltas in cases:
+            for cut in range(1, len(activities)):
+                observed, minutes, cycle_times = grouped.setdefault(activities[:cut], ({}, [], {}))
+                suffix = activities[cut:]
+                observed[suffix] = observed.get(suffix, 0) + 1
+                minutes.append(remaining_times[cut - 1])
+                for activity, cycle_time in zip(suffix, deltas[cut:], strict=True):
+                    cycle_times.setdefault(activity, []).append(cycle_time)
+
+        return cls(
+            vocabulary=codes.vocabulary,
+            rows={prefix: row for row, prefix in enumerate(grouped)},
+            suffixes=[list(observed) for observed, _, _ in grouped.values()],
+            weights=[list(observed.values()) for observed, _, _ in grouped.values()],
+            remaining_times=[minutes for _, minutes, _ in grouped.values()],
+            cycle_time_activities=[''.join(cycle_times) for _, _, cycle_times in grouped.values()],
+            cycle_times=[list(cycle_times.values()) for _, _, cycle_times in grouped.values()],
+            diversity=[
+                diversity(tuple(observed), weights=list(observed.values()))
+                for observed, _, _ in grouped.values()
+            ],
+        )
+
+    @classmethod
+    def read(cls, dataset: str, split: Split) -> Self:
+        """Read back the index preprocessing wrote.
+
         Args:
             dataset: The dataset whose index to read, from where preprocessing wrote it.
             split: Which split's continuations to read. Evaluation scores against `TEST`, and
                 training selects checkpoints against `VAL`.
+        Returns:
+            The index that split was written as.
         """
         table = pq.read_table(paths.CONTINUATIONS.require(dataset=dataset, split=split))
+        prefixes = table.column('prefix').to_pylist()
+        return cls(
+            vocabulary=read_vocabulary(table.schema),
+            rows={prefix: row for row, prefix in enumerate(prefixes)},
+            suffixes=table.column('suffixes').to_pylist(),
+            weights=table.column('weights').to_pylist(),
+            remaining_times=table.column('remaining_times').to_pylist(),
+            cycle_time_activities=table.column('cycle_time_activities').to_pylist(),
+            cycle_times=table.column('cycle_times').to_pylist(),
+            diversity=table.column('diversity').to_pylist(),
+        )
 
-        self._codes = ActivityCodes.of(json.loads(table.schema.metadata[_VOCABULARY]))
-        self._rows = {prefix: row for row, prefix in enumerate(table.column('prefix').to_pylist())}
-        self._suffixes = table.column('suffixes').to_pylist()
-        self._weights = table.column('weights').to_pylist()
-        self._remaining_times = table.column('remaining_times').to_pylist()
-        self._wait_activities = table.column('wait_activities').to_pylist()
-        self._waits = table.column('waits').to_pylist()
-        self._dispersion = table.column('dispersion').to_numpy()
+    def write(self, *, dataset: str, split: Split) -> Path:
+        """Write the index beside the splits, for `read` to load it back.
+
+        Args:
+            dataset: The dataset the split came from, naming where the index goes.
+            split: Which split this is, naming the file written.
+        Returns:
+            The file written.
+        """
+        # `_rows` was built by enumerating the prefixes in order, so its keys are the prefix
+        # column and reading them back out is what keeps every row's index pointing at its own data.
+        table = pa.table(
+            {
+                'prefix': list(self._rows),
+                'suffixes': self._suffixes,
+                'weights': self._weights,
+                'remaining_times': self._remaining_times,
+                'diversity': self._diversity,
+                'cycle_time_activities': self._cycle_time_activities,
+                'cycle_times': self._cycle_times,
+            },
+            schema=with_vocabulary(_SCHEMA, self._vocabulary),
+        )
+        path = paths.CONTINUATIONS.prepare(dataset=dataset, split=split)
+        pq.write_table(table, path, compression=_COMPRESSION)
+        return path
 
     @property
     def vocabulary(self) -> tuple[str, ...]:
@@ -106,9 +244,19 @@ class ContinuationIndex:
         by construction and a caller compares them to catch a file built against an older
         preprocessing before it scores a single prefix.
         """
-        return self._codes.vocabulary
+        return self._vocabulary
 
-    def references(self, prefix: str) -> References:
+    @property
+    def prefixes(self) -> int:
+        """How many distinct prefixes are indexed."""
+        return len(self._rows)
+
+    @property
+    def occurrences(self) -> int:
+        """How many cut points those prefixes cover, counting a prefix once per occurrence."""
+        return sum(len(minutes) for minutes in self._remaining_times)
+
+    def continuations(self, prefix: str) -> Continuations:
         """Every continuation observed after one prefix.
 
         Args:
@@ -128,109 +276,15 @@ class ContinuationIndex:
                 'continuation index: the two were built from different preprocessings of this '
                 'dataset. Rerun pipelines.preprocess, then pipelines.generate.'
             )
-        return References(
+        return Continuations(
             suffixes=tuple(self._suffixes[row]),
             weights=np.asarray(self._weights[row], dtype=np.float64),
             remaining_times=np.asarray(self._remaining_times[row], dtype=np.float64),
-            waits={
+            cycle_times={
                 activity: np.asarray(observed, dtype=np.float64)
                 for activity, observed in zip(
-                    self._wait_activities[row], self._waits[row], strict=True
+                    self._cycle_time_activities[row], self._cycle_times[row], strict=True
                 )
             },
-            dispersion=float(self._dispersion[row]),
+            diversity=float(self._diversity[row]),
         )
-
-
-def build_index(
-    rows: pd.DataFrame,
-    *,
-    dataset: str,
-    split: Split,
-    vocabulary: Collection[str],
-    names: Sequence[str],
-) -> tuple[int, int]:
-    """Index every continuation one held-out split takes, and write it beside the splits.
-
-    The reference distribution a generated suffix is compared against is one held-out split and
-    nothing else: an out-of-time sample of `p(suffix | prefix)`, so a model that memorized the
-    train split gains nothing from it and the reference is not drawn from the older regime the
-    split's own separation exists to keep apart. Every cut point of every case contributes,
-    `min_prefix_len` included, since that bound governs what a model may be asked rather than what
-    the log was observed to do.
-
-    Both held-out splits are indexed, and which one is read is the reader's choice: evaluation
-    scores against the test split, while training selects checkpoints against the validation
-    split, since selecting on the test split's continuations would fold the held-out set into
-    what gets kept.
-
-    The split is read through the train split's vocabulary, an activity missing from it becoming
-    UNK, which is the only name generation can give it: a model can emit no activity it was never
-    shown, and the generations name a prefix and its ground truth the same way. Keying the index
-    on the raw names instead would leave every prefix of an out-of-time activity unlookupable,
-    and every reference suffix holding one unmatchable by construction.
-
-    Args:
-        rows: The split to index, as preprocessing holds it, sorted by case and by timestamp.
-        dataset: The dataset the split came from, naming where the index goes.
-        split: Which split `rows` is, naming the file written.
-        vocabulary: The activity names the train split holds, from `codec.activity.vocab`.
-        names: Every name the activity channel can decode to, in row order, from
-            `codec.activity.names`. Seeds the codebook, so a suffix is spelled here exactly as a
-            generations file spells it and neither side ever codes a name on the fly.
-    Returns:
-        How many distinct prefixes were indexed, and how many occurrences they cover.
-    """
-    known = set(vocabulary)
-    seen = rows.assign(
-        **{
-            ACTIVITY_KEY: rows[ACTIVITY_KEY].where(
-                cond=rows[ACTIVITY_KEY].isin(known), other=UNK_TOKEN
-            )
-        }
-    )
-
-    codes = ActivityCodes.of(names)
-    cases = [
-        (
-            codes.encode(events[ACTIVITY_KEY]),
-            events[REMAINING_TIME_KEY].tolist(),
-            events[EVENT_DELTA_KEY].tolist(),
-        )
-        for _, events in seen.groupby(CASE_KEY, sort=False)
-    ]
-
-    # Every cut point of every case, grouped under the prefix it leaves behind. A prefix's
-    # continuations are counted as they arrive, so a suffix the log took twice is one entry
-    # weighing two; its remaining times are kept one per occurrence, and the wait before each of
-    # its events is pooled under that event's own activity. The first event of a case carries no
-    # wait, and it is never in a suffix either, since a cut leaves at least one event behind it.
-    grouped: dict[str, tuple[dict[str, int], list[float], dict[str, list[float]]]] = {}
-    for activities, remaining_times, deltas in cases:
-        for cut in range(1, len(activities)):
-            observed, minutes, waits = grouped.setdefault(activities[:cut], ({}, [], {}))
-            suffix = activities[cut:]
-            observed[suffix] = observed.get(suffix, 0) + 1
-            minutes.append(remaining_times[cut - 1])
-            for activity, wait in zip(suffix, deltas[cut:], strict=True):
-                waits.setdefault(activity, []).append(wait)
-
-    table = pa.table(
-        {
-            'prefix': list(grouped),
-            'suffixes': [list(observed) for observed, _, _ in grouped.values()],
-            'weights': [list(observed.values()) for observed, _, _ in grouped.values()],
-            'remaining_times': [minutes for _, minutes, _ in grouped.values()],
-            'dispersion': [
-                spread(tuple(observed), weights=list(observed.values()))
-                for observed, _, _ in grouped.values()
-            ],
-            'wait_activities': [''.join(waits) for _, _, waits in grouped.values()],
-            'waits': [list(waits.values()) for _, _, waits in grouped.values()],
-        },
-        schema=_SCHEMA.with_metadata({_VOCABULARY: json.dumps(codes.vocabulary)}),
-    )
-
-    path = paths.CONTINUATIONS.prepare(dataset=dataset, split=split)
-    pq.write_table(table, path, compression=_COMPRESSION)
-    return len(grouped), sum(len(minutes) for _, minutes, _ in grouped.values())

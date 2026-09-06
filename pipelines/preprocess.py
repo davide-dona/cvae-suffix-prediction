@@ -8,21 +8,12 @@ from src import paths
 from src.cli import banner, step
 from src.configs import DataConfig, DeclareConfig, load_dataset_config
 from src.datasets.codec import DatasetCodec
-from src.logs.continuations import build_index
-from src.logs.declare import discover_declare_model
-from src.logs.filters import (
-    case_durations,
-    drop_cases_by_duration,
-    drop_cases_by_length,
-    sort_log,
-)
-from src.logs.io import read_original_log, write_log
-from src.logs.keys import (
+from src.logs import (
     CASE_ELAPSED_KEY,
     CASE_KEY,
+    CYCLE_TIME_KEY,
     DAY_COS_KEY,
     DAY_SIN_KEY,
-    EVENT_DELTA_KEY,
     MIN_PREFIX_KEY,
     MISSING_FEATURE,
     REMAINING_TIME_KEY,
@@ -30,14 +21,22 @@ from src.logs.keys import (
     SECONDS_COS_KEY,
     SECONDS_SIN_KEY,
     TIMESTAMP_KEY,
+    ContinuationIndex,
     Split,
+    read_original_log,
+    write_log,
 )
-from src.logs.split import out_of_time_split
-from src.logs.temporal import (
+from src.logs.declare.discovery import discover_declare_model
+from src.logs.preprocessing import (
     add_calendar,
     add_case_elapsed,
-    add_event_delta,
+    add_cycle_time,
     add_remaining_time,
+    case_durations,
+    drop_cases_by_duration,
+    drop_cases_by_length,
+    out_of_time_split,
+    sort_log,
 )
 
 
@@ -111,11 +110,11 @@ def preprocess(log: pd.DataFrame, *, feature_columns: list[str]) -> pd.DataFrame
         A copy of `log` with the two timestamp proxies, the remaining time and the four calendar
         columns added, and its categorical columns filled.
     """
-    log = add_event_delta(
+    log = add_cycle_time(
         log,
         case_key=CASE_KEY,
         timestamp_key=TIMESTAMP_KEY,
-        out_key=EVENT_DELTA_KEY,
+        out_key=CYCLE_TIME_KEY,
     )
     log = add_case_elapsed(
         log,
@@ -137,25 +136,15 @@ def preprocess(log: pd.DataFrame, *, feature_columns: list[str]) -> pd.DataFrame
         seconds_sin_key=SECONDS_SIN_KEY,
         seconds_cos_key=SECONDS_COS_KEY,
     )
-    # The resource is a categorical channel whatever the log holds, so it is filled outright:
-    # a log that records no resource for an event states that much, and `DatasetCodec.fit` has a
-    # value to build a vocabulary row from rather than a gap it cannot sort.
     log[RESOURCE_KEY] = log[RESOURCE_KEY].fillna(MISSING_FEATURE).astype(str)
 
-    # Filling leaves these columns as strings, so the same test in `DatasetCodec.fit`
-    # sorts them into the same channels it would have before.
     for column in feature_columns:
         if not is_numeric_dtype(log[column]):
             log[column] = log[column].fillna(MISSING_FEATURE).astype(str)
     return log
 
 
-def run(
-    data_config: DataConfig,
-    declare_config: DeclareConfig,
-    *,
-    skip_declare: bool,
-) -> None:
+def run(data_config: DataConfig, declare_config: DeclareConfig) -> None:
     """
     Preprocess and split a dataset, writing outputs next to the input.
 
@@ -170,15 +159,12 @@ def run(
     The continuations each held-out split takes after each of its prefixes are indexed next, one
     index per split, beside the splits: training selects checkpoints against the validation
     split's and evaluation scores against the test split's, so both are always built. The
-    declarative model discovered from the train split follows, and is the one artifact
-    `skip_declare` leaves unwritten: evaluation is its only reader, and discovery is the slowest
-    step here by a wide margin.
+    declarative model discovered from the train split follows, and is what evaluation checks
+    conformance against.
 
     Args:
         data_config: The `data` section of this dataset's experiment config.
         declare_config: The `declare` section, driving the discovery of the declarative model.
-        skip_declare: Whether to skip discovering the declarative model. Evaluation will fail
-            until preprocessing is rerun without this flag.
     """
     dataset = data_config.name
 
@@ -191,9 +177,7 @@ def run(
             'splits': paths.PROCESSED_SPLIT.directory(dataset),
             'codec': paths.CODEC.path(dataset),
             'continuations': paths.CONTINUATIONS.directory(dataset),
-            'declarative model': 'skipped (--skip-declare)'
-            if skip_declare
-            else paths.DECLARE_MODEL.path(dataset),
+            'declarative model': paths.DECLARE_MODEL.path(dataset),
         },
     )
 
@@ -251,32 +235,27 @@ def run(
     # Both held-out splits, since training selects on the validation split's continuations and
     # evaluation scores against the test split's.
     indexed = {}
-    for split, rows in ((Split.VAL, val), (Split.TEST, test)):
+    for split, data in ((Split.VAL, val), (Split.TEST, test)):
         with step(f'Indexing the continuations of the {split} split'):
-            prefixes, occurrences = build_index(
-                rows,
-                dataset=dataset,
-                split=split,
+            index = ContinuationIndex.of(
+                data,
                 vocabulary=codec.activity.vocab,
                 names=codec.activity.names,
             )
-            indexed[split] = prefixes
+            index.write(dataset=dataset, split=split)
+            indexed[split] = index.prefixes
             print(
-                f'  {occurrences:,} cut points over {prefixes:,} distinct prefixes',
+                f'  {index.occurrences:,} cut points over {index.prefixes:,} distinct prefixes',
                 flush=True,
             )
 
-    if skip_declare:
-        declare_summary = 'declarative model skipped (--skip-declare)'
-    else:
-        # The slowest step of the pipeline by a wide margin, and pm4py reports its own progress.
-        with step('Discovering the declarative model'):
-            constraints = discover_declare_model(
-                train,
-                dataset=dataset,
-                declare_config=declare_config,
-            )
-        declare_summary = f'{constraints} declarative constraints'
+    with step('Discovering the declarative model'):
+        constraints = discover_declare_model(
+            train,
+            dataset=dataset,
+            declare_config=declare_config,
+        )
+    declare_summary = f'{constraints} declarative constraints'
 
     print(
         f'Preprocessed "{dataset}": {len(train):,} train, {len(val):,} val, {len(test):,} test '
@@ -302,20 +281,11 @@ def main() -> None:
         required=True,
         help="Path to this experiment's dataset config, e.g. config/datasets/bpic17.yaml.",
     )
-    parser.add_argument(
-        '--skip-declare',
-        action='store_true',
-        help='Skip discovering the declarative model, the slowest step here by a wide margin. '
-        'Evaluation is its only reader, so rerun without this flag before evaluating.',
-    )
     args = parser.parse_args()
 
     config = load_dataset_config(args.config)
-    run(
-        data_config=config.data,
-        declare_config=config.declare,
-        skip_declare=args.skip_declare,
-    )
+
+    run(data_config=config.data, declare_config=config.declare)
 
 
 if __name__ == '__main__':

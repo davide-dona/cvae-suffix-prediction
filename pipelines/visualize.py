@@ -8,7 +8,7 @@ from matplotlib.figure import Figure
 
 from src import paths
 from src.cli import banner, step
-from src.evaluation.report import Axis, read_reports
+from src.evaluation import Axis, read_reports
 from src.uncertainty import INTERVAL_COLUMNS, read_intervals, test_significance
 from src.visualization import (
     FIGURES,

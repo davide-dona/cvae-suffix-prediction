@@ -54,7 +54,7 @@ def add_remaining_time(
     return log
 
 
-def add_event_delta(
+def add_cycle_time(
     log: pd.DataFrame,
     *,
     case_key: str,

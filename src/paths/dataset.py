@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.logs.keys import Split
+from src.logs import Split
 from src.paths.artifact import Artifact
 from src.paths.locations import DATA_DIR, dataset_config
 
@@ -82,7 +82,7 @@ CONTINUATIONS = SplitArtifact(
 )
 DECLARE_MODEL = DatasetArtifact(
     kind='declarative model',
-    remedy='Run `uv run python -m pipelines.preprocess -c {config}` without --skip-declare first.',
+    remedy='Run `uv run python -m pipelines.preprocess -c {config}` first.',
     relative='declare/model.decl',
 )
 

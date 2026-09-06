@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
 from src import paths
-from src.configs import DataConfig
 from src.logs.keys import (
     ACTIVITY_KEY,
     CASE_KEY,
@@ -11,6 +13,9 @@ from src.logs.keys import (
     RESOURCE_KEY,
     TIMESTAMP_KEY,
 )
+
+if TYPE_CHECKING:
+    from src.configs import DataConfig
 
 
 def read_log(

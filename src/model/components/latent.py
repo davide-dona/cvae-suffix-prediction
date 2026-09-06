@@ -2,7 +2,7 @@ import torch
 from torch import nn
 
 from src.configs.schema import LatentConfig, PriorConfig
-from src.distributions.gaussian import Gaussian
+from src.distributions import Gaussian
 
 
 class PriorNetwork(nn.Module):

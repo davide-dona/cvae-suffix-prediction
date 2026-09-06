@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -112,6 +112,12 @@ def wandb_artifact(run: RunIdentity) -> str:
 # says what produced it rather than leaving that to be read off the path it happens to sit at.
 _RUN_KEY = b'run'
 
+# The schema metadata key an artifact holding encoded suffixes stores its activity names under, in
+# code order. The generations and the continuation index are both seeded from `codec.activity.names`
+# and both carry it, which is what lets a reader check that two files spell a suffix the same way
+# before scoring one against the other.
+_VOCABULARY_KEY = b'activities'
+
 
 def stamped(schema: pa.Schema, run: RunIdentity) -> pa.Schema:
     """Stamp a run's identity into a Parquet schema, for the writer to carry into the footer.
@@ -148,6 +154,41 @@ def read_run_identity(parquet: pq.ParquetFile) -> RunIdentity:
             'produces it.'
         )
     return RunIdentity.from_json(metadata[_RUN_KEY])
+
+
+def with_vocabulary(schema: pa.Schema, vocabulary: Sequence[str]) -> pa.Schema:
+    """Write the activity names an artifact spells its suffixes on into its schema.
+
+    Args:
+        schema: The artifact's own schema, carrying whatever metadata it already holds.
+        vocabulary: The names in code order, from `ActivityCodes.vocabulary`.
+    Returns:
+        The same schema saying what its own characters mean, beside the metadata it arrived with.
+    """
+    return schema.with_metadata(
+        (schema.metadata or {}) | {_VOCABULARY_KEY: json.dumps(list(vocabulary))}
+    )
+
+
+def read_vocabulary(schema: pa.Schema) -> tuple[str, ...]:
+    """Read back the activity names an artifact spells its suffixes on.
+
+    Args:
+        schema: The artifact's schema, from an open `pq.ParquetFile` or a read table.
+    Returns:
+        The names in code order, which is what `ActivityCodes.of` seeds back into a codebook and
+        what a reader compares against another artifact's own.
+    Raises:
+        ValueError: If the artifact carries none, and so predates the vocabulary it should name
+            itself by.
+    """
+    metadata = schema.metadata or {}
+    if _VOCABULARY_KEY not in metadata:
+        raise ValueError(
+            'this file does not say what its activity codes mean. Write it again with the pipeline '
+            'that produces it.'
+        )
+    return tuple(json.loads(metadata[_VOCABULARY_KEY]))
 
 
 def group_by_model(runs: Iterable[tuple[RunIdentity, Path]]) -> dict[str, dict[str, Path]]:

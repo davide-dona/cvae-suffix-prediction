@@ -8,7 +8,8 @@ from typing import Self
 import pandas as pd
 from pydantic import TypeAdapter, ValidationError
 
-from src.evaluation.summary import EvaluationSummary, flatten_scores
+from src.evaluation.scores import COMPARABLE_METRICS
+from src.evaluation.summary import EvaluationSummary, LengthSummary, flatten_scores
 from src.identity import RunIdentity, group_by_model
 
 
@@ -63,8 +64,23 @@ class Axis(StrEnum):
 
 
 # What every figure and every table reads. One row is one metric of one run, so a metric added to
-# the scores reaches the figures without a change here.
+# the scores reaches the figures without a change here. `prefixes` is how many prefixes that row's
+# own mean was taken over, which for a metric of `COMPARABLE_METRICS` is fewer than the breakdown
+# holds.
 REPORT_COLUMNS = ('dataset', 'model', 'axis', 'length', 'prefixes', 'metric', 'value')
+
+
+def _over(summary: EvaluationSummary | LengthSummary, metric: str) -> int:
+    """How many prefixes one metric's mean was taken over.
+
+    Args:
+        summary: The breakdown the metric was read off.
+        metric: Which of the report's numbers it is.
+    Returns:
+        The prefixes it holds, or the ones the distributional family is read over where the
+        metric is one of that family's, which is what `summary.compared` counts.
+    """
+    return summary.compared if metric in COMPARABLE_METRICS else summary.prefixes
 
 
 def _rows(report: EvaluationReport) -> list[dict[str, object]]:
@@ -72,17 +88,16 @@ def _rows(report: EvaluationReport) -> list[dict[str, object]]:
     run, summary = report.run, report.summary
     identity = {'dataset': run.dataset, 'model': run.model}
 
-    overall = flatten_scores(summary)
     rows: list[dict[str, object]] = [
         identity
         | {
             'axis': Axis.OVERALL,
             'length': None,
-            'prefixes': summary.prefixes,
-            'metric': m,
-            'value': v,
+            'prefixes': _over(summary, metric),
+            'metric': metric,
+            'value': value,
         }
-        for m, v in overall.items()
+        for metric, value in flatten_scores(summary).items()
     ]
     breakdowns = ((Axis.PREFIX, summary.by_prefix_length), (Axis.SUFFIX, summary.by_suffix_length))
     rows.extend(
@@ -90,7 +105,7 @@ def _rows(report: EvaluationReport) -> list[dict[str, object]]:
         | {
             'axis': axis,
             'length': entry.length,
-            'prefixes': entry.prefixes,
+            'prefixes': _over(entry, metric),
             'metric': metric,
             'value': value,
         }

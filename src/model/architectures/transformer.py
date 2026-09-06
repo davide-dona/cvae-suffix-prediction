@@ -8,8 +8,7 @@ from src.model.components.decoder import Decoder, GeneratedSuffix
 from src.model.components.embeddings import EventEmbeddings
 from src.model.components.trace_encoder import TraceEncoder
 from src.model.models import ModelOutput, SuffixModel, time_loss
-from src.training.kl import LatentMetrics
-from src.training.loss import Loss
+from src.training import LatentMetrics, Loss
 
 
 class Transformer(SuffixModel):
@@ -34,8 +33,8 @@ class Transformer(SuffixModel):
     the scale cannot be paid for out of the activity head through the trunk they share.
 
     Flow, with `prefix` and `suffix` both padded to `max_seq_len`:
-        prefix                -> prefix events (for the decoder)
-        prefix events, suffix -> an activity, the wait until it and a remaining time, at every
+        prefix                -> prefix events (for the decoder) prefix events, suffix -> an
+        activity, the cycle time before it and a remaining time, at every
                                  suffix position
     """
 
@@ -137,22 +136,22 @@ class Transformer(SuffixModel):
             reduction='sum',
         )
 
-        time_to_next_loss, time_to_next_scale = time_loss(
-            output.decoder.times_to_next, batch.times_to_next, batch
+        cycle_time_loss, cycle_time_scale = time_loss(
+            output.decoder.cycle_times, batch.cycle_times, batch
         )
         remaining_time_loss, remaining_time_scale = time_loss(
             output.decoder.remaining_times, batch.remaining_times, batch
         )
 
-        reconstruction_loss = activity_loss + time_to_next_loss + remaining_time_loss
+        reconstruction_loss = activity_loss + cycle_time_loss + remaining_time_loss
 
         metrics = Loss(
             loss=reconstruction_loss.item(),
             reconstruction_loss=reconstruction_loss.item(),
             activity_loss=activity_loss.item(),
-            time_to_next_loss=time_to_next_loss.item(),
+            cycle_time_loss=cycle_time_loss.item(),
             remaining_time_loss=remaining_time_loss.item(),
-            time_to_next_scale_loss=time_to_next_scale.item(),
+            cycle_time_scale_loss=cycle_time_scale.item(),
             remaining_time_scale_loss=remaining_time_scale.item(),
         )
         return reconstruction_loss / batch_size, metrics, None

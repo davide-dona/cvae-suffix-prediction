@@ -3,7 +3,7 @@ from typing import Self
 
 import torch
 
-from src.distributions.gaussian import Gaussian
+from src.distributions import Gaussian
 from src.scalar_metrics import ScalarMetrics
 
 

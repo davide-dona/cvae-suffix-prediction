@@ -5,7 +5,7 @@ from torch import nn
 
 from src.configs.schema import DecoderConfig, LatentConfig, SamplingConfig
 from src.datasets.dataset import Events
-from src.distributions.laplace import Laplace
+from src.distributions import Laplace
 from src.model.components.attention import MultiHeadAttention, ProjectedKeysValues
 from src.model.components.conditioning import (
     UNCONDITIONED,
@@ -71,12 +71,12 @@ class DecoderOutput:
     variability lives in `z` reads its heads at their median and `Laplace.point` pins their scale
     to 1, leaving the loss the plain absolute error; one whose variability lives in its heads emits
     a log-scale beside each median, because a model that draws from a head has to say how wide it
-    is. The two times overlap - a remaining time is the sum of the waits from that position on -
-    and are read as two independent estimates rather than tied together.
+    is. The two times overlap - a remaining time is the sum of the cycle times from that position
+    on - and are read as two independent estimates rather than tied together.
     """
 
     activity_logits: torch.Tensor  # [batch_size, seq_len, num_activities]
-    times_to_next: Laplace  # [batch_size, seq_len] per field, standardized
+    cycle_times: Laplace  # [batch_size, seq_len] per field, standardized
     remaining_times: Laplace  # [batch_size, seq_len] per field, standardized
 
 
@@ -91,7 +91,7 @@ class GeneratedSuffix:
 
     activities: torch.Tensor  # [..., steps]
     lengths: torch.Tensor  # [...], events emitted before EOT, or `steps` if EOT never came
-    times_to_next: torch.Tensor  # [..., steps], standardized like the targets
+    cycle_times: torch.Tensor  # [..., steps], standardized like the targets
     # Read at position 0 alone, so it measures from the last prefix event, which is how the
     # reported remaining time is defined.
     remaining_time: torch.Tensor  # [...], standardized like the targets
@@ -258,7 +258,7 @@ class Decoder(nn.Module):
     from its logits at every step.
 
     `sampling` decides the time heads with it, and for the same reason. Where the variability is
-    the latent's, a wait's spread is the latent's too, so the heads emit a median alone and
+    the latent's, a cycle time's spread is the latent's too, so the heads emit a median alone and
     `Laplace.point` scores it by the plain absolute error. Where the variability is the heads', a
     time is drawn like an activity is, so each head emits a log-scale beside its median: a
     remaining time read at position 0, before any activity has been written, has no drawn activity
@@ -357,7 +357,7 @@ class Decoder(nn.Module):
         # where there is no scale is what leaves an unconditioned decoder's parameters, and so its
         # checkpoints, exactly as they were before either head could carry one.
         time_outputs = 2 if sampling is not None else 1
-        self.time_to_next_head = nn.Linear(
+        self.cycle_time_head = nn.Linear(
             in_features=config.head_hidden_dim, out_features=time_outputs
         )
         self.remaining_time_head = nn.Linear(
@@ -398,7 +398,7 @@ class Decoder(nn.Module):
         features = self.shared_layer(hidden)  # [batch_size, seq_len, head_hidden_dim]
         return DecoderOutput(
             activity_logits=self.activity_head(features),
-            times_to_next=self._time(self.time_to_next_head, features),
+            cycle_times=self._time(self.cycle_time_head, features),
             remaining_times=self._time(self.remaining_time_head, features),
         )
 
@@ -611,7 +611,7 @@ class Decoder(nn.Module):
                 dtype=torch.long,
                 device=device,
             ),
-            times_to_next=torch.zeros(size=(batch_size, seq_len), device=device),
+            cycle_times=torch.zeros(size=(batch_size, seq_len), device=device),
             categorical_attributes=torch.zeros(
                 size=(batch_size, seq_len, self.embeddings.num_categorical),
                 dtype=torch.long,
@@ -686,7 +686,7 @@ class Decoder(nn.Module):
         generated_activities = torch.zeros(
             size=(batch_size, max_steps), dtype=torch.long, device=device
         )
-        generated_times_to_next = torch.zeros(
+        generated_cycle_times = torch.zeros(
             size=(batch_size, max_steps), dtype=prefix_encoded.dtype, device=device
         )
         # A row that never emits EOT ran to the cap, so that is the length it keeps.
@@ -725,8 +725,8 @@ class Decoder(nn.Module):
                 )  # [batch_size]
 
             generated_activities[:, position] = activities
-            generated_times_to_next[:, position] = self._next_time(
-                self._time(self.time_to_next_head, features), drawing=drawing
+            generated_cycle_times[:, position] = self._next_time(
+                self._time(self.cycle_time_head, features), drawing=drawing
             )
             next_input = activities.unsqueeze(dim=1)  # [batch_size, 1]
 
@@ -743,6 +743,6 @@ class Decoder(nn.Module):
         return GeneratedSuffix(
             activities=generated_activities[:, :steps_taken],  # [batch_size, steps]
             lengths=lengths,
-            times_to_next=generated_times_to_next[:, :steps_taken],  # [batch_size, steps]
+            cycle_times=generated_cycle_times[:, :steps_taken],  # [batch_size, steps]
             remaining_time=remaining_time,
         )
