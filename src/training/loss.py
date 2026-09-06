@@ -20,3 +20,9 @@ class Loss(ScalarMetrics):
     activity_loss: float = 0.0
     cycle_time_loss: float = 0.0
     remaining_time_loss: float = 0.0
+    # What each time head was charged for the scale it emitted, already inside the two terms above
+    # rather than added to them. Subtracting one leaves the absolute error every architecture pays,
+    # so a time curve reads the same whichever arm produced it; a model whose time heads carry no
+    # scale leaves both at 0.0 and its two terms are that error outright.
+    cycle_time_scale_loss: float = 0.0
+    remaining_time_scale_loss: float = 0.0

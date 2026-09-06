@@ -7,7 +7,7 @@ from src.datasets.dataset import SplitTrace
 from src.model.components.decoder import Decoder, GeneratedSuffix
 from src.model.components.embeddings import EventEmbeddings
 from src.model.components.trace_encoder import TraceEncoder
-from src.model.models import ModelOutput, SuffixModel, time_mae
+from src.model.models import ModelOutput, SuffixModel, time_loss
 from src.training import LatentMetrics, Loss
 
 
@@ -17,17 +17,20 @@ class Transformer(SuffixModel):
 
     It is the arm the CVAE is read against, so it is the same everywhere the latent does not
     reach: one embedding space, the same encoder over the prefix, the same decoder
-    cross-attending over its events, the same point time heads scored by the same `time_mae`.
-    What differs is where the variability lives, and the activity head is the whole of it here:
-    with nothing conditioning the decoder, two runs of one prefix could only be the same suffix,
-    so the activity is sampled from its logits at every step. That is exactly the per-step noise
-    the latent exists to avoid, which is the comparison.
+    cross-attending over its events, the same time targets scored by the same `time_loss`.
+    What differs is where the variability lives, and the heads are the whole of it here: with
+    nothing conditioning the decoder, two runs of one prefix could only be the same suffix, so
+    every channel it writes is drawn - the activity from its logits, each time from its head's
+    Laplace. That is exactly the per-step noise the latent exists to avoid, which is the
+    comparison.
 
-    A cycle time still varies from draw to draw, because it is read off an activity path that was
-    drawn. A remaining time does not: it is read at position 0, before any activity has been
-    written, so every sample of one prefix opens on the same number. That is what an arm with no
-    latent can say about a quantity settled before its first step, and it is a result rather than a
-    gap.
+    All three heads and not only the activity, because the arm's answer to where the variability
+    lives has to hold for everything it emits. A remaining time is read at position 0, before any
+    activity has been written, so it has no drawn path to inherit a spread from: without a scale of
+    its own it would be one number in every sample of a prefix, which is the arm being unable to
+    speak about the quantity rather than a finding about the arm. `Laplace.beta_nll` is what makes
+    that affordable, holding the median's gradient at what a plain absolute error would give it so
+    the scale cannot be paid for out of the activity head through the trunk they share.
 
     Flow, with `prefix` and `suffix` both padded to `max_seq_len`:
         prefix                -> prefix events (for the decoder) prefix events, suffix -> an
@@ -55,7 +58,8 @@ class Transformer(SuffixModel):
             pad_activity_index=codec.activity.pad_index,
             pad_resource_index=codec.resource.pad_index,
             eot_activity_index=codec.activity.eot_index,
-            # A sampler: with no z to draw, the activity head is where the variability comes from.
+            # A sampler: with no z to draw, the heads are where the variability comes from, which
+            # is also what gives the time heads a scale of their own to be drawn from.
             sampling=config.sampling,
         )
 
@@ -88,8 +92,8 @@ class Transformer(SuffixModel):
             item: A batch from `TraceDataset`, read for its prefix only.
             num_samples: How many suffixes to draw per prefix. Every row decodes independently,
                 so `num_samples` rows of one prefix give `num_samples` different suffixes.
-            sample: Whether to sample the heads. False reads each at its mode - the likeliest
-                activity, the mean of each time - which is the model's single point prediction,
+            sample: Whether to draw the heads. False reads each at its mode - the likeliest
+                activity, the median of each time - which is the model's single point prediction,
                 and makes every row of a prefix identical.
         Returns:
             The generated suffixes, `[batch_size, num_samples, steps]`, with row `(i, j)` the
@@ -118,8 +122,10 @@ class Transformer(SuffixModel):
     ) -> tuple[torch.Tensor, Loss, LatentMetrics | None]:
         """Score a forward pass by its reconstruction alone: no latent, no KL term to charge.
 
-        The same three terms the CVAE charges, summed the same way and scored by the same calls,
-        so the two arms' losses differ in the KL and nothing else.
+        The same three terms the CVAE charges, summed the same way and scored by the same calls.
+        What each time term holds beyond the absolute error the CVAE pays is the scale its head
+        emitted, reported beside it so the two arms' curves are read against each other on the
+        error alone.
         """
         batch_size = batch.suffix.activities.size(0)
 
@@ -130,8 +136,12 @@ class Transformer(SuffixModel):
             reduction='sum',
         )
 
-        cycle_time_loss = time_mae(output.decoder.cycle_times, batch.cycle_times, batch)
-        remaining_time_loss = time_mae(output.decoder.remaining_times, batch.remaining_times, batch)
+        cycle_time_loss, cycle_time_scale = time_loss(
+            output.decoder.cycle_times, batch.cycle_times, batch
+        )
+        remaining_time_loss, remaining_time_scale = time_loss(
+            output.decoder.remaining_times, batch.remaining_times, batch
+        )
 
         reconstruction_loss = activity_loss + cycle_time_loss + remaining_time_loss
 
@@ -141,5 +151,7 @@ class Transformer(SuffixModel):
             activity_loss=activity_loss.item(),
             cycle_time_loss=cycle_time_loss.item(),
             remaining_time_loss=remaining_time_loss.item(),
+            cycle_time_scale_loss=cycle_time_scale.item(),
+            remaining_time_scale_loss=remaining_time_scale.item(),
         )
         return reconstruction_loss / batch_size, metrics, None

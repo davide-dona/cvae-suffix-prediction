@@ -5,6 +5,7 @@ from torch import nn
 
 from src.configs.schema import DecoderConfig, LatentConfig, SamplingConfig
 from src.datasets.dataset import Events
+from src.distributions import Laplace
 from src.model.components.attention import MultiHeadAttention, ProjectedKeysValues
 from src.model.components.conditioning import (
     UNCONDITIONED,
@@ -65,16 +66,18 @@ class DecoderOutput:
     """What the decoder predicts at every suffix position: the activity to write there, the
     minutes until it, and the minutes until the case ends.
 
-    Both times are a single standardized number on the scale their targets are encoded at, scored by
-    `time_mae`. Neither head carries a spread of its own: what a cycle time could have been is the
-    latent's to say where there is one, and the sampled activity path's where there is not. They
-    overlap - a remaining time is the sum of the cycle times from that position on - and are read as
-    two independent estimates rather than tied together.
+    Both times are a Laplace on the standardized scale their targets are encoded at, scored by
+    `time_loss`. Whether either carries a spread of its own is `sampling`'s to say: a decoder whose
+    variability lives in `z` reads its heads at their median and `Laplace.point` pins their scale
+    to 1, leaving the loss the plain absolute error; one whose variability lives in its heads emits
+    a log-scale beside each median, because a model that draws from a head has to say how wide it
+    is. The two times overlap - a remaining time is the sum of the cycle times from that position
+    on - and are read as two independent estimates rather than tied together.
     """
 
     activity_logits: torch.Tensor  # [batch_size, seq_len, num_activities]
-    cycle_times: torch.Tensor  # [batch_size, seq_len], standardized
-    remaining_times: torch.Tensor  # [batch_size, seq_len], standardized
+    cycle_times: Laplace  # [batch_size, seq_len] per field, standardized
+    remaining_times: Laplace  # [batch_size, seq_len] per field, standardized
 
 
 @dataclass(frozen=True)
@@ -254,15 +257,17 @@ class Decoder(nn.Module):
     latent has nowhere else to put its variability, so it declares a sampler and draws the activity
     from its logits at every step.
 
-    The time heads are point regressors either way, and that is the whole of what they are: a single
-    standardized number, scored by the absolute error. A head that emitted a scale of its own would
-    be a second difference between the two arms, one the latent does not reach, and it would be paid
-    for out of the activity head - a scale is free to shrink, and every step it shrinks by
-    multiplies the gradient the shared trunk sees from the times against the one it sees from the
-    activities. What a cycle time could have been is the latent's to carry where there is one. Where
-    there is not, a cycle time still varies from draw to draw, because it is read off an activity
-    path that was itself drawn; a remaining time, read at position 0 before any activity is written,
-    does not, and that is a result about this arm rather than a gap in it.
+    `sampling` decides the time heads with it, and for the same reason. Where the variability is
+    the latent's, a cycle time's spread is the latent's too, so the heads emit a median alone and
+    `Laplace.point` scores it by the plain absolute error. Where the variability is the heads', a
+    time is drawn like an activity is, so each head emits a log-scale beside its median: a
+    remaining time read at position 0, before any activity has been written, has no drawn activity
+    path to inherit a spread from, and without a scale of its own it would be the same number in
+    every draw of a prefix - a quantity the arm could say nothing about rather than a result about
+    the arm. What that costs is a gradient, and `Laplace.beta_nll` is where it is paid: charging
+    the likelihood directly would let a shrinking scale multiply what this trunk sees from the
+    times against what it sees from the activities, and the detached weight there is what leaves
+    the median the same gradient it has on an arm with no scale at all.
     """
 
     def __init__(
@@ -294,9 +299,10 @@ class Decoder(nn.Module):
                 one the decoder never feeds itself.
             eot_activity_index: What ends a generated suffix.
             sampling: How the activity logits are shaped before a draw reads them, or None for a
-                decoder that reads them at their mode. Declaring one is what makes this decoder's
-                heads the source of its variability, so it is also the whole of what tells the two
-                arms apart here.
+                decoder that reads every head at its mode. Declaring one is what makes this
+                decoder's heads the source of its variability - so it is also what gives the time
+                heads a scale to be drawn from - and it is the whole of what tells the two arms
+                apart here.
         """
         super().__init__()
         self.embeddings = embeddings
@@ -345,10 +351,18 @@ class Decoder(nn.Module):
         self.activity_head = nn.Linear(
             in_features=config.head_hidden_dim, out_features=num_activities
         )
-        # One number each, the standardized time itself. Neither output is squashed: the targets
-        # are standardized rather than bounded.
-        self.cycle_time_head = nn.Linear(in_features=config.head_hidden_dim, out_features=1)
-        self.remaining_time_head = nn.Linear(in_features=config.head_hidden_dim, out_features=1)
+        # The standardized time itself, and beside it a log-scale where this decoder draws from
+        # its heads. Nothing is squashed: the targets are standardized rather than bounded, and
+        # `Laplace.create` is what keeps the scale in a range `exp` survives. Emitting one number
+        # where there is no scale is what leaves an unconditioned decoder's parameters, and so its
+        # checkpoints, exactly as they were before either head could carry one.
+        time_outputs = 2 if sampling is not None else 1
+        self.cycle_time_head = nn.Linear(
+            in_features=config.head_hidden_dim, out_features=time_outputs
+        )
+        self.remaining_time_head = nn.Linear(
+            in_features=config.head_hidden_dim, out_features=time_outputs
+        )
 
     def forward(
         self,
@@ -382,12 +396,31 @@ class Decoder(nn.Module):
             modulations=self._modulations(z),
         )  # [batch_size, seq_len, d_model]
         features = self.shared_layer(hidden)  # [batch_size, seq_len, head_hidden_dim]
-        # Both time heads are [batch_size, seq_len, 1] -> [batch_size, seq_len].
         return DecoderOutput(
             activity_logits=self.activity_head(features),
-            cycle_times=self.cycle_time_head(features).squeeze(dim=-1),
-            remaining_times=self.remaining_time_head(features).squeeze(dim=-1),
+            cycle_times=self._time(self.cycle_time_head, features),
+            remaining_times=self._time(self.remaining_time_head, features),
         )
+
+    def _time(self, head: nn.Linear, features: torch.Tensor) -> Laplace:
+        """Read one time head, as the distribution it stands for either way.
+
+        The convention `Gaussian.from_head` follows, for a head that emits both halves side by
+        side: what is read off the last dimension is the median, then the raw log-scale. A head
+        with no scale to emit is one column wide and stands for the unit-scale Laplace around what
+        it did emit, so both architectures leave here holding the same type.
+
+        Args:
+            head: The head to read, one column wide or two.
+            features: The shared trunk's output, `[..., head_hidden_dim]`.
+        Returns:
+            The distribution at every position read, `[...]` per field.
+        """
+        parameters = head(features)  # [..., 1] or [..., 2]
+        if self.sampling is None:
+            return Laplace.point(parameters.squeeze(dim=-1))  # [..., 1] -> [...]
+        mean, logscale = parameters.unbind(dim=-1)  # [..., 2] -> two of [...]
+        return Laplace.create(mean=mean, logscale=logscale)
 
     def _modulations(self, z: torch.Tensor | None) -> tuple[LayerModulation, ...]:
         """What the latent does to each layer of the stack.
@@ -452,6 +485,24 @@ class Decoder(nn.Module):
         probabilities = (logits / self.sampling.temperature).softmax(dim=-1)
         probabilities = _nucleus(probabilities, top_p=self.sampling.top_p)
         return torch.multinomial(input=probabilities, num_samples=1).squeeze(dim=1)
+
+    @staticmethod
+    def _next_time(distribution: Laplace, *, drawing: bool) -> torch.Tensor:
+        """Read one time head for one decode step.
+
+        No temperature and no nucleus shape this the way `SamplingConfig` shapes an activity's
+        draw: the head's own scale already says how wide this position is, where a softmax says
+        only how the mass is spread over a vocabulary. A head with no scale is the unit-scale
+        `Laplace.point`, and `drawing` is False on every decoder that holds one, so this reads its
+        median and adds nothing.
+
+        Args:
+            distribution: The head's output at this position, `[batch_size]` per field.
+            drawing: Whether this step is a draw rather than the point prediction.
+        Returns:
+            The standardized time written at this position, `[batch_size]`.
+        """
+        return distribution.sample() if drawing else distribution.mean
 
     def _teacher_forced_input(self, suffix_activities: torch.Tensor) -> torch.Tensor:
         """What the decoder reads at each position: the suffix moved one step later, behind SOS.
@@ -593,12 +644,14 @@ class Decoder(nn.Module):
         Every step is one cached call to `_run_layers`, the same pass teacher forcing runs, so
         writing n events costs n passes over one position.
 
-        Only the activity head is ever drawn from, and only where `self.sampling` says so: a
-        conditioned decoder declares none, so every step is greedy and two generations of one
-        prefix differ in the z each was given. A decoder with no latent draws its activity at
-        every step, and its point prediction is the same pass with `sample=False`. Both time
-        heads are read as they are either way, so a cycle time varies from draw to draw only through
-        the activity path it was read off.
+        The heads are drawn from only where `self.sampling` says so, and then all three are: a
+        conditioned decoder declares none, so every step reads its activity at its mode and its
+        times at their median, and two generations of one prefix differ in the z each was given. A
+        decoder with no latent draws its activity from its logits and each time from its head's
+        Laplace, so a remaining time - read at position 0, where no activity has been drawn yet to
+        carry a spread of its own - varies across the draws of one prefix like everything else it
+        emits. Either way `sample=False` reads all three at their mode, which is the model's single
+        point prediction.
 
         Args:
             z: The sampled latent, `[batch_size, latent_dim]`, or None for a decoder built
@@ -607,15 +660,15 @@ class Decoder(nn.Module):
             prefix_pad_mask: True where a prefix position holds padding.
             max_steps: Hard cap on the suffix length, for generations that never emit EOT.
             sample: Whether this call is a draw rather than the point prediction. Nothing on a
-                decoder whose activity head is not the source of its variability.
+                decoder whose heads are not the source of its variability.
         Returns:
             The generated suffixes, the length of each, the minutes until each of their events,
             and the remaining time each was opened with.
         """
         batch_size = prefix_encoded.size(dim=0)
         device = prefix_encoded.device
-        # The activity head is drawn from only where it is what the variability lives in;
-        # everywhere else it is read at its mode, whatever the caller asked for.
+        # The heads are drawn from only where they are what the variability lives in; everywhere
+        # else they are read at their mode, whatever the caller asked for.
         drawing = self.sampling is not None and sample
         # z does not change while a suffix is being written, so what it does to each layer is
         # read once here rather than at every step of the loop below.
@@ -663,13 +716,18 @@ class Decoder(nn.Module):
             activities = self._next_activity(
                 self.activity_head(features), drawing=drawing
             )  # [batch_size]
-            # Only position 0, the state after SOS, answers for the whole suffix. Nothing has been
-            # drawn yet there, so every sample of one prefix opens on the same remaining time.
+            # Only position 0, the state after SOS, answers for the whole suffix. No activity has
+            # been drawn there yet, so a spread across the samples of one prefix is the head's own
+            # or there is none.
             if position == 0:
-                remaining_time = self.remaining_time_head(features).squeeze(dim=-1)  # [batch_size]
+                remaining_time = self._next_time(
+                    self._time(self.remaining_time_head, features), drawing=drawing
+                )  # [batch_size]
 
             generated_activities[:, position] = activities
-            generated_cycle_times[:, position] = self.cycle_time_head(features).squeeze(dim=-1)
+            generated_cycle_times[:, position] = self._next_time(
+                self._time(self.cycle_time_head, features), drawing=drawing
+            )
             next_input = activities.unsqueeze(dim=1)  # [batch_size, 1]
 
             # A suffix ends at its first EOT, so a later one cannot move the length back.

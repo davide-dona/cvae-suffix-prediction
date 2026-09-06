@@ -8,7 +8,7 @@ from torch import nn
 from src.configs.schema import CVAEConfig, ModelConfig
 from src.datasets.codec import DatasetCodec
 from src.datasets.dataset import SplitTrace
-from src.distributions import Gaussian
+from src.distributions import Gaussian, Laplace
 from src.model.checkpoint import MODEL_KEYS, require_keys
 from src.model.components.decoder import DecoderOutput, GeneratedSuffix
 from src.training import LatentMetrics, Loss
@@ -52,25 +52,33 @@ def _timed_positions(batch: SplitTrace) -> torch.Tensor:
     return positions.unsqueeze(dim=0) < (batch.suffix.length - 1).unsqueeze(dim=1)
 
 
-def time_mae(prediction: torch.Tensor, target: torch.Tensor, batch: SplitTrace) -> torch.Tensor:
+def time_loss(
+    prediction: Laplace, target: torch.Tensor, batch: SplitTrace
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Score one time head over the positions its target is defined at.
 
     Shared by every architecture, and the same call for both: neither has an opinion about where a
-    time target is scored or how. The absolute error rather than a squared one because its
-    minimizer is the conditional *median*, which is what the report's `*_ae_*_days` columns score.
-    A squared error would fit the conditional mean instead, over durations that are standardized
-    raw minutes with nothing but a 99.9-percentile filter guarding their tail, and the tail would
-    set the fit.
+    time target is scored or how, only about whether the head there carries a scale of its own, and
+    `Laplace.point` is what answers that without this having to ask.
+
+    The scale term is handed back beside the charge rather than instead of it, so a run's logged
+    time loss stays decomposable: subtracting it leaves the absolute error every architecture pays,
+    which is the number a curve is read on whichever arm produced it. It is inside the charge
+    already, so a caller adds one of the two to a loss and never both.
 
     Args:
-        prediction: The head's output, `[batch_size, seq_len]`, standardized.
-        target: What it is scored against, shaped and scaled like `prediction`.
+        prediction: The head's distribution, `[batch_size, seq_len]` per field, standardized.
+        target: What it is scored against, shaped and scaled like `prediction.mean`.
         batch: The batch the scored positions are read off.
     Returns:
-        A scalar, summed over the scored positions of the whole batch.
+        What the head is charged, and the part of it its median does not answer for, each a scalar
+        summed over the scored positions of the whole batch. The second is exactly 0.0 for a head
+        read at its median.
     """
-    error = (prediction - target).abs()  # [batch_size, seq_len]
-    return error.masked_fill(mask=~_timed_positions(batch), value=0.0).sum()
+    timed = _timed_positions(batch)  # [batch_size, seq_len]
+    charged = prediction.beta_nll(target).masked_fill(mask=~timed, value=0.0).sum()
+    scale = prediction.scale_penalty().masked_fill(mask=~timed, value=0.0).sum()
+    return charged, scale
 
 
 class SuffixModel(nn.Module, ABC):
