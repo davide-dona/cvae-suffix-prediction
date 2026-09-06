@@ -63,33 +63,16 @@ TABLES = (
     Table(
         name='fidelity',
         axis=Axis.OVERALL,
-        note='W1 is the 1-Wasserstein distance; length in events, times in days.',
+        note='Exact-match rate is the share of generated samples that exactly match the observed '
+        'suffix. W1 is the 1-Wasserstein distance; length in events, times in days.',
         columns=(
             MetricEntry(METRICS['emsc'], 'EMSC'),
             MetricEntry(METRICS['continuation_precision'], 'Precision'),
             MetricEntry(METRICS['continuation_recall'], 'Recall'),
+            MetricEntry(METRICS['hit_share'], 'Exact-match rate'),
             MetricEntry(METRICS['length_wasserstein'], 'Length W1'),
             MetricEntry(METRICS['remaining_time_wasserstein_days'], 'Rem. time W1'),
             MetricEntry(METRICS['activity_time_wasserstein_days'], 'Event time W1'),
-        ),
-    ),
-    # Sample quality against the observed suffix.
-    Table(
-        name='accuracy-generative',
-        axis=Axis.OVERALL,
-        note='Hit rate@k is the share of prefixes whose first k samples include the exact ground '
-        'truth suffix, @any the share whose samples include it at all, and hit share the share of '
-        "a prefix's samples that were exactly it. CRPS is the continuous ranked probability score "
-        'of the samples; length in events, times in days.',
-        columns=(
-            MetricEntry(METRICS['hit_rate_at_1'], 'Hit rate@1'),
-            MetricEntry(METRICS['hit_rate_at_5'], 'Hit rate@5'),
-            MetricEntry(METRICS['hit_rate_at_10'], 'Hit rate@10'),
-            MetricEntry(METRICS['hit_rate_any'], 'Hit rate@any'),
-            MetricEntry(METRICS['hit_share'], 'Hit share'),
-            MetricEntry(METRICS['length_crps'], 'Length CRPS'),
-            MetricEntry(METRICS['remaining_time_crps_days'], 'Rem. time CRPS'),
-            MetricEntry(METRICS['cycle_time_crps_days'], 'Event time CRPS'),
         ),
     ),
     # Calibration gaps at three central-interval levels.

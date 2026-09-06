@@ -36,17 +36,6 @@ FIGURES = (
                 MetricEntry(METRICS['conformance_mean'], 'Conformance (sample mean)'),
                 MetricEntry(METRICS['conformance_truth'], 'Conformance (ground truth)'),
             ),
-        ),
-    ),
-    # Full conformance is distinct from partial constraint satisfaction.
-    Plot(
-        name='full-conformance-by-suffix-length',
-        breakdowns=(Axis.SUFFIX,),
-        panels=(
-            (
-                MetricEntry(METRICS['full_conformance_point'], 'Fully conformant (point)'),
-                MetricEntry(METRICS['full_conformance_truth'], 'Fully conformant (ground truth)'),
-            ),
             (
                 MetricEntry(METRICS['full_conformance_mean'], 'Fully conformant (samples)'),
                 MetricEntry(METRICS['full_conformance_truth'], 'Fully conformant (ground truth)'),

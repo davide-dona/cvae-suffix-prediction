@@ -16,16 +16,16 @@ class ModelStyle:
 
 
 # Style for observed log values.
-LOG_STYLE = ModelStyle(label='Log', color='#8A8A8A', marker='o', linestyle='-.')
+LOG_STYLE = ModelStyle(label='Log', color='#737373', marker='o', linestyle='-.')
 
 # Registered model labels and styles.
 MODELS = Registry[ModelStyle](
     kind='model',
     where='MODELS in src/visualization/labels/models.py',
     entries={
-        'cvae': ModelStyle(label='CVAE', color='#2E8B57', marker='*', linestyle='-'),
-        'transformer': ModelStyle(label='Transformer', color='#6B3FA0', marker='D', linestyle=':'),
-        'u-ed-lstm': ModelStyle(label='U-ED-LSTM', color='#E67300', marker='s', linestyle='--'),
+        'cvae': ModelStyle(label='CVAE', color='#3B7EA1', marker='*', linestyle='-'),
+        'transformer': ModelStyle(label='Transformer', color='#A05A4B', marker='D', linestyle=':'),
+        'u-ed-lstm': ModelStyle(label='U-ED-LSTM', color='#7A7A7A', marker='s', linestyle='--'),
     },
 )
 

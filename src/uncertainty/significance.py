@@ -12,8 +12,7 @@ from src.uncertainty.units import by_case
 
 # What a difference has to clear to be called real, and how many resamples it is read against.
 # The resolution of an uncorrected p is `1 / TEST_RESAMPLES`, so this many leaves room for the
-# correction to divide it by the handful of models a row compares. More than a band is bounded by
-# in `src.uncertainty.intervals` for exactly that reason.
+# correction to divide it by the handful of models a row compares.
 ALPHA = 0.05
 TEST_RESAMPLES = 10_000
 

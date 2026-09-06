@@ -15,11 +15,8 @@ from src.visualization import labels
 from src.visualization.catalogue import MetricEntry, Plot
 from src.visualization.style import (
     ASPECT,
-    BAND_ALPHA,
-    BAND_Z,
     COLUMN_WIDTH,
     LEGEND_HEIGHT,
-    LINE_Z,
     MAX_MARKERS,
     PAGE_WIDTH,
     PANEL_X_BINS,
@@ -33,11 +30,11 @@ AXIS_LABELS = {Axis.PREFIX: 'Prefix length', Axis.SUFFIX: 'Suffix length'}
 
 
 def _draw_metric(axes: Axes, frame: pd.DataFrame, entry: MetricEntry) -> int:
-    """Draw one metric and its confidence bands.
+    """Draw one metric.
 
     Args:
         axes: Panel to draw on.
-        frame: Report rows for one dataset and breakdown with intervals.
+        frame: Report rows for one dataset and breakdown.
         entry: Metric display definition.
 
     Returns:
@@ -56,19 +53,6 @@ def _draw_metric(axes: Axes, frame: pd.DataFrame, entry: MetricEntry) -> int:
         (values[values['model'] == model].sort_values('length'), style) for model, style in series
     ]
 
-    # Draw bands first so lines remain visible.
-    for line, style in lines:
-        bounded = line.dropna(subset=['low', 'high'])
-        axes.fill_between(
-            bounded['length'],
-            bounded['low'],
-            bounded['high'],
-            color=style.color,
-            alpha=BAND_ALPHA,
-            linewidth=0.0,
-            zorder=BAND_Z,
-        )
-
     longest = 1
     for line, style in lines:
         longest = max(longest, int(line['length'].max()))
@@ -80,7 +64,6 @@ def _draw_metric(axes: Axes, frame: pd.DataFrame, entry: MetricEntry) -> int:
             marker=style.marker,
             linestyle=style.linestyle,
             markevery=max(1, math.ceil(len(line) / MAX_MARKERS)),
-            zorder=LINE_Z,
         )
     return longest
 
@@ -92,7 +75,7 @@ def _draw_panel(
 
     Args:
         axes: Panel to draw on.
-        frame: Report rows for one dataset and breakdown with intervals.
+        frame: Report rows for one dataset and breakdown.
         panel: Metrics displayed together.
         x_bins: Maximum x-axis tick bins.
 
@@ -134,7 +117,7 @@ def compose_figure(frame: pd.DataFrame, plot: Plot) -> Figure:
     """Compose a catalogue figure across all datasets.
 
     Args:
-        frame: Report rows with confidence intervals.
+        frame: Report rows.
         plot: Figure definition.
 
     Returns:
