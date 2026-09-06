@@ -7,11 +7,7 @@ from src.registry import Registry
 
 @dataclass(frozen=True)
 class ModelStyle:
-    """What a model is called and how it is drawn, the same way in every figure it appears in.
-
-    A colour, a marker and a line style together, so a model can be told from the others when the
-    paper is printed in black and white.
-    """
+    """Label and visual style shared by a model's figures."""
 
     label: str
     color: str
@@ -19,10 +15,10 @@ class ModelStyle:
     linestyle: str
 
 
-# How the log's own values are drawn, wherever a figure puts the log beside the models: the target
+# Style for observed log values.
 LOG_STYLE = ModelStyle(label='Log', color='#8A8A8A', marker='o', linestyle='-.')
 
-# How a model is called and its stlye
+# Registered model labels and styles.
 MODELS = Registry[ModelStyle](
     kind='model',
     where='MODELS in src/visualization/labels/models.py',
@@ -35,20 +31,25 @@ MODELS = Registry[ModelStyle](
 
 
 def _reported(model: str) -> str:
-    """The name one run is drawn and tabulated under: the first of those sharing its style."""
+    """Return the canonical name for a model style.
+
+    Args:
+        model: Registered model name.
+
+    Returns:
+        First registered name using the same style.
+    """
     style = MODELS[model]
     return next(name for name, declared in MODELS.entries.items() if declared == style)
 
 
 def reported_models(frame: pd.DataFrame) -> pd.DataFrame:
-    """Rewrite a frame's models to the names they are reported under.
-
-    Called on the way into every figure and table, so models sharing a style are one line and one
-    column rather than two drawn alike.
+    """Map models to their reported names.
 
     Args:
-        frame: What a figure or a table is drawn from, from `read_reports`.
+        frame: Report rows containing model names.
+
     Returns:
-        A copy holding reported names alone.
+        Copy with canonical model names.
     """
     return frame.assign(model=frame['model'].map(_reported))

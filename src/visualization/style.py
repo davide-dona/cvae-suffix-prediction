@@ -5,45 +5,33 @@ import matplotlib as mpl
 from matplotlib.artist import Artist
 from matplotlib.figure import Figure
 
-# Text widths of the paper, in inches, matching \documentclass[conference]{IEEEtran} on
-# letterpaper: \textwidth 43pc and \columnsep 1pc, neither of which the conference option changes.
-# A figure drawn at its final width needs no scaling in LaTeX, keeping its font size and line
-# widths correct.
+# IEEE conference text widths in inches.
 COLUMN_WIDTH = 3.487  # (43pc - 1pc) / 2 = 252pt
 PAGE_WIDTH = 7.140  # 43pc = 516pt
-# Height as a share of width, the golden ratio.
+# Figure height-to-width ratio.
 ASPECT = 0.618
 
-# How much taller than its panels a figure of several of them is, in inches: the room its shared
-# legend and its panel titles take above them.
+# Height reserved for the shared legend.
 LEGEND_HEIGHT = 0.68
-# How much air the layout leaves around the legend, in inches, and so between it and the row of
-# titles under it. Wider than the three points a constrained layout leaves by default, at which the
-# legend reads as resting on the titles rather than as sitting above them.
+# Spacing between the legend and panel titles.
 LEGEND_PAD = 0.08
-# How wide a panel title runs before it wraps onto a second line, and how many intervals a panel's
-# x-axis is divided into, both sized for the narrowest panel a group is drawn at.
+# Title wrapping width and maximum x-axis bins.
 TITLE_WIDTH = 22
 PANEL_X_BINS = 5
-# The most markers to draw on one line. Beyond this they merge into the line and stop saying which
-# series they belong to.
+# Maximum visible markers per series.
 MAX_MARKERS = 12
-# How far past a metric's declared upper bound a panel's y-axis is drawn, as a share of the bound's
-# own range. Without it a line approaching the bound reads as clipped against the axis border.
+# Upper-bound headroom as a share of its range.
 Y_HEADROOM = 0.05
 
-# How much of its series' colour a confidence band carries. Light enough that three of them
-# overlapping still read as uncertainty behind the lines rather than as filled areas of their own.
+# Confidence-band opacity.
 BAND_ALPHA = 0.18
-# Where a band and a line sit against each other. Every band of a panel is drawn under every line
-# of it, so the last series never covers the first series' line.
+# Confidence bands remain below all lines.
 BAND_Z = 1.8
 LINE_Z = 2.2
 
-# The style every figure shares. Set once, before any figure is drawn, by `apply_style()`.
+# Shared Matplotlib settings.
 _PAPER_RC = {
-    # The paper sets the body in Times (`\usepackage{times}`); the first of these that resolves
-    # on the machine drawing the figure is what it is set in too.
+    # Use the first available Times-compatible font.
     'font.family': 'serif',
     'font.serif': ['Times New Roman', 'Nimbus Roman', 'Times', 'STIX Two Text', 'DejaVu Serif'],
     'font.size': 8,
@@ -54,7 +42,7 @@ _PAPER_RC = {
     'legend.fontsize': 7,
     'figure.titlesize': 9,
     'figure.labelsize': 8,
-    # Only the two spines the data is read against.
+    # Keep only data-bearing spines.
     'axes.spines.top': False,
     'axes.spines.right': False,
     'axes.linewidth': 0.6,
@@ -63,7 +51,7 @@ _PAPER_RC = {
     'ytick.major.width': 0.6,
     'xtick.major.size': 2.5,
     'ytick.major.size': 2.5,
-    # A grid recessive enough to read a value against without competing with the lines.
+    # Keep grid lines visually subordinate.
     'axes.grid': True,
     'axes.axisbelow': True,
     'grid.color': '#000000',
@@ -80,37 +68,37 @@ _PAPER_RC = {
     'legend.borderpad': 0.3,
     'legend.handlelength': 2.2,
     'legend.columnspacing': 1.2,
-    # What anything rasterized is written at; a figure drawn as vectors alone is unaffected.
+    # Resolution for rasterized output.
     'savefig.dpi': 400,
     'savefig.bbox': 'tight',
     'savefig.pad_inches': 0.01,
-    # Embed the text as TrueType rather than as paths, so it stays selectable and searchable in the
-    # published PDF.
+    # Keep PDF text selectable.
     'pdf.fonttype': 42,
 }
 
 
 def apply_style() -> None:
-    """Set the shared look every figure shares. Called before anything is drawn."""
-    # Declare4Py turns the root logger up to DEBUG when it is imported, which makes matplotlib
-    # narrate the font subsetting of every figure it writes.
+    """Apply shared non-interactive figure styling.
+
+    Returns:
+        None.
+    """
+    # Suppress noisy third-party font logging.
     logging.getLogger('matplotlib').setLevel(logging.WARNING)
     logging.getLogger('fontTools').setLevel(logging.WARNING)
-    # Every figure is written to a file and none is shown, so the file backend is the right one
-    # whether or not a display happens to be attached.
+    # Figures are written without a display.
     mpl.use('Agg')
     mpl.rcParams.update(_PAPER_RC)
 
 
 def legend_above(figure: Figure, handles: Sequence[Artist], keys: Sequence[str]) -> None:
-    """Draw a figure's shared legend in one row above its panels.
+    """Draw a shared legend above the panels.
 
     Args:
-        figure: The figure, laid out by `constrained_layout` and with its panels already drawn.
-        handles: What the legend draws a key for, one per model.
-        keys: What each of them is called, in the same order.
+        figure: Figure containing the panels.
+        handles: Artists represented by the legend.
+        keys: Labels for the artists.
     """
     figure.legend(handles, keys, loc='outside upper center', ncols=len(keys))
-    # The pad the layout leaves between the legend and the row of titles below it. Set here rather
-    # than at `subplots`, since it is the legend that needs the room.
+    # Reserve space below the legend.
     figure.get_layout_engine().set(h_pad=LEGEND_PAD)

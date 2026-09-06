@@ -4,26 +4,21 @@ from src.evaluation.scores.distribution import MIN_REFERENCE_OCCURRENCES, Distri
 from src.registry import Registry
 from src.scalar_metrics import Metric
 
-# The families a report carries, in the order it lays them out.
+# Score families in report order.
 FAMILIES = (AccuracyScores, ConformanceScores, DistributionScores)
 
-# Which of a report's numbers are read over the prefixes `DistributionScores.comparable`
-# admits rather than over every prefix scored. The whole of that family and nothing else:
-# each of its scores compares the draws against the continuations one prefix was observed to
-# take, and none of them is a comparison at all where those are a sample of one. Every reader
-# that reduces per-prefix rows to a mean, a band or a p-value splits its metrics on this.
+# Distributional metrics aggregate only comparable prefixes.
 COMPARABLE_METRICS = frozenset(entry.key for entry in DistributionScores.metrics())
 
 
 def _declared() -> dict[str, Metric]:
-    """Every number a report carries, keyed by the field it was declared on.
+    """Collect score declarations, rejecting duplicate names.
 
     Returns:
-        The declarations of every family in one namespace, exactly as `summary.flatten_scores`
-        merges them.
+        Metric declarations keyed by field name.
+
     Raises:
-        ValueError: If two families declare the same name, which would leave a figure asking for
-            one and reading whichever was flattened last.
+        ValueError: If score families reuse a field name.
     """
     entries: dict[str, Metric] = {}
     for family in FAMILIES:
@@ -37,9 +32,7 @@ def _declared() -> dict[str, Metric]:
     return entries
 
 
-# Every number a report carries, which is every value the `metric` column of `read_reports` can
-# hold. Assembled from the score fields themselves, so a score added to a family is a name a
-# figure can spell with no change here, and a score renamed there is renamed everywhere at once.
+# Score metadata assembled from the declared family fields.
 METRICS = Registry[Metric](
     kind='metric',
     where='the score fields of the families in src/evaluation/scores/',
