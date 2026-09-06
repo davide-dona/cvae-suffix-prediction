@@ -8,8 +8,8 @@ from matplotlib.figure import Figure
 
 from src import paths
 from src.cli import banner, step
-from src.evaluation import Axis, read_reports
-from src.uncertainty import INTERVAL_COLUMNS, read_intervals, test_significance
+from src.evaluation import read_reports
+from src.uncertainty import test_significance
 from src.visualization import (
     FIGURES,
     TABLES,
@@ -18,17 +18,6 @@ from src.visualization import (
     latex_table,
     reported_models,
 )
-
-# Which metrics the figures draw, so the per-prefix scores are read for those alone. Named off the
-# catalogue rather than listed, so a metric added to a figure reaches the read with no change here.
-_BANDED_METRICS = tuple(
-    dict.fromkeys(entry.key for plot in FIGURES for panel in plot.panels for entry in panel)
-)
-# Which breakdowns are bounded: the two a figure draws a line along. The overall one is not one of
-# them, `read_intervals` saying why.
-_BANDED_AXES = (Axis.PREFIX, Axis.SUFFIX)
-# What a band joins onto its mean on, the key columns the two frames share.
-_INTERVAL_KEYS = [key for key in INTERVAL_COLUMNS if key not in ('low', 'high')]
 
 
 def _save_figure(figure: Figure, path: Path) -> None:
@@ -47,8 +36,7 @@ def _draw_figures(frame: pd.DataFrame) -> int:
     """Draw every figure of the catalogue, each covering every log the reports cover at once.
 
     Args:
-        frame: Every report read, from `read_reports`, with the bounds of `read_intervals` joined
-            onto it, so a figure reads one frame and draws a line and its band off the same rows.
+        frame: Every report read, from `read_reports`.
     Returns:
         How many figures were written, under `outputs/visual/figures/`.
     """
@@ -81,9 +69,8 @@ def run(evaluation_files: Sequence[Path]) -> None:
 
     Args:
         evaluation_files: The reports to compare, from `python -m pipelines.evaluate`. These draw
-            the metric figures and the comparison tables, and the per-prefix scores beside each of
-            them are what the figures' bands are bounded by and what the tables' emphasis is tested
-            on.
+            the metric figures and comparison tables, and the per-prefix scores beside each report
+            are what the tables' emphasis is tested on.
     Raises:
         ValueError: If a file is not a report, if a report has no per-prefix scores beside it, if a
             model has no look declared in `src.visualization.labels`, or if one log is given two
@@ -103,19 +90,9 @@ def run(evaluation_files: Sequence[Path]) -> None:
         # Models sharing a style are one model from here on: one line, one column, one legend key.
         reports = reported_models(read_reports(evaluation_files))
 
-    # Over the per-prefix scores beside each report, like the test below: a report holds the mean of
-    # each metric at each length and says nothing about how well that many prefixes pin it down.
-    # Joined on before anything is drawn, left, so a row with no bounds keeps its line and loses
-    # only its band, and a figure still reads one frame.
-    with step('Bounding how far each length’s mean could be off'):
-        intervals = reported_models(
-            read_intervals(evaluation_files, metrics=_BANDED_METRICS, axes=_BANDED_AXES)
-        )
-        banded = reports.merge(intervals, how='left', on=_INTERVAL_KEYS)
-
     logs = sorted(set(reports['dataset']))
     with step(f'Drawing {", ".join(logs)}'):
-        drawn = _draw_figures(banded)
+        drawn = _draw_figures(reports)
 
     # Over the per-prefix scores beside each report, since a mean cannot say whether two models
     # differ. A paired bootstrap over the cases of each log, which is seconds per log.

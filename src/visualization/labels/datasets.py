@@ -1,8 +1,6 @@
 from src.registry import Registry
 
-# What a log is called, as against `data.name` in its config, which is what its run directory is
-# called. A log with nothing declared for it stops the run. Also the order logs are tabulated in,
-# which `DATASETS.ordered` applies.
+# Display labels and ordering for datasets.
 DATASETS = Registry[str](
     kind='dataset',
     where='DATASETS in src/visualization/labels/datasets.py',

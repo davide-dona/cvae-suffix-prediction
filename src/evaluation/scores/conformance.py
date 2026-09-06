@@ -8,53 +8,38 @@ from src.scalar_metrics import Direction, Owner, ScalarMetrics, Unit, metric
 
 @dataclass(frozen=True, slots=True)
 class ConformanceScores(ScalarMetrics):
-    """Whether a prefix's generated suffixes are traces the process allows at all.
+    """Conformance of generated suffixes to process constraints."""
 
-    The scores of one prefix's generated samples and of the suffix it actually took, or their mean
-    over a set of prefixes. Each level is read twice: as the share of the model's constraints a
-    trace satisfies, and as whether it satisfies all of them. The share says how far off a trace is
-    where the verdict says whether it is a trace the process admits, and a set of traces can sit
-    high on the first while almost none of them passes the second.
-    """
-
-    # The mean over a prefix's samples
+    # Mean constraint-satisfaction share over draws.
     conformance_mean: float = metric(unit=Unit.SHARE, direction=Direction.HIGHER)
-    # The suffix written from the mean of `p(z | prefix)`
+    # Constraint-satisfaction share of the point prediction.
     conformance_point: float = metric(unit=Unit.SHARE, direction=Direction.HIGHER)
-    # The suffix the log actually took, through the same checker. A property of the log rather
-    # than of the model, so it is the same for every model of a log and is never compared between
-    # them: it is the target the two levels above are read against.
+    # Constraint-satisfaction share of the observed suffix.
     conformance_truth: float = metric(unit=Unit.SHARE, owner=Owner.LOG)
 
-    # The share of a prefix's draws that satisfy every constraint, so a mean over prefixes is the
-    # share of the generated traces that are fully conformant.
+    # Fraction of draws satisfying every constraint.
     full_conformance_mean: float = metric(unit=Unit.SHARE, direction=Direction.HIGHER)
-    # Whether the point prediction satisfies every constraint, 1.0 or 0.0
+    # Whether the point prediction satisfies every constraint.
     full_conformance_point: float = metric(unit=Unit.SHARE, direction=Direction.HIGHER)
-    # Whether the suffix the log took satisfies every constraint. The log's own, as above: a
-    # discovered model does not hold on every case it was mined from, so this is well under 1.0
-    # and is the ceiling the two levels above are read against rather than a perfect score.
+    # Whether the observed suffix satisfies every constraint.
     full_conformance_truth: float = metric(unit=Unit.SHARE, owner=Owner.LOG)
 
     @classmethod
     def of(cls, generation: Generation, *, checker: ConformanceChecker) -> Self:
-        """Check one prefix's generated suffixes, its point prediction and its ground truth.
+        """Score generated, point, and observed suffixes against constraints.
 
         Args:
-            generation: The model's answer for one prefix, decoded into the log's own units.
-            checker: The declarative model to check against, held by the process doing the scoring.
+            generation: Decoded model output for one prefix.
+            checker: Process-constraint checker.
+
         Returns:
-            The prefix's conformance and that of the suffix the log took, which is the target the
-            two levels are read against. A prefix with no samples scores 0.0 on the two sampled
-            metrics, the worst they can be, rather than looking perfectly conformant.
+            Conformance scores for the prefix.
         """
-        # A constraint is about the whole trace, so a suffix is checked as the case it completes.
+        # Constraints apply to the complete trace.
         prefix = generation.prefix_activities
         samples = generation.samples
 
-        # One check per distinct suffix, weighed by how many draws took it. A repeated draw is the
-        # same trace and rates the same, so these are the means over the draws with the constraints
-        # walked once per distinct suffix rather than once per draw.
+        # Check each distinct suffix once, then weight by draw count.
         checks = [checker.check(prefix + suffix) for suffix in samples.suffixes]
         draws = len(samples)
 

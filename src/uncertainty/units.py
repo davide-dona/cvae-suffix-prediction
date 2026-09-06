@@ -4,17 +4,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.evaluation import Axis, read_prefix_scores, require_columns
+from src.evaluation import read_prefix_scores, require_columns
 from src.evaluation.scores import COMPARABLE_METRICS, MIN_REFERENCE_OCCURRENCES
 from src.uncertainty.resampling import Units
 
-# Which length column each breakdown groups the prefixes by. `Axis.OVERALL` is not one of them, for
-# the reason `src.uncertainty.intervals.read_intervals` refuses it.
-LENGTHS = {Axis.PREFIX: 'prefix_len', Axis.SUFFIX: 'suffix_len'}
-
 # The column saying how many times the log ran a prefix, which is what says whether a metric of
-# `COMPARABLE_METRICS` is read on it at all. Read here as well as in a report, so a band and a
-# p-value are drawn around the mean the report holds rather than around a wider population.
+# `COMPARABLE_METRICS` is read on it at all. Read here as well as in a report, so a p-value is
+# drawn around the mean the report holds rather than around a wider population.
 OCCURRENCES = 'reference_occurrences'
 
 
@@ -31,41 +27,6 @@ def _grouped(metrics: Sequence[str]) -> list[tuple[bool, list[str]]]:
     for metric in metrics:
         groups.setdefault(metric in COMPARABLE_METRICS, []).append(metric)
     return list(groups.items())
-
-
-def by_length(
-    frame: pd.DataFrame, metrics: Sequence[str], *, axis: Axis
-) -> Iterator[tuple[int, np.ndarray, Units]]:
-    """Cut one run's prefixes into the units a band at each length is drawn from.
-
-    Within one length a case has exactly one prefix, so the rows of a bucket are independent and
-    each is its own unit.
-
-    Args:
-        frame: That run's per-prefix scores, from `read_prefix_scores`, carrying `metrics` and the
-            length column this breakdown groups by.
-        metrics: Which metrics to carry, in the order the units' trailing axis holds them.
-        axis: Which breakdown to group by, one of the two `LENGTHS` names.
-    Yields:
-        Each length in ascending order, the metrics that survived the finite check there, and that
-        bucket's prefixes as units. Once per population the metrics fall into, since a metric of
-        `COMPARABLE_METRICS` is read over the prefixes the log ran often enough and the rest over
-        every prefix of the bucket. A length whose every metric went missing, or whose population
-        is empty there, is skipped rather than yielded empty.
-    """
-    for length, part in frame.groupby(LENGTHS[axis], sort=True):
-        for comparable, group in _grouped(metrics):
-            rows = part[part[OCCURRENCES] >= MIN_REFERENCE_OCCURRENCES] if comparable else part
-            if rows.empty:
-                continue
-            values = rows[group].to_numpy(dtype=np.float64)
-            # A metric a run scored nowhere in this bucket has no mean to bound, and a NaN anywhere
-            # in the column would poison every resample of it. Checked column by column, since the
-            # metrics of one bucket rarely go missing together.
-            finite = np.isfinite(values).all(axis=0)
-            if not finite.any():
-                continue
-            yield int(length), np.asarray(group)[finite], Units.of_rows(values[:, finite])
 
 
 def _aligned(

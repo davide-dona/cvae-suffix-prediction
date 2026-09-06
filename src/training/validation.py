@@ -57,8 +57,8 @@ class GenerationMetrics:
 
     def log(self, step: int) -> None:
         """Log every model-owned score to the active W&B run, namespaced by the report table it
-        answers (`accuracy-point`, `fidelity`, `accuracy-generative`) or `diagnostics` for the
-        ones no table holds.
+        answers (`accuracy-point`, `fidelity`, `calibration`) or
+        `diagnostics` for the ones no table holds.
 
         A `Owner.LOG` field (e.g. `suffix_length`, `reference_diversity`) is a property of the
         fixed slice this run generates for, constant across every validation of one run, so it is

@@ -76,9 +76,8 @@ def resample_means(
 ) -> Iterator[np.ndarray]:
     """Draw a bootstrap's resample means, a chunk of them at a time.
 
-    The one place a resample is turned into a number in this package. What a caller does with the
-    stream is what separates a confidence interval from a p-value: `intervals` reads two order
-    statistics off it, `significance` counts which side of a reference each mean fell.
+    The one place a resample is turned into a number in this package. `significance` counts which
+    side of a reference each mean fell.
 
     Args:
         units: What is being drawn from.
