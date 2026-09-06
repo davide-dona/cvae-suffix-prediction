@@ -29,11 +29,6 @@ MODELS = Registry[ModelStyle](
     entries={
         'cvae': ModelStyle(label='CVAE', color='#2E8B57', marker='*', linestyle='-'),
         'transformer': ModelStyle(label='Transformer', color='#6B3FA0', marker='D', linestyle=':'),
-        # A style of its own rather than the `transformer` one: the two are arms to be read against
-        # each other, and sharing a style would fold them onto one line through `_reported`.
-        'transformer-time-scale': ModelStyle(
-            label='Transformer (time scale)', color='#B03060', marker='v', linestyle='--'
-        ),
         'u-ed-lstm': ModelStyle(label='U-ED-LSTM', color='#E67300', marker='s', linestyle='--'),
     },
 )

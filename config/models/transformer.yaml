@@ -1,11 +1,13 @@
 # The same backbone with the latent path taken out: the arm the CVAE is read against. Every width
 # below matches config/models/cvae.yaml, so what separates the two runs is the latent and nothing
-# else. With no z conditioning the decoder, the draws have to come from the activity head instead,
-# sampled from its logits at every step. That per-step noise is exactly what the latent exists to
-# avoid, which is the comparison.
+# else. With no z conditioning the decoder, the draws have to come from the heads instead: the
+# activity sampled from its logits at every step, and each time drawn from the Laplace its head
+# emits. That per-step noise is exactly what the latent exists to avoid, which is the comparison.
 #
-# Both time heads are point regressors, as the CVAE's are and as SuTraN's are, rather than heads
-# emitting a scale of their own to be drawn from.
+# Both time heads carry a scale of their own, so a remaining time - read at position 0, before any
+# activity has been drawn - varies across the samples of a prefix rather than being one number in
+# all of them. `Laplace.beta_nll` holds the median's gradient at what the absolute error alone would
+# give it, so the scale is not paid for out of the activity head through the trunk they share.
 seed: 42
 
 dataloader:
