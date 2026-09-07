@@ -30,8 +30,8 @@ from src.training.prior_fit import (
     PriorFitConfig,
     cache_latents,
     fit_prior,
-    matching_loss,
     pair_identities,
+    recorded_pairs,
     select_pairs,
 )
 
@@ -146,19 +146,35 @@ def run(checkpoint_path: Path, dataset_path: Path, config_path: Path, output: Pa
             'training': {**checkpoint['experiment_config']['training'], 'device': config.device},
         }
     )
-    print('Selecting training and validation pairs', flush=True)
-    validation = select_pairs(
-        TraceDataset(codec=codec, split=Split.VAL),
-        count=config.validation_pairs,
+    reference_path = Path(config.generation_reference)
+    if not reference_path.is_file():
+        raise FileNotFoundError(f'Generation reference diagnostic does not exist: {reference_path}')
+    reference = json.loads(reference_path.read_text())
+    source_sha256 = hashlib.sha256(checkpoint_path.read_bytes()).hexdigest()
+    if reference.get('source_sha256') != source_sha256:
+        raise ValueError('Generation reference was not produced from this source checkpoint.')
+    if reference.get('source_run') != asdict(source_run):
+        raise ValueError('Generation reference names a different source run.')
+    reference_pairs = reference.get('subsets', {}).get('validation')
+    if not isinstance(reference_pairs, list) or len(reference_pairs) != config.generation_pairs:
+        raise ValueError('Generation reference does not contain the configured validation pairs.')
+
+    print('Selecting matching, generation, and training pairs', flush=True)
+    validation_dataset = TraceDataset(codec=codec, split=Split.VAL)
+    generation = recorded_pairs(dataset=validation_dataset, identities=reference_pairs)
+    generation_ids = pair_identities(generation)
+    matching_validation = select_pairs(
+        validation_dataset,
+        count=config.matching_validation_pairs,
         seed=config.seed,
-        excluded_cases=set(),
+        excluded_cases={row['case_id'] for row in generation_ids},
     )
-    validation_ids = pair_identities(validation)
+    matching_validation_ids = pair_identities(matching_validation)
     training = select_pairs(
         TraceDataset(codec=codec, split=Split.TRAIN),
         count=config.training_pairs,
         seed=config.seed,
-        excluded_cases={row['case_id'] for row in validation_ids},
+        excluded_cases={row['case_id'] for row in generation_ids + matching_validation_ids},
     )
     training_ids = pair_identities(training)
     print('Caching frozen encoder and posterior outputs', flush=True)
@@ -167,37 +183,35 @@ def run(checkpoint_path: Path, dataset_path: Path, config_path: Path, output: Pa
         loader=DataLoader(dataset=training, batch_size=config.batch_size, num_workers=0),
         device=config.device,
     )
-    val_cache = cache_latents(
+    matching_validation_cache = cache_latents(
         model=model,
-        loader=DataLoader(dataset=validation, batch_size=config.batch_size, num_workers=0),
+        loader=DataLoader(dataset=matching_validation, batch_size=config.batch_size, num_workers=0),
         device=config.device,
     )
-    loader = DataLoader(dataset=validation, batch_size=config.generation_batch_size, num_workers=0)
+    loader = DataLoader(dataset=generation, batch_size=config.generation_batch_size, num_workers=0)
     index = ContinuationIndex.read(dataset=source_run.dataset, split=Split.VAL)
     checker = ConformanceChecker(
         dataset=source_run.dataset, codes=ActivityCodes.of(codec.activity.names)
     )
-    with torch.no_grad():
-        before = {
-            'train': matching_loss(model=model, cache=train_cache).item(),
-            'validation': matching_loss(model=model, cache=val_cache).item(),
-        }
     print('Scoring original prior', flush=True)
     original, original_rows = score_prior(
         model=model, loader=loader, config=config, codec=codec, index=index, checker=checker
     )
     print(f'Fitting prior for {config.steps} updates', flush=True)
-    history = fit_prior(model=model, cache=train_cache, config=config)
+    history = fit_prior(
+        model=model,
+        cache=train_cache,
+        config=config,
+        measurement_caches={
+            'train': train_cache,
+            'matching_validation': matching_validation_cache,
+        },
+    )
     for name, value in model.state_dict().items():
         if not name.startswith('prior.') and not torch.equal(
             value.cpu(), checkpoint['model_state_dict'][name]
         ):
             raise RuntimeError(f'Frozen state changed: {name}')
-    with torch.no_grad():
-        after = {
-            'train': matching_loss(model=model, cache=train_cache).item(),
-            'validation': matching_loss(model=model, cache=val_cache).item(),
-        }
     print('Scoring fitted prior', flush=True)
     fitted, fitted_rows = score_prior(
         model=model, loader=loader, config=config, codec=codec, index=index, checker=checker
@@ -205,7 +219,7 @@ def run(checkpoint_path: Path, dataset_path: Path, config_path: Path, output: Pa
     provenance = {
         'source_run': asdict(source_run),
         'source_checkpoint': str(checkpoint_path.resolve()),
-        'source_sha256': hashlib.sha256(checkpoint_path.read_bytes()).hexdigest(),
+        'source_sha256': source_sha256,
         'source_training_step': checkpoint['step'],
         'source_selection_score': checkpoint['selection_score'],
         'prior_fitting_steps': config.steps,
@@ -213,7 +227,13 @@ def run(checkpoint_path: Path, dataset_path: Path, config_path: Path, output: Pa
         'fit_config': config.model_dump(),
         'dataset_config': dataset_config.model_dump(),
         'resolved_model_experiment_config': resolved.model_dump(),
-        'subsets': {'train': training_ids, 'validation': validation_ids},
+        'generation_reference': str(reference_path.resolve()),
+        'generation_reference_sha256': hashlib.sha256(reference_path.read_bytes()).hexdigest(),
+        'subsets': {
+            'train': training_ids,
+            'matching_validation': matching_validation_ids,
+            'generation_validation': generation_ids,
+        },
     }
     output.mkdir(parents=True, exist_ok=False)
     fitted_checkpoint = {
@@ -231,13 +251,13 @@ def run(checkpoint_path: Path, dataset_path: Path, config_path: Path, output: Pa
     table = pa.Table.from_pylist(paired)
     table = table.replace_schema_metadata(stamped(table.schema, run_identity).metadata)
     pq.write_table(table=table, where=output / 'paired_scores.parquet')
-    _write_json(output / 'history.json', {'run': asdict(run_identity), 'updates': history})
+    _write_json(output / 'history.json', {'run': asdict(run_identity), **history})
     _write_json(
         output / 'comparison.json',
         {
             'run': asdict(run_identity),
             **provenance,
-            'kl_nats': {'original': before, 'fitted': after},
+            'full_cache_kl_nats': history['measurements'],
             'scores': {'original': original, 'fitted': fitted},
             'distribution_population': (
                 'Validation prefixes with at least five reference occurrences'

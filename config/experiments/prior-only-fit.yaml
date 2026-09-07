@@ -2,8 +2,10 @@ name: cvae-prior-only-fit
 seed: 42
 device: cpu
 cpu_threads: 2
-training_pairs: 2048
-validation_pairs: 128
+training_pairs: 8192
+matching_validation_pairs: 512
+generation_pairs: 128
+generation_reference: outputs/diagnostics/bpic17/prior-only-fit/comparison.json
 batch_size: 128
 steps: 200
 learning_rate: 0.001
@@ -11,3 +13,4 @@ weight_decay: 0.0
 grad_clip_norm: 5.0
 generation_batch_size: 8
 generation_samples: 32
+measurement_steps: [0, 25, 50, 100, 200]

@@ -128,20 +128,25 @@ uv run python -m pipelines.fit_prior \
   -m outputs/checkpoints/best/bpic17/cvae/20260904-201424.pt \
   -c config/datasets/bpic17.yaml \
   -e config/experiments/prior-only-fit.yaml \
-  -o outputs/diagnostics/bpic17/prior-only-fit
+  -o outputs/diagnostics/bpic17/prior-only-fit-larger-cache
 ```
 
-The experiment config fixes the budget: 2,048 training pairs, 200 prior updates, and 32 draws
-for each of 128 validation pairs, on CPU. It caches the encoder and posterior outputs, disables
-dropout throughout, and fits unfloored Gaussian KL. Every non-prior tensor remains frozen.
-Training pairs sharing a case identity with the validation subset are excluded.
+The experiment config fixes the larger-data control: 8,192 training pairs, 512 fresh matching
+validation pairs, 200 prior updates, and 32 draws for the 128 pairs recorded by the original
+diagnostic, on CPU. It caches the encoder and posterior outputs, disables dropout throughout, and
+fits unfloored Gaussian KL. Every non-prior tensor remains frozen. The matching subset excludes
+cases in the recorded generation slice, and the training subset excludes cases in both validation
+subsets.
 
-The original and final priors use the same validation pairs and random seed. No intermediate
-checkpoint is selected. `comparison.json` holds both metric summaries, training and validation
-KL, source provenance, configs, and subset identities. Distribution scores use only prefixes
-with at least five reference occurrences; `compared` gives their count, and unavailable scores
-are JSON `null`. `paired_scores.parquet` preserves both arms' per-prefix scores, and
-`history.json` records every fitting update. This is a small diagnostic, not a significance test.
+The generation reference is checked against the source checkpoint and replayed by recorded
+identity, so the original and final priors use the same pairs and latent-noise seed. No
+intermediate checkpoint is selected. `history.json` records each fitting update and full-cache
+training and matching-validation KL at steps 0, 25, 50, 100, and 200. `comparison.json` holds
+both generation metric summaries, provenance, configs, subset identities, and the same KL
+trajectory. Distribution scores use only prefixes with at least five reference occurrences;
+`compared` gives their count, and unavailable scores are JSON `null`.
+`paired_scores.parquet` preserves both arms' per-prefix generation scores. This is a control, not
+a significance test.
 
 `fitted.pt` is a separate checkpoint with model name `cvae-prior-only-fit`, usable by the normal
 generation pipeline. Its `step` retains the source training step; `prior_fit` records the separate

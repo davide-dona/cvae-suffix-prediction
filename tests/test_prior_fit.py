@@ -16,6 +16,7 @@ from src.training.prior_fit import (
     PriorFitConfig,
     fit_prior,
     matching_loss,
+    recorded_pairs,
     select_pairs,
 )
 
@@ -63,7 +64,7 @@ class PriorFitTests(unittest.TestCase):
         torch.manual_seed(42)
         self.config = PriorFitConfig.model_validate(
             yaml.safe_load(Path('config/experiments/prior-only-fit.yaml').read_text())
-        ).model_copy(update={'steps': 1, 'batch_size': 4})
+        ).model_copy(update={'steps': 1, 'batch_size': 4, 'measurement_steps': (0, 1)})
         self.cache = LatentCache(
             summaries=torch.ones(size=(4, 2)),
             posterior=Gaussian(
@@ -82,8 +83,17 @@ class PriorFitTests(unittest.TestCase):
         p = torch.distributions.Normal(loc=torch.zeros(size=(4, 2)), scale=torch.ones(size=(4, 2)))
         expected = torch.distributions.kl_divergence(q, p).sum(dim=-1).mean()
         torch.testing.assert_close(loss, expected)
-        history = fit_prior(model=model, cache=self.cache, config=self.config)
-        self.assertEqual(len(history), 1)
+        history = fit_prior(
+            model=model,
+            cache=self.cache,
+            config=self.config,
+            measurement_caches={'train': self.cache, 'matching_validation': self.cache},
+        )
+        self.assertEqual(len(history['updates']), 1)
+        self.assertEqual([row['step'] for row in history['measurements']], [0, 1])
+        self.assertEqual(
+            set(history['measurements'][0]['kl_nats']), {'train', 'matching_validation'}
+        )
         self.assertLess(matching_loss(model=model, cache=self.cache).item(), loss.item())
         self.assertFalse(any(module.training for module in model.modules()))
         for name, value in model.state_dict().items():
@@ -95,7 +105,12 @@ class PriorFitTests(unittest.TestCase):
         self.assertFalse(torch.equal(model.prior.head.weight, before['prior.head.weight']))
         repeat = TinyModel()
         repeat.load_state_dict(before)
-        fit_prior(model=repeat, cache=self.cache, config=self.config)
+        fit_prior(
+            model=repeat,
+            cache=self.cache,
+            config=self.config,
+            measurement_caches={'train': self.cache, 'matching_validation': self.cache},
+        )
         for name, value in model.state_dict().items():
             self.assertTrue(torch.equal(value, repeat.state_dict()[name]))
 
@@ -108,6 +123,22 @@ class PriorFitTests(unittest.TestCase):
         self.assertTrue(all(dataset._get_cut(i)[0].case_id != '1' for i in first.indices))
         with self.assertRaises(ValueError):
             select_pairs(dataset, count=7, seed=42, excluded_cases={'1'})
+
+    def test_recorded_subset_rejects_stale_identities(self):
+        dataset = PairDataset()
+        subset = recorded_pairs(
+            dataset=dataset,
+            identities=[
+                {'index': 0, 'case_id': '0', 'prefix_len': 1},
+                {'index': 3, 'case_id': '1', 'prefix_len': 2},
+            ],
+        )
+        self.assertEqual(subset.indices, [0, 3])
+        with self.assertRaises(ValueError):
+            recorded_pairs(
+                dataset=dataset,
+                identities=[{'index': 0, 'case_id': 'wrong', 'prefix_len': 1}],
+            )
 
     def test_pairing_and_unavailable_scores(self):
         row = {'case_id': 'a', 'prefix_len': 2, 'suffix_len': 3, 'comparable': True, 'emsc': 0.5}
