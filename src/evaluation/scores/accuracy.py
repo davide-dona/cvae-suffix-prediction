@@ -7,7 +7,7 @@ import numpy as np
 
 from src.inference.generation import Draws, Generation
 from src.scalar_metrics import Direction, Owner, ScalarMetrics, Unit, mean, metric
-from src.suffixes import sequence_similarity
+from src.suffixes import SuffixMetric, energy_score, sequence_similarity
 
 MINUTES_PER_DAY = 1440.0
 
@@ -35,6 +35,11 @@ class AccuracyScores(ScalarMetrics):
 
     # Fraction of draws that exactly match the truth.
     hit_share: float = metric(unit=Unit.SHARE, direction=Direction.HIGHER)
+
+    # Energy score over the draws, one per distance between suffixes.
+    energy_score_dls: float = metric(unit=Unit.SCORE, direction=Direction.LOWER)
+    energy_score_exact: float = metric(unit=Unit.SCORE, direction=Direction.LOWER)
+    energy_score_bigram: float = metric(unit=Unit.SCORE, direction=Direction.LOWER)
 
     # CRPS on suffix length, remaining time, and per-event cycle time.
     length_crps: float = metric(unit=Unit.EVENTS, direction=Direction.LOWER)
@@ -128,6 +133,24 @@ class AccuracyScores(ScalarMetrics):
             hit_rate_at_10=is_hit(samples=samples, truth=truth.activities, k=10),
             hit_rate_any=float(drawn_truth),
             hit_share=share_of_truth,
+            energy_score_dls=energy_score(
+                samples.suffixes,
+                truth.activities,
+                weights=samples.counts,
+                metric=SuffixMetric.DLS,
+            ),
+            energy_score_exact=energy_score(
+                samples.suffixes,
+                truth.activities,
+                weights=samples.counts,
+                metric=SuffixMetric.EXACT,
+            ),
+            energy_score_bigram=energy_score(
+                samples.suffixes,
+                truth.activities,
+                weights=samples.counts,
+                metric=SuffixMetric.BIGRAM,
+            ),
             length_crps=crps(lengths, true_length),
             remaining_time_crps_days=crps(remaining, true_remaining) / MINUTES_PER_DAY,
             cycle_time_crps_days=crps(cycle_times, true_cycle_times) / MINUTES_PER_DAY,

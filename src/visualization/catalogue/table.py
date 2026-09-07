@@ -75,6 +75,27 @@ TABLES = (
             MetricEntry(METRICS['activity_time_wasserstein_days'], 'Event time W1'),
         ),
     ),
+    # The samples themselves against the one continuation the log took.
+    Table(
+        name='generative-accuracy',
+        axis=Axis.OVERALL,
+        note="Read over every prefix scored rather than over the fidelity block's population, "
+        'and against the one continuation the log took rather than against the continuation '
+        "index. An energy score is E d(X, y) - 0.5 E d(X, X') over the samples, CRPS generalized "
+        'off the real line, which charges the spread against the accuracy it buys where the '
+        'sampled DLS beside it is won by putting every sample on one suffix. Exact is 1 for any '
+        'two suffixes that are not the same and bigram is the multiset Jaccard distance over the '
+        'ordered activity pairs a suffix holds; both are of negative type, so both are proper. '
+        'DLS is 1 minus the normalized Damerau-Levenshtein similarity, which is not of negative '
+        'type, so its column is the sample-side counterpart of the DLS beside it rather than a '
+        'proper score.',
+        columns=(
+            MetricEntry(METRICS['dls_mean'], 'DLS (sample mean)'),
+            MetricEntry(METRICS['energy_score_dls'], 'ES (DLS)'),
+            MetricEntry(METRICS['energy_score_exact'], 'ES (exact)'),
+            MetricEntry(METRICS['energy_score_bigram'], 'ES (bigram)'),
+        ),
+    ),
     # Calibration gaps at three central-interval levels.
     Table(
         name='calibration',

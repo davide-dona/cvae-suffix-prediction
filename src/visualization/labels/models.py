@@ -25,7 +25,7 @@ MODELS = Registry[ModelStyle](
     entries={
         'cvae': ModelStyle(label='CVAE', color='#3B7EA1', marker='*', linestyle='-'),
         'transformer': ModelStyle(label='Transformer', color='#A05A4B', marker='D', linestyle=':'),
-        'u-ed-lstm': ModelStyle(label='U-ED-LSTM', color='#7A7A7A', marker='s', linestyle='--'),
+        'u-ed-lstm': ModelStyle(label='U-ED-LSTM', color='#7A4E97', marker='s', linestyle='--'),
     },
 )
 
