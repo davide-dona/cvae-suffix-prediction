@@ -1,9 +1,10 @@
 from __future__ import annotations
-from omegaconf import DictConfig, OmegaConf
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 import torch
+from omegaconf import DictConfig, OmegaConf
 from torch import nn
 
 from src.datasets.codec import DatasetCodec
@@ -12,7 +13,6 @@ from src.distributions import Gaussian, Laplace
 from src.model.checkpoint import MODEL_KEYS, require_keys
 from src.model.components.decoder import DecoderOutput, GeneratedSuffix
 from src.training import LatentMetrics, Loss
-
 
 
 @dataclass(frozen=True)

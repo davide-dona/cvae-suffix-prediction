@@ -1,7 +1,8 @@
 from __future__ import annotations
-from omegaconf import DictConfig, OmegaConf
+
 import torch
 import torch.nn.functional as F
+from omegaconf import DictConfig
 
 from src.datasets.codec import DatasetCodec
 from src.datasets.dataset import SplitTrace

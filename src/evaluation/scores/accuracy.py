@@ -289,8 +289,8 @@ def energy_score(samples: Draws, truth: str) -> float:
     """
     if len(samples) < 2:
         raise ValueError('energy_score requires at least two draws')
-    distances_to_truth = distances(
-        queries=samples.suffixes, choices=[truth], dtype=np.float64
-    )[:, 0]
+    distances_to_truth = distances(queries=samples.suffixes, choices=[truth], dtype=np.float64)[
+        :, 0
+    ]
     accuracy = float(samples.counts @ distances_to_truth) / len(samples)
     return accuracy - 0.5 * diversity(samples.suffixes, weights=samples.counts)

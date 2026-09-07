@@ -1,6 +1,6 @@
 from __future__ import annotations
+
 import json
-from omegaconf import DictConfig, OmegaConf
 from collections.abc import Sequence
 from pathlib import Path
 from types import TracebackType
@@ -8,6 +8,7 @@ from typing import Self
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from omegaconf import DictConfig, OmegaConf
 
 from src.artifacts import read_metadata, read_vocabulary, with_metadata, with_vocabulary
 from src.inference.generation import DecodedEvents, Draws, Generation
@@ -123,7 +124,8 @@ class GenerationWriter:
         schema = with_vocabulary(_SCHEMA, vocabulary)
         if sampling is not None:
             schema = schema.with_metadata(
-                (schema.metadata or {}) | {_SAMPLING: json.dumps(OmegaConf.to_container(sampling, resolve=True))}
+                (schema.metadata or {})
+                | {_SAMPLING: json.dumps(OmegaConf.to_container(sampling, resolve=True))}
             )
         schema = with_metadata(schema, metadata)
         self._writer = pq.ParquetWriter(

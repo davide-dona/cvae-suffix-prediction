@@ -22,4 +22,4 @@ def dataset_config(dataset: str) -> Path:
     Returns:
         The path that config is kept at.
     """
-    return CONFIG_DIR / 'datasets' / f'{dataset}.yaml'
+    return CONFIG_DIR / 'dataset' / f'{dataset}.yaml'

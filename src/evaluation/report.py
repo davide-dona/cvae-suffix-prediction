@@ -8,9 +8,9 @@ from typing import Self
 import pandas as pd
 from pydantic import TypeAdapter, ValidationError
 
+from src.artifacts import group_by_model
 from src.evaluation.scores import COMPARABLE_METRICS
 from src.evaluation.summary import EvaluationSummary, LengthSummary, flatten_scores
-from src.artifacts import group_by_model
 
 
 @dataclass(frozen=True)

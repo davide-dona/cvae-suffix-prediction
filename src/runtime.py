@@ -26,8 +26,16 @@ def start_stage(config: DictConfig) -> None:
         dirty = subprocess.run(
             ['git', 'status', '--porcelain'], capture_output=True, text=True, check=False
         ).stdout.strip()
-        json.dump({'revision': revision, 'dirty': bool(dirty), 'argv': sys.argv,
-                   'python': platform.python_version()}, file, indent=2)
+        json.dump(
+            {
+                'revision': revision,
+                'dirty': bool(dirty),
+                'argv': sys.argv,
+                'python': platform.python_version(),
+            },
+            file,
+            indent=2,
+        )
     save_config(config)
 
 

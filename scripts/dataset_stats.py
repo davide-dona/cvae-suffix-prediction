@@ -1,21 +1,17 @@
 from __future__ import annotations
-from omegaconf import DictConfig, OmegaConf
-import argparse
-from pathlib import Path
 
+import hydra
 import pandas as pd
+from omegaconf import DictConfig
 
 from src import paths
 from src.cli import banner
-from src.logs.filters import case_durations
 from src.logs.io import read_log
 from src.logs.keys import (
     ACTIVITY_KEY,
-    CASE_ELAPSED_KEY,
     CASE_KEY,
     DAY_COS_KEY,
     DAY_SIN_KEY,
-    EVENT_DELTA_KEY,
     MIN_PREFIX_KEY,
     REMAINING_TIME_KEY,
     SECONDS_COS_KEY,
@@ -23,11 +19,11 @@ from src.logs.keys import (
     TIMESTAMP_KEY,
     Split,
 )
+from src.logs.preprocessing.cases import case_durations
+from src.runtime import start_stage
 
 # Columns preprocessing derives from the timestamp rather than the raw dataset carrying them.
 _DERIVED_COLUMNS = {
-    EVENT_DELTA_KEY,
-    CASE_ELAPSED_KEY,
     REMAINING_TIME_KEY,
     MIN_PREFIX_KEY,
     DAY_SIN_KEY,
@@ -90,25 +86,10 @@ def summarize_dataset(dataset: str, *, event_features: list[str]) -> None:
     )
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description='Print per-dataset statistics off the processed log(s), before the split.'
-    )
-    parser.add_argument(
-        '-c',
-        '--configs',
-        nargs='*',
-        type=paths.existing_file,
-        metavar='CONFIG',
-        help='Dataset configs to summarize, e.g. config/datasets/bpic17.yaml. Defaults to every '
-        'config under config/datasets/.',
-    )
-    args = parser.parse_args()
-    configs = args.configs or sorted(Path('config/datasets').glob('*.yaml'))
-
-    for config_path in configs:
-        data_config = load_dataset_config(config_path).data
-        summarize_dataset(data_config.name, event_features=data_config.event_features)
+@hydra.main(version_base='1.3', config_path='../config', config_name='dataset_stats')
+def main(cfg: DictConfig) -> None:
+    start_stage(cfg)
+    summarize_dataset(cfg.data.name, event_features=list(cfg.data.event_features))
 
 
 if __name__ == '__main__':

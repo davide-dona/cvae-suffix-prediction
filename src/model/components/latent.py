@@ -1,6 +1,7 @@
 from __future__ import annotations
-from omegaconf import DictConfig, OmegaConf
+
 import torch
+from omegaconf import DictConfig
 from torch import nn
 
 from src.distributions import Gaussian

@@ -1,5 +1,4 @@
 from __future__ import annotations
-from omegaconf import DictConfig, OmegaConf
 
 import json
 from functools import cached_property
@@ -7,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from omegaconf import DictConfig
 from pandas.api.types import is_numeric_dtype
 from pydantic import BaseModel, ConfigDict, Field
 

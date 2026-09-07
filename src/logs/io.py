@@ -1,10 +1,9 @@
 from __future__ import annotations
-from omegaconf import DictConfig, OmegaConf
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pandas as pd
+from omegaconf import DictConfig
 
 from src import paths
 from src.logs.keys import (
@@ -14,6 +13,7 @@ from src.logs.keys import (
     RESOURCE_KEY,
     TIMESTAMP_KEY,
 )
+
 
 def read_log(
     path: str | Path,

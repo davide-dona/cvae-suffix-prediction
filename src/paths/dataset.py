@@ -107,5 +107,5 @@ def require_preprocessed(dataset: str) -> None:
             f'"{dataset}" has not been preprocessed: '
             f'{", ".join(str(output) for output in missing)} '
             f'{"are" if len(missing) > 1 else "is"} missing. '
-            f'Run `uv run python -m pipelines.preprocess -c {dataset_config(dataset)}` first.'
+            f'Run `uv run python -m pipelines.preprocess dataset={dataset}` first.'
         )

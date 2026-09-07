@@ -1,8 +1,9 @@
 from __future__ import annotations
-from omegaconf import DictConfig, OmegaConf
+
 from dataclasses import dataclass
 
 import torch
+from omegaconf import DictConfig
 from torch import nn
 
 from src.datasets.dataset import Events
@@ -33,7 +34,7 @@ class SuffixCache:
     values: torch.Tensor  # [batch_size, num_heads, max_steps, head_dim]
     length: int = 0
 
-    def write(self, step: ProjectedKeysValues) -> 'SuffixCache':
+    def write(self, step: ProjectedKeysValues) -> SuffixCache:
         """Write one step's projection into the next free position, in place.
 
         Args:

@@ -110,6 +110,7 @@ def distances(
 # How many rows of the pairwise matrix `diversity` holds at once.
 _SPREAD_MATRIX_SIZE = 256
 
+
 def diversity(
     sequences: Sequence[Sequence[Hashable]],
     *,

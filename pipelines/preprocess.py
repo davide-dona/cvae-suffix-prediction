@@ -1,9 +1,9 @@
 from __future__ import annotations
-from omegaconf import DictConfig, OmegaConf
-import argparse
 
+import hydra
 import numpy as np
 import pandas as pd
+from omegaconf import DictConfig
 from pandas.api.types import is_numeric_dtype
 
 from src import paths
@@ -39,6 +39,8 @@ from src.logs.preprocessing import (
     out_of_time_split,
     sort_log,
 )
+from src.runtime import start_stage
+from src.validation import validate_data, validate_declare
 
 
 def case_length_cutoff(log: pd.DataFrame, *, data_config: DictConfig) -> int:
@@ -270,23 +272,12 @@ def run(data_config: DictConfig, declare_config: DictConfig) -> None:
     )
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description='Turn a raw event log into the train/val/test CSVs the model consumes.'
-    )
-    parser.add_argument(
-        '-c',
-        '--config',
-        type=paths.existing_file,
-        metavar='CONFIG',
-        required=True,
-        help="Path to this experiment's dataset config, e.g. config/datasets/bpic17.yaml.",
-    )
-    args = parser.parse_args()
-
-    config = load_dataset_config(args.config)
-
-    run(data_config=config.data, declare_config=config.declare)
+@hydra.main(version_base='1.3', config_path='../config', config_name='preprocess')
+def main(cfg: DictConfig) -> None:
+    start_stage(cfg)
+    validate_data(cfg.data)
+    validate_declare(cfg.declare)
+    run(data_config=cfg.data, declare_config=cfg.declare)
 
 
 if __name__ == '__main__':

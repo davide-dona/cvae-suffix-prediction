@@ -29,4 +29,4 @@ host="$1"
 remote_path="${2:-suffix-generation}"
 
 rsync -avz --progress "${dry_run[@]+"${dry_run[@]}"}" \
-  "$host:$remote_path/outputs/generations/" outputs/generations/
+  "$host:$remote_path/outputs/generate/" outputs/generate/

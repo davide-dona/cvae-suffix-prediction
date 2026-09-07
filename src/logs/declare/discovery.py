@@ -1,10 +1,12 @@
 from __future__ import annotations
+
 import json
-from omegaconf import DictConfig, OmegaConf
+
 import pandas as pd
 import pm4py
 from Declare4Py.D4PyEventLog import D4PyEventLog
 from Declare4Py.ProcessMiningTasks.Discovery.DeclareMiner import DeclareMiner
+from omegaconf import DictConfig, OmegaConf
 
 from src import paths
 from src.logs.declare.constraints import COMMENT, SETTINGS_LINE

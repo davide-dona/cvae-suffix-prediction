@@ -1,8 +1,9 @@
 from __future__ import annotations
-from omegaconf import DictConfig, OmegaConf
+
 from dataclasses import dataclass
 
 import torch
+from omegaconf import DictConfig
 from torch import nn
 
 from src.datasets.dataset import Events

@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 import math
-from omegaconf import DictConfig, OmegaConf
+
+from omegaconf import DictConfig
 
 
 class EarlyStopper:

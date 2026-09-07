@@ -1,32 +1,32 @@
 from __future__ import annotations
-from omegaconf import DictConfig, OmegaConf
-import argparse
+
 import itertools
 from pathlib import Path
 
+import hydra
 import torch
+from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src import paths
+from src.artifacts import sha256
 from src.cli import banner, step
 from src.datasets.codec import DatasetCodec
 from src.datasets.dataset import TraceDataset, fixed_subset
-from src.evaluation.scores import ConformanceScores, DistributionScores
-from src.identity import RunIdentity
+from src.evaluation.scores import AccuracyScores, ConformanceScores, DistributionScores
 from src.inference.generate import generate_batch, generation_batch_size
 from src.inference.tuning import (
-    TEMPERATURES,
-    TOP_PS,
     SearchPass,
     TuningPoint,
     TuningReport,
-    objective,
 )
 from src.logs import ContinuationIndex, Split
 from src.logs.declare import ConformanceChecker
 from src.model import Transformer, load_checkpoint, model_from_checkpoint
+from src.runtime import output_path, save_config, start_stage
 from src.suffixes import ActivityCodes
+from src.validation import validate_sampling, validate_training
 
 
 @torch.no_grad()
@@ -86,10 +86,8 @@ def _score(
         [ConformanceScores.of(one, checker=checker) for one in generations]
     )
     return TuningPoint(
-        sampling=sampling,
-        score=objective(
-            precision=distribution.continuation_precision, recall=distribution.continuation_recall
-        ),
+        sampling=OmegaConf.to_container(sampling, resolve=True),
+        score=AccuracyScores.mean([AccuracyScores.of(one) for one in generations]).energy_score,
         continuation_precision=distribution.continuation_precision,
         continuation_recall=distribution.continuation_recall,
         emsc=distribution.emsc,
@@ -98,7 +96,16 @@ def _score(
     )
 
 
-def run(checkpoint_path: Path, *, device: str | None, pairs: int | None, samples: int | None):
+def run(
+    checkpoint_path: Path,
+    *,
+    device: str | None,
+    pairs: int | None,
+    samples: int | None,
+    temperatures: list[float],
+    top_ps: list[float],
+    num_workers: int | None = None,
+):
     """Search the sampler grid on the validation split and write what it picked.
 
     The stage between training and generation. It is separate from both because the sampler is
@@ -119,32 +126,55 @@ def run(checkpoint_path: Path, *, device: str | None, pairs: int | None, samples
     """
     with step(f'Reading the checkpoint at {checkpoint_path}'):
         checkpoint = load_checkpoint(checkpoint_path)
-    identity = RunIdentity.from_dict(checkpoint['run'])
-    config = load_generation_config(
-        checkpoint['experiment_config'], device=device, num_samples=None, sampling=None
+    checkpoint_hash = sha256(checkpoint_path)
+    config = OmegaConf.create(checkpoint['config'])
+    if device is not None:
+        config.training.device = device
+    if num_workers is not None:
+        config.dataloader.num_workers = num_workers
+    if pairs is not None:
+        config.training.generation_pairs = pairs
+    if samples is not None:
+        config.inference.validation_samples = samples
+    validate_training(config)
+    save_config(
+        OmegaConf.create(
+            {
+                'checkpoint': str(checkpoint_path.resolve()),
+                'checkpoint_sha256': checkpoint_hash,
+                'effective': OmegaConf.to_container(config, resolve=True),
+                'temperatures': temperatures,
+                'top_ps': top_ps,
+            }
+        )
     )
 
     paths.require_preprocessed(config.data.name)
     pairs = config.training.generation_pairs if pairs is None else pairs
     samples = config.inference.validation_samples if samples is None else samples
 
-    report_path = paths.TUNING.prepare(identity)
+    report_path = output_path('tuning.json')
     torch_device = torch.device(config.training.device)
     grid = [
-        DictConfig(temperature=temperature, top_p=top_p)
-        for temperature, top_p in itertools.product(TEMPERATURES, TOP_PS)
+        OmegaConf.create({'temperature': temperature, 'top_p': top_p})
+        for temperature, top_p in itertools.product(temperatures, top_ps)
     ]
+
+    if not grid:
+        raise ValueError('Sampler grid cannot be empty')
+    for sampling in grid:
+        validate_sampling(sampling)
 
     banner(
         'Tuning the sampler',
         {
-            'run': identity,
+            'checkpoint_sha256': checkpoint_hash,
             'dataset': config.data.name,
             'model': config.model.name,
             'device': torch_device,
             'split': f'{Split.VAL}, {pairs:,} prefixes, {samples} suffixes each',
-            'grid': f'{len(grid)} points over temperature {TEMPERATURES} and top_p {TOP_PS}',
-            'chosen on': 'F1 of continuation precision and recall',
+            'grid': f'{len(grid)} points over temperature {temperatures} and top_p {top_ps}',
+            'chosen on': 'minimum activity-sequence energy score',
             'report': report_path,
         },
     )
@@ -157,7 +187,7 @@ def run(checkpoint_path: Path, *, device: str | None, pairs: int | None, samples
         model.eval()
     if not isinstance(model, Transformer):
         raise ValueError(
-            f'{identity} is a {config.model.kind}, which reads its heads at their mode and draws '
+            f'{checkpoint_hash} is a {config.model.kind}, which reads its heads at their mode and draws '
             'its variability from z. There is no sampler to search: giving it one would spread '
             'that variability over the decode steps, which is the arm it is measured against.'
         )
@@ -202,68 +232,36 @@ def run(checkpoint_path: Path, *, device: str | None, pairs: int | None, samples
         )
         points.append(point)
         print(
-            f'  F1 {point.score:.4f}  precision {point.continuation_precision:.4f}  '
+            f'  energy {point.score:.4f}  precision {point.continuation_precision:.4f}  '
             f'recall {point.continuation_recall:.4f}  emsc {point.emsc:.4f}  '
             f'conformance {point.conformance_mean:.4f}  unique {point.unique_sample_rate:.4f}',
             flush=True,
         )
 
     report = TuningReport.of(
-        identity,
+        checkpoint_hash,
         search=SearchPass(pairs=len(subset), samples=samples, seed=config.seed),
         grid=points,
     )
     report.write(report_path)
     print(
-        f'Chose temperature {report.chosen.temperature}, top_p {report.chosen.top_p}. '
+        f'Chose temperature {report.chosen["temperature"]}, top_p {report.chosen["top_p"]}. '
         f'Wrote the search to {report_path}'
     )
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description='Search the activity sampler on the validation split, for a trained model '
-        'that draws from its heads.'
+@hydra.main(version_base='1.3', config_path='../config', config_name='tune')
+def main(cfg: DictConfig) -> None:
+    start_stage(cfg)
+    run(
+        Path(cfg.checkpoint),
+        device=cfg.device,
+        pairs=cfg.pairs,
+        samples=cfg.samples,
+        temperatures=list(cfg.temperatures),
+        top_ps=list(cfg.top_ps),
+        num_workers=cfg.num_workers,
     )
-    parser.add_argument(
-        '-m',
-        '--checkpoint',
-        type=paths.existing_file,
-        metavar='CHECKPOINT',
-        required=True,
-        help='Path to the checkpoint to search for, from `pretrained/`, '
-        '`outputs/checkpoints/best/` or `outputs/checkpoints/last/`. Its own config is what the '
-        'model and the dataset are read from.',
-    )
-    parser.add_argument(
-        '-d',
-        '--device',
-        type=str,
-        default=None,
-        metavar='DEVICE',
-        help='Overrides the device to generate on, e.g. cpu or cuda:1. Defaults to the device '
-        'the run was trained with.',
-    )
-    parser.add_argument(
-        '--pairs',
-        type=int,
-        default=None,
-        metavar='N',
-        help='How many validation prefixes to search over. More of them is what separates two '
-        "grid points a few thousandths apart. Defaults to the run's own "
-        '`training.generation_pairs`.',
-    )
-    parser.add_argument(
-        '--samples',
-        type=int,
-        default=None,
-        metavar='N',
-        help="How many suffixes to draw per prefix at each grid point. Defaults to the run's "
-        'own `inference.validation_samples`.',
-    )
-    args = parser.parse_args()
-
-    run(args.checkpoint, device=args.device, pairs=args.pairs, samples=args.samples)
 
 
 if __name__ == '__main__':

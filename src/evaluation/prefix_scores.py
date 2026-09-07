@@ -5,10 +5,9 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from src import paths
+from src.artifacts import group_by_model, read_metadata, with_metadata
 from src.evaluation.scores import METRICS
 from src.evaluation.summary import PrefixSummary, flatten_scores
-from src.artifacts import group_by_model, read_metadata, with_metadata
 from src.inference.generation_store import PrefixKey
 
 # Prefixes buffered in each Parquet row group.

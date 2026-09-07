@@ -6,7 +6,6 @@ from huggingface_hub.errors import HfHubHTTPError, LocalTokenNotFoundError
 
 from scripts.hub import HF_REPO_ID
 from src import paths
-from src.identity import RunIdentity
 from src.model import CHECKPOINT_KEYS, load_checkpoint, require_keys
 
 
@@ -68,16 +67,18 @@ def run(model_paths: list[Path]) -> None:
         )
         # The destination comes from the run's identity, not the checkpoint's filename, making it
         # invariant to local naming.
-        run = RunIdentity.from_dict(checkpoint['run'])
+        dataset = checkpoint['config']['data']['name']
+        model = checkpoint['config']['model']['name']
+        label = f'{dataset}/{model}'
 
-        fetched_to = paths.PRETRAINED.path(dataset=run.dataset, model=run.model)
+        fetched_to = paths.PRETRAINED.path(dataset=dataset, model=model)
         path_in_repo = fetched_to.relative_to(paths.PRETRAINED_DIR).as_posix()
         replaces = file_exists(HF_REPO_ID, path_in_repo, repo_type='model')
 
         print(
-            f'\nRun:     {run}\n'
+            f'\nRun:     {label}\n'
             f'Step:    {checkpoint["step"]} '
-            f'(selection score {checkpoint["selection_score"]:.4f})\n'
+            f'(energy score {checkpoint["selection_score"]:.4f})\n'
             f'Size:    {_mebibytes(model_path)}\n'
             f'Target:  {path_in_repo} on {HF_REPO_ID}\n'
             f'         {"replaces an existing file" if replaces else "adds a new file"}\n'
@@ -85,8 +86,8 @@ def run(model_paths: list[Path]) -> None:
 
         operations.append(CommitOperationAdd(path_in_repo=path_in_repo, path_or_fileobj=model_path))
         descriptions.append(
-            f'- {run}: step {checkpoint["step"]}, '
-            f'selection score {checkpoint["selection_score"]:.4f}'
+            f'- {label}: step {checkpoint["step"]}, '
+            f'energy score {checkpoint["selection_score"]:.4f}'
         )
 
     print(f'Author:  {account}\n')
@@ -99,7 +100,7 @@ def run(model_paths: list[Path]) -> None:
         raise SystemExit('Nothing was uploaded.')
 
     commit_message = (
-        f'Publish {run}' if len(model_paths) == 1 else f'Publish {len(model_paths)} models'
+        f'Publish {label}' if len(model_paths) == 1 else f'Publish {len(model_paths)} models'
     )
     commit = create_commit(
         repo_id=HF_REPO_ID,

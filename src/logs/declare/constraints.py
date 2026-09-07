@@ -1,10 +1,10 @@
 from __future__ import annotations
-import json
-from omegaconf import DictConfig, OmegaConf
 
+import json
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+from omegaconf import DictConfig, OmegaConf
 
 from src.logs.declare.templates import TEMPLATES, Constraint
 

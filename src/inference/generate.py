@@ -1,9 +1,9 @@
 from __future__ import annotations
-from omegaconf import DictConfig, OmegaConf
 
 from typing import TYPE_CHECKING
 
 import numpy as np
+from omegaconf import DictConfig
 
 from src.datasets.codec import DatasetCodec
 from src.datasets.dataset import SplitTrace
