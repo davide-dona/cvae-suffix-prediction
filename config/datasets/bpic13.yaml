@@ -1,0 +1,53 @@
+data:
+  name: bpic13
+
+  # Keys of the raw event log to be mapped to the standard keys used in the framework.
+  case_key: "CaseID"
+  activity_key: "concept:name"
+  resource_key: "org:resource"
+  timestamp_key: "CompleteTimestamp"
+  # Field separator of the raw log, as it was downloaded.
+  separator: ","
+
+  # Split the dataset into train, validation, and test sets.
+  # Splits are applied on the case level, with an out-of-time split
+  train_split: 0.65
+  val_split: 0.15
+  test_split: 0.2
+
+  # Remove cases outside the 98.5 percentile of case length
+  max_seq_len_percentile: 98.5
+  # Remove cases outside the 99.9 percentile of case duration: a case running far past the
+  # scale of its own process is a broken timestamp, and it sets the duration statistics.
+  max_case_duration_percentile: 99.9
+  # Set of raw features that need to be casted to string type
+  string_features: []
+
+  event_features:
+    # Case-level: share the same value for every row in a case
+    - impact
+    - organization country
+    - product
+    # Event-level: vary per row in a case
+    - lifecycle:transition
+    - org:group
+    - org:role
+    - organization involved
+    - resource country
+    # Minutes since the case began, derived from the timestamp
+    - ts_start
+    # Calendar position of the event, cyclically encoded
+    - day_sin
+    - day_cos
+    - seconds_sin
+    - seconds_cos
+
+  log_scaled_features: []
+  log_scaled_remaining_time: false
+  log_scaled_cycle_time: false
+
+declare:
+  consider_vacuity: false # unactivated constraints are considered as violated
+  min_support: 0.8        # fraction of train traces that satisfy a constraint for it to be included in the model
+  itemsets_support: 0.9   # build itemsets of activities that co-occur in at least this fraction of train traces
+  max_cardinality: 2      # highest n tried for the templates that take one

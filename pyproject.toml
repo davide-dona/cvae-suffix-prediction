@@ -1,0 +1,55 @@
+[project]
+name = "suffix-generation"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.13"
+dependencies = [
+    "declare4py>=2.2.0",
+    "huggingface-hub>=1.27.0",
+    "matplotlib>=3.11.1",
+    "numpy>=2.5.1",
+    "pandas>=2.2.3",
+    "pm4py>=2.7.23.3",
+    "pot>=0.9.5",
+    "pyarrow>=25.0.0",
+    "pydantic>=2.13.4",
+    "pyyaml>=6.0.3",
+    "rapidfuzz>=3.14.5",
+    "scipy>=1.18.0",
+    "torch>=2.13.0",
+    "tqdm>=4.69.1",
+    "wandb>=0.29.0",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.3.0",
+    "pre-commit>=4.6.1",
+    "ruff>=0.16.1",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # bugbear
+    "N",   # pep8-naming
+]
+ignore = [
+    "N812",  # `torch.nn.functional as F` is the standard PyTorch idiom
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src", "pipelines", "scripts"]
+
+[tool.ruff.lint.per-file-ignores]
+"notebooks/*.ipynb" = ["E402"]  # notebook cells legitimately set up sys.path before importing
+
+[tool.ruff.format]
+quote-style = "single"

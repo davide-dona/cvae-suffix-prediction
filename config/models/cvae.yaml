@@ -1,0 +1,92 @@
+# The conditional VAE: the backbone below, plus the latent the variability lives in. Every width
+# below matches config/models/transformer.yaml, so what separates the two runs is the latent and
+# nothing else. z ~ p(z | prefix) carries what the prefix leaves undetermined, and the decoder
+# reads its heads greedily, so a whole suffix is one draw from z rather than a run of independent
+# per-step draws, which is the comparison.
+#
+# Both time heads are point regressors, as the Transformer's are and as SuTraN's are, rather than
+# heads emitting a scale of their own to be drawn from.
+seed: 42
+
+dataloader:
+  batch_size: 4096
+  # 48 vCPUs, so cores are not the constraint: each worker prefetches two of these batches,
+  # and a batch of 4096 padded prefix/suffix pairs is hundreds of MB of host memory.
+  num_workers: 12
+
+model:
+  kind: cvae
+  name: cvae
+
+  d_model: 32
+
+  embeddings:
+    activity_dim: 16
+    resource_dim: 32
+    feature_dim: 8
+
+  # Reads both sequences: the prefix, whose CLS summary feeds the prior and whose events the
+  # decoder cross-attends over, and, during training only, the ground-truth suffix, whose
+  # summary feeds the posterior.
+  encoder:
+    num_layers: 4
+    num_heads: 8
+    feedforward_dim: 128
+    dropout: 0.1
+
+  # MLP mapping the prefix summary to p(z|prefix), sampled from at inference.
+  prior:
+    hidden_dims: [128]  # (empty for a linear prior)
+    dropout: 0.1
+
+  latent:
+    latent_dim: 16
+
+  decoder:
+    num_layers: 4
+    num_heads: 8
+    feedforward_dim: 128
+    dropout: 0.1
+    activity_dropout: 0.3
+    head_hidden_dim: 128
+
+  # All the hyperparameters below are defined in steps, not epochs, so that they are independent
+  # of the dataset size and batch size. The only architecture here with a KL term to weigh.
+  loss:
+    # KL annealing: the KL term is ramped up from 0 to full weight over the first
+    # `kl_annealing_ramp_steps` steps.
+    kl_annealing_ramp_steps: 1500
+    # Plain ELBO
+    kl_annealing_start_weight: 0.0
+    kl_annealing_full_weight: 1.0
+    # nats/dimension floor below which the KL is not penalized; keeps z from collapsing
+    free_bits: 0.3
+
+optimizer:
+  lr: 0.0012
+  weight_decay: 0.0
+  warmup_steps: 300
+
+training:
+  device: cuda:0
+  max_steps: 10000
+  val_every_n_steps: 100
+  grad_clip_norm: 5.0  # null to leave gradients unclipped
+  # Fixed slice of the evaluation set used for validation;
+  # Using the full evaluation set for validation would be too slow
+  validation_pairs: 20000
+  generation_pairs: 1024
+
+early_stopping:
+  # Non-improving validation checks tolerated before training stops.
+  patience: 15
+  min_delta_perc: 0.005
+
+# Suffixes drawn per prefix, once for each of the two passes that generate them.
+inference:
+  # The pass inside the training loop, over a fixed slice of the validation split. A checkpoint is
+  # selected on it, so it is read at the budget the report it is answering for is read at.
+  validation_samples: 100
+  # The pass over the whole test split that a report is built from. Paid for once per run.
+  evaluation_samples: 100
+  generation_rows_upper_bound: 10240
