@@ -119,6 +119,36 @@ One run leaves one version, so an experiment's Artifact lineage reads as its run
 
 ### 3. Inference
 
+#### Prior-only CVAE experiment
+
+Fit only an existing CVAE's Gaussian prior against frozen posterior distributions:
+
+```bash
+uv run python -m pipelines.fit_prior \
+  -m outputs/checkpoints/best/bpic17/cvae/20260904-201424.pt \
+  -c config/datasets/bpic17.yaml \
+  -e config/experiments/prior-only-fit.yaml \
+  -o outputs/diagnostics/bpic17/prior-only-fit
+```
+
+The experiment config fixes the budget: 2,048 training pairs, 200 prior updates, and 32 draws
+for each of 128 validation pairs, on CPU. It caches the encoder and posterior outputs, disables
+dropout throughout, and fits unfloored Gaussian KL. Every non-prior tensor remains frozen.
+Training pairs sharing a case identity with the validation subset are excluded.
+
+The original and final priors use the same validation pairs and random seed. No intermediate
+checkpoint is selected. `comparison.json` holds both metric summaries, training and validation
+KL, source provenance, configs, and subset identities. Distribution scores use only prefixes
+with at least five reference occurrences; `compared` gives their count, and unavailable scores
+are JSON `null`. `paired_scores.parquet` preserves both arms' per-prefix scores, and
+`history.json` records every fitting update. This is a small diagnostic, not a significance test.
+
+`fitted.pt` is a separate checkpoint with model name `cvae-prior-only-fit`, usable by the normal
+generation pipeline. Its `step` retains the source training step; `prior_fit` records the separate
+fitting budget. Its `selection_score` is the final diagnostic EMSC distance across all sampled
+validation prefixes, not a score used to select weights. Source files are never overwritten;
+the output directory must not already exist. No W&B run or artifact is uploaded by this pipeline.
+
 After training, generate suffixes for the test set:
 
 ```bash

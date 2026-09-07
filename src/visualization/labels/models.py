@@ -24,6 +24,9 @@ MODELS = Registry[ModelStyle](
     where='MODELS in src/visualization/labels/models.py',
     entries={
         'cvae': ModelStyle(label='CVAE', color='#3B7EA1', marker='*', linestyle='-'),
+        'cvae-prior-only-fit': ModelStyle(
+            label='CVAE prior fit', color='#6B8E23', marker='o', linestyle='-.'
+        ),
         'transformer': ModelStyle(label='Transformer', color='#A05A4B', marker='D', linestyle=':'),
         'u-ed-lstm': ModelStyle(label='U-ED-LSTM', color='#7A7A7A', marker='s', linestyle='--'),
     },
