@@ -2,6 +2,8 @@ from collections.abc import Container, Sequence
 
 import pandas as pd
 
+from src.scalar_metrics import Direction
+from src.uncertainty import ALPHA
 from src.visualization import labels
 from src.visualization.catalogue import MetricEntry, Table
 
@@ -77,7 +79,7 @@ def _block(
     Args:
         table: Table definition.
         frame: Report rows for the dataset.
-        significance: Best or tied metrics by model.
+        significance: Metrics to emphasize by model.
         models: Models in display order.
 
     Returns:
@@ -130,12 +132,12 @@ def _headers(table: Table) -> list[str]:
 
 
 def latex_table(frame: pd.DataFrame, table: Table, significance: pd.DataFrame) -> str:
-    """Render a booktabs LaTex table with bold best or tied scores.
+    """Render a booktabs LaTex table with descriptive and inferential emphasis notes.
 
     Args:
         frame: Report rows for all datasets and models.
         table: Table definition.
-        significance: Best or tied metrics by dataset and model.
+        significance: Metrics to emphasize by dataset and model.
 
     Returns:
         Complete `tabularx` environment.
@@ -170,5 +172,21 @@ def latex_table(frame: pd.DataFrame, table: Table, significance: pd.DataFrame) -
         value_columns = f'*{{{len(table.columns)}}}{{>{{\\centering\\arraybackslash}}X}}'
         preamble = f'\\begin{{tabularx}}{{\\linewidth}}{{ll|{value_columns}}}'
         environment = 'tabularx'
-    # Prefix the table with its caption note.
-    return '\n'.join((f'% {table.note}', preamble, *lines, f'\\end{{{environment}}}')) + '\n'
+    notes = [table.note]
+    directions = {entry.metric.direction for entry in table.columns}
+    if directions & {Direction.HIGHER, Direction.LOWER}:
+        notes.append(
+            'For higher/lower metrics, bold marks observed best means and models with no '
+            'detected difference from the observed best '
+            f'(paired case bootstrap, all-pairs Holm correction per dataset and metric, '
+            f'alpha={ALPHA}). This does not establish equivalence. '
+            'Unavailable comparisons add no emphasis beyond observed best values.'
+        )
+    if Direction.ZERO in directions:
+        notes.append(
+            'For calibration gaps, bold marks the smallest absolute mean gap only; '
+            'this is descriptive, with no significance test.'
+        )
+    notes.append('Single-model datasets have no emphasis.')
+    comments = [f'% {note}' for note in notes]
+    return '\n'.join((*comments, preamble, *lines, f'\\end{{{environment}}}')) + '\n'

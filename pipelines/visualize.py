@@ -55,7 +55,7 @@ def _write_tables(frame: pd.DataFrame, significance: pd.DataFrame) -> int:
 
     Args:
         frame: Every report read, from `read_reports`.
-        significance: Which models are tied with the best of each row, from `test_significance`.
+        significance: Table emphasis and adjusted comparisons from `test_significance`.
     Returns:
         How many tables were written.
     """
@@ -94,9 +94,7 @@ def run(evaluation_files: Sequence[Path]) -> None:
     with step(f'Drawing {", ".join(logs)}'):
         drawn = _draw_figures(reports)
 
-    # Over the per-prefix scores beside each report, since a mean cannot say whether two models
-    # differ. A paired bootstrap over the cases of each log, which is seconds per log.
-    with step('Testing which differences are real'):
+    with step('Comparing means with a paired case bootstrap'):
         significance = reported_models(test_significance(evaluation_files))
 
     with step('Writing the comparison tables'):
