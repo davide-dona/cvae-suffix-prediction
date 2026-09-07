@@ -1,3 +1,5 @@
+from __future__ import annotations
+from omegaconf import DictConfig, OmegaConf
 import argparse
 from pathlib import Path
 
@@ -7,8 +9,6 @@ from tqdm import tqdm
 
 from src import paths
 from src.cli import banner, step
-from src.configs import load_generation_config
-from src.configs.schema import SamplingConfig, sampling_of
 from src.datasets.codec import DatasetCodec
 from src.datasets.dataset import TraceDataset
 from src.identity import RunIdentity
@@ -26,7 +26,7 @@ def run(
     device: str | None,
     num_samples: int | None,
     tuning: Path | None,
-    sampling: SamplingConfig | None,
+    sampling: DictConfig | None,
 ) -> None:
     """Generate suffixes for every prefix of the test split and write them out.
 
@@ -212,7 +212,7 @@ def main() -> None:
     if any(value is not None for value in explicit) and None in explicit:
         parser.error('--temperature and --top-p are given together: a sampler is the pair')
     sampling = (
-        SamplingConfig(temperature=args.temperature, top_p=args.top_p)
+        DictConfig(temperature=args.temperature, top_p=args.top_p)
         if args.temperature is not None
         else None
     )

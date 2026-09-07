@@ -1,0 +1,8 @@
+defaults:
+- hydra/default
+- dataset: ???
+- model: cvae
+- training: default
+- runtime: local
+- experiment: null
+- _self_

@@ -1,9 +1,11 @@
-from src.configs.schema import EarlyStoppingConfig
+from __future__ import annotations
+import math
+from omegaconf import DictConfig, OmegaConf
 
 
 class EarlyStopper:
     """
-    Stop training once its validation loss has stopped improving. Every validation counts.
+    Stop training once its validation energy score has stopped improving. Every validation counts.
     What it is handed is the run's selection score, which is derived from free-running generation,
     making it independent from the KL annealing weights.
 
@@ -11,7 +13,7 @@ class EarlyStopper:
         config: Early stopping configuration.
     """
 
-    def __init__(self, config: EarlyStoppingConfig):
+    def __init__(self, config: DictConfig):
         self.patience = config.patience
         self.min_delta_perc = config.min_delta_perc
         self.counter = 0
@@ -20,7 +22,10 @@ class EarlyStopper:
     def update(self, val_score: float) -> bool:
         """Record one validation result and report whether training should stop."""
         # A real improvement resets the counter; anything else, plateaus included, spends it.
-        if val_score < self.min_validation_score * (1.0 - self.min_delta_perc):
+        if not math.isfinite(val_score):
+            raise ValueError(f'Nonfinite validation energy score: {val_score}')
+        best = self.min_validation_score
+        if best == float('inf') or best - val_score > abs(best) * self.min_delta_perc:
             self.counter = 0
         else:
             self.counter += 1

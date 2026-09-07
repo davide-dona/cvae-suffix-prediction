@@ -1,9 +1,10 @@
+from __future__ import annotations
+from omegaconf import DictConfig, OmegaConf
 from dataclasses import dataclass
 
 import torch
 from torch import nn
 
-from src.configs.schema import DecoderConfig, LatentConfig, SamplingConfig
 from src.datasets.dataset import Events
 from src.distributions import Laplace
 from src.model.components.attention import MultiHeadAttention, ProjectedKeysValues
@@ -101,7 +102,7 @@ class DecoderLayer(nn.Module):
     """One layer of the decoder stack, with self-attention over the suffix and cross-attention
     over the prefix."""
 
-    def __init__(self, config: DecoderConfig, *, d_model: int):
+    def __init__(self, config: DictConfig, *, d_model: int):
         super().__init__()
         self.self_attention = MultiHeadAttention(
             d_model=d_model, num_heads=config.num_heads, dropout=config.dropout
@@ -272,8 +273,8 @@ class Decoder(nn.Module):
 
     def __init__(
         self,
-        config: DecoderConfig,
-        latent_config: LatentConfig | None,
+        config: DictConfig,
+        latent_config: DictConfig | None,
         embeddings: EventEmbeddings,
         *,
         d_model: int,
@@ -282,7 +283,7 @@ class Decoder(nn.Module):
         pad_activity_index: int,
         pad_resource_index: int,
         eot_activity_index: int,
-        sampling: SamplingConfig | None,
+        sampling: DictConfig | None,
     ):
         """
         Args:
@@ -437,7 +438,7 @@ class Decoder(nn.Module):
             return (UNCONDITIONED,) * len(self.layers)
         return self.conditioning.layers(z)
 
-    def read_with(self, sampling: SamplingConfig) -> None:
+    def read_with(self, sampling: DictConfig) -> None:
         """Replace the sampler the activity head is drawn through.
 
         Inference-time only: nothing here is a parameter or reaches the state dict, so swapping it
@@ -490,7 +491,7 @@ class Decoder(nn.Module):
     def _next_time(distribution: Laplace, *, drawing: bool) -> torch.Tensor:
         """Read one time head for one decode step.
 
-        No temperature and no nucleus shape this the way `SamplingConfig` shapes an activity's
+        No temperature and no nucleus shape this the way `DictConfig` shapes an activity's
         draw: the head's own scale already says how wide this position is, where a softmax says
         only how the mass is spread over a vocabulary. A head with no scale is the unit-scale
         `Laplace.point`, and `drawing` is False on every decoder that holds one, so this reads its

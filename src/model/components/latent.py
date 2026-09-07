@@ -1,7 +1,8 @@
+from __future__ import annotations
+from omegaconf import DictConfig, OmegaConf
 import torch
 from torch import nn
 
-from src.configs.schema import LatentConfig, PriorConfig
 from src.distributions import Gaussian
 
 
@@ -13,7 +14,7 @@ class PriorNetwork(nn.Module):
     against it, whatever the prefix already determines costs nothing to encode.
     """
 
-    def __init__(self, config: PriorConfig, latent_config: LatentConfig, *, prefix_dim: int):
+    def __init__(self, config: DictConfig, latent_config: DictConfig, *, prefix_dim: int):
         super().__init__()
         layers: list[nn.Module] = []
         # The input is the prefix summary; each hidden layer then narrows or widens from there.
@@ -50,7 +51,7 @@ class PosteriorNetwork(nn.Module):
     substitution legitimate.
     """
 
-    def __init__(self, latent_config: LatentConfig, *, summary_dim: int):
+    def __init__(self, latent_config: DictConfig, *, summary_dim: int):
         super().__init__()
         # Both summaries come out of the same encoder, so a single linear layer is enough here;
         # like the prior's output layer it emits mean and log-variance together.

@@ -1,9 +1,10 @@
+from __future__ import annotations
+from omegaconf import DictConfig, OmegaConf
 from dataclasses import dataclass
 
 import torch
 from torch import nn
 
-from src.configs.schema import TraceEncoderConfig
 from src.datasets.dataset import Events
 from src.model.components.embeddings import EventEmbeddings
 
@@ -26,7 +27,7 @@ class TraceEncoder(nn.Module):
     see only the `EncodedTrace` it comes back as.
     """
 
-    def __init__(self, config: TraceEncoderConfig, embeddings: EventEmbeddings, *, d_model: int):
+    def __init__(self, config: DictConfig, embeddings: EventEmbeddings, *, d_model: int):
         super().__init__()
         self.embeddings = embeddings
         self.dropout = nn.Dropout(p=config.dropout)

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from omegaconf import DictConfig, OmegaConf
 
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -7,7 +8,6 @@ from typing import Self
 
 from pydantic import TypeAdapter
 
-from src.configs.schema import SamplingConfig
 from src.identity import RunIdentity
 
 # The pair searched over. A temperature scales every step alike; a nucleus reads how peaked each
@@ -48,7 +48,7 @@ class TuningPoint:
     `unique_sample_rate` is what a collapsing corner shows up in first.
     """
 
-    sampling: SamplingConfig
+    sampling: DictConfig
     score: float
     continuation_precision: float
     continuation_recall: float
@@ -77,7 +77,7 @@ class TuningReport:
 
     run: RunIdentity
     search: SearchPass
-    chosen: SamplingConfig
+    chosen: DictConfig
     grid: tuple[TuningPoint, ...]
 
     @classmethod
@@ -127,7 +127,7 @@ class TuningReport:
         path.write_bytes(_ADAPTER.dump_json(self, indent=4))
         return path
 
-    def sampling_for(self, run: RunIdentity) -> SamplingConfig:
+    def sampling_for(self, run: RunIdentity) -> DictConfig:
         """The chosen sampler, having checked this report is that run's.
 
         A report is handed to `pipelines.generate` as a path, and a path says nothing about which

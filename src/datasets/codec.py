@@ -1,4 +1,5 @@
 from __future__ import annotations
+from omegaconf import DictConfig, OmegaConf
 
 import json
 from functools import cached_property
@@ -7,10 +8,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from pandas.api.types import is_numeric_dtype
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from src import paths
-from src.configs.schema import DataConfig, StrictModel
 from src.logs import (
     ACTIVITY_KEY,
     CYCLE_TIME_KEY,
@@ -29,6 +29,10 @@ from src.logs import (
 ACTIVITY_TOKENS = (PAD_TOKEN, EOT_TOKEN, SOS_TOKEN, UNK_TOKEN)
 RESOURCE_TOKENS = (PAD_TOKEN, EOT_TOKEN, UNK_TOKEN)
 FEATURE_TOKENS = (UNK_TOKEN,)
+
+
+class StrictModel(BaseModel):
+    model_config = ConfigDict(frozen=True, extra='forbid')
 
 
 class CategoricalColumn(StrictModel):
@@ -286,7 +290,7 @@ class DatasetCodec(StrictModel):
 
     @classmethod
     def fit(
-        cls, train: pd.DataFrame, *, data_config: DataConfig, max_trace_length: int
+        cls, train: pd.DataFrame, *, data_config: DictConfig, max_trace_length: int
     ) -> DatasetCodec:
         """Fit the codec on the train split.
         Args:
@@ -323,7 +327,7 @@ class DatasetCodec(StrictModel):
         )
 
     @classmethod
-    def load(cls, data_config: DataConfig) -> DatasetCodec:
+    def load(cls, data_config: DictConfig) -> DatasetCodec:
         """Load the codec previously fit for a dataset.
 
         The one place a config becomes a codec: what comes back names the dataset, so everything

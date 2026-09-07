@@ -1,3 +1,5 @@
+from __future__ import annotations
+from omegaconf import DictConfig, OmegaConf
 import argparse
 import itertools
 from pathlib import Path
@@ -8,8 +10,6 @@ from tqdm import tqdm
 
 from src import paths
 from src.cli import banner, step
-from src.configs import load_generation_config
-from src.configs.schema import SamplingConfig
 from src.datasets.codec import DatasetCodec
 from src.datasets.dataset import TraceDataset, fixed_subset
 from src.evaluation.scores import ConformanceScores, DistributionScores
@@ -34,7 +34,7 @@ def _score(
     model: Transformer,
     loader: DataLoader,
     *,
-    sampling: SamplingConfig,
+    sampling: DictConfig,
     seed: int,
     num_samples: int,
     codec: DatasetCodec,
@@ -131,7 +131,7 @@ def run(checkpoint_path: Path, *, device: str | None, pairs: int | None, samples
     report_path = paths.TUNING.prepare(identity)
     torch_device = torch.device(config.training.device)
     grid = [
-        SamplingConfig(temperature=temperature, top_p=top_p)
+        DictConfig(temperature=temperature, top_p=top_p)
         for temperature, top_p in itertools.product(TEMPERATURES, TOP_PS)
     ]
 

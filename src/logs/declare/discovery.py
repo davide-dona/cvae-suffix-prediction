@@ -1,10 +1,12 @@
+from __future__ import annotations
+import json
+from omegaconf import DictConfig, OmegaConf
 import pandas as pd
 import pm4py
 from Declare4Py.D4PyEventLog import D4PyEventLog
 from Declare4Py.ProcessMiningTasks.Discovery.DeclareMiner import DeclareMiner
 
 from src import paths
-from src.configs import DeclareConfig
 from src.logs.declare.constraints import COMMENT, SETTINGS_LINE
 from src.logs.keys import ACTIVITY_KEY, CASE_KEY, TIMESTAMP_KEY
 
@@ -13,7 +15,7 @@ def discover_declare_model(
     train: pd.DataFrame,
     *,
     dataset: str,
-    declare_config: DeclareConfig,
+    declare_config: DictConfig,
 ) -> int:
     """
     Discover a declarative model from the train split and write it beside the dataset.
@@ -62,7 +64,7 @@ def discover_declare_model(
     # `src.logs.declare.constraints.discovery_settings`.
     lines = [
         f'{COMMENT} discovered from the train split of {dataset} by pipelines.preprocess',
-        f'{SETTINGS_LINE}{declare_config.model_dump_json()}',
+        f'{SETTINGS_LINE}{json.dumps(OmegaConf.to_container(declare_config, resolve=True))}',
     ]
     # Write the activities in the Declare4py format
     lines += [f'activity {activity}' for activity in model.activities]

@@ -8,7 +8,7 @@ import pyarrow.parquet as pq
 from src import paths
 from src.evaluation.scores import METRICS
 from src.evaluation.summary import PrefixSummary, flatten_scores
-from src.identity import RunIdentity, group_by_model, read_run_identity, stamped
+from src.artifacts import group_by_model, read_metadata, with_metadata
 from src.inference.generation_store import PrefixKey
 
 # Prefixes buffered in each Parquet row group.
@@ -33,7 +33,7 @@ def stream_prefix_scores(
     keys: Sequence[PrefixKey],
     *,
     path: Path,
-    run: RunIdentity,
+    metadata: dict[str, str],
 ) -> Iterator[PrefixSummary]:
     """Write per-prefix scores while yielding the original summaries.
 
@@ -41,7 +41,7 @@ def stream_prefix_scores(
         summaries: Prefix summaries in generation order.
         keys: Prefix identities in the same order.
         path: Destination Parquet path.
-        run: Identity stamped into the Parquet schema.
+        metadata: Identity with_metadata into the Parquet schema.
 
     Yields:
         Each input summary unchanged.
@@ -58,7 +58,7 @@ def stream_prefix_scores(
         for values in columns.values():
             values.clear()
 
-    with pq.ParquetWriter(where=path, schema=stamped(_SCHEMA, run)) as writer:
+    with pq.ParquetWriter(where=path, schema=with_metadata(_SCHEMA, metadata)) as writer:
         for summary, (case_id, prefix_len) in zip(summaries, keys, strict=True):
             columns['case_id'].append(case_id)
             columns['prefix_len'].append(prefix_len)
@@ -113,24 +113,24 @@ def score_files(reports: Sequence[Path]) -> dict[str, dict[str, Path]]:
         Score files keyed by dataset and model.
 
     Raises:
-        ValueError: If a score file is missing, invalid, or duplicates a model run.
+        ValueError: If a score file is missing, invalid, or duplicates a model metadata.
     """
-    files = [(report, paths.PREFIX_SCORES.beside(report)) for report in reports]
+    files = [(report, report.with_name('prefix_scores.parquet')) for report in reports]
     missing = [str(report) for report, scores in files if not scores.exists()]
     if missing:
         raise ValueError(
-            'no per-prefix scores beside these reports, so how far a run’s means could be off '
+            'no per-prefix scores beside these reports, so how far a metadata’s means could be off '
             'cannot be read:\n  '
             + '\n  '.join(missing)
             + '\nScore them again with `python -m pipelines.evaluate`, which writes them beside '
             'the report.'
         )
 
-    runs: list[tuple[RunIdentity, Path]] = []
+    runs: list[tuple[Path]] = []
     for _, scores in files:
         try:
             with pq.ParquetFile(scores) as parquet:
-                runs.append((read_run_identity(parquet), scores))
+                runs.append((read_metadata(parquet), scores))
         except (ValueError, TypeError, KeyError) as error:
             # Preserve filesystem errors as-is.
             raise ValueError(f'{scores} is not a per-prefix scores file: {error}') from error

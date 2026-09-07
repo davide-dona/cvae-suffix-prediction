@@ -1,0 +1,41 @@
+# @package _global_
+data:
+  name: bpic17
+  case_key: case:concept:name
+  activity_key: concept:name
+  resource_key: org:resource
+  timestamp_key: time:timestamp
+  separator: ;
+  train_split: 0.65
+  val_split: 0.15
+  test_split: 0.2
+  max_seq_len_percentile: 98.5
+  max_case_duration_percentile: 99.9
+  string_features: []
+  event_features:
+  - case:LoanGoal
+  - case:ApplicationType
+  - case:RequestedAmount
+  - Action
+  - EventOrigin
+  - lifecycle:transition
+  - FirstWithdrawalAmount
+  - NumberOfTerms
+  - Accepted
+  - MonthlyCost
+  - Selected
+  - CreditScore
+  - OfferedAmount
+  - ts_start
+  - day_sin
+  - day_cos
+  - seconds_sin
+  - seconds_cos
+  log_scaled_features: []
+  log_scaled_remaining_time: false
+  log_scaled_cycle_time: false
+declare:
+  consider_vacuity: false
+  min_support: 0.8
+  itemsets_support: 0.9
+  max_cardinality: 2

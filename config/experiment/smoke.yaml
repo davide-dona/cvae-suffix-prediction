@@ -1,0 +1,20 @@
+# @package _global_
+training:
+  max_steps: 2
+  val_every_n_steps: 1
+  validation_pairs: 4
+  generation_pairs: 4
+dataloader:
+  batch_size: 4
+  num_workers: 0
+inference:
+  validation_samples: 10
+  evaluation_samples: 10
+  generation_rows_upper_bound: 40
+model:
+  encoder:
+    num_layers: 1
+  decoder:
+    num_layers: 1
+wandb:
+  mode: disabled

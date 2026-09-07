@@ -1,0 +1,9 @@
+# @package _global_
+defaults:
+- local
+dataloader:
+  num_workers: 0
+training:
+  device: cpu
+wandb:
+  mode: disabled

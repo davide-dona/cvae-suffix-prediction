@@ -1,0 +1,8 @@
+defaults:
+- backbone
+- _self_
+kind: transformer
+name: transformer
+sampling:
+  temperature: 1.0
+  top_p: 1.0

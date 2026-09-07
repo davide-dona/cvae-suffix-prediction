@@ -1,3 +1,6 @@
+from __future__ import annotations
+import json
+from omegaconf import DictConfig, OmegaConf
 from collections.abc import Sequence
 from pathlib import Path
 from types import TracebackType
@@ -6,8 +9,7 @@ from typing import Self
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from src.configs.schema import SamplingConfig
-from src.identity import RunIdentity, read_run_identity, read_vocabulary, stamped, with_vocabulary
+from src.artifacts import read_metadata, read_vocabulary, with_metadata, with_vocabulary
 from src.inference.generation import DecodedEvents, Draws, Generation
 
 # Which prefix a row answers, and so what the rows of two runs of one log are matched on. A cut is
@@ -15,22 +17,22 @@ from src.inference.generation import DecodedEvents, Draws, Generation
 type PrefixKey = tuple[str, int]
 
 # How the activity head was read, for a file whose model drew from it, and absent for one whose
-# model read it at its mode. A run's identity does not settle this: the sampler is chosen after
-# training and can be changed without the weights moving, so two files of one run are told apart
+# model read it at its mode. A metadata's identity does not settle this: the sampler is chosen after
+# training and can be changed without the weights moving, so two files of one metadata are told apart
 # by nothing else.
 _SAMPLING = b'sampling'
 
-# One run of activities, one character each. A suffix is a string rather than a list of names: the
+# One metadata of activities, one character each. A suffix is a string rather than a list of names: the
 # names live once in the file's vocabulary metadata, and an edit distance reads a string directly.
 _SUFFIX = pa.string()
 
-# One run's cycle time before each of its activities. Timestamps are these accumulated, so they are
+# One metadata's cycle time before each of its activities. Timestamps are these accumulated, so they are
 # not written a second time. float32 because that is what the model emits: `denormalize` widens to
 # float64 on the way out, and storing that width would double the largest column of the file to
 # carry digits the decoder never produced.
 _CYCLE_TIMES = pa.list_(pa.field(name='element', type=pa.float32()))
 
-# The schema of the Parquet file that holds a run's generations. One row per prefix: the samples
+# The schema of the Parquet file that holds a metadata's generations. One row per prefix: the samples
 # nest inside it, so nothing describing the prefix is written once per sample.
 _SCHEMA = pa.schema(
     [
@@ -92,38 +94,38 @@ _FLOAT_LEAVES = [
 class GenerationWriter:
     """A generations file, open for writing, one block per batch.
 
-    Used as a context manager: the file's footer is written when it closes, so a run that dies
+    Used as a context manager: the file's footer is written when it closes, so a metadata that dies
     mid-generation leaves nothing readable rather than a file that lies about its length.
     """
 
     def __init__(
         self,
         path: Path,
-        run: RunIdentity,
+        metadata: dict[str, str],
         *,
         vocabulary: Sequence[str],
-        sampling: SamplingConfig | None,
+        sampling: DictConfig | None,
     ) -> None:
         """
         Args:
             path: The file to write, its directory already made, from `paths.GENERATIONS.prepare`.
                 Overwritten if it already exists.
-            run: The run these generations come from, stamped into the file so evaluation can read
+            metadata: The metadata these generations come from, with_metadata into the file so evaluation can read
                 it back instead of guessing at it.
             vocabulary: The activity names the suffixes are spelled on, in code order, from
                 `ActivityCodes.vocabulary`. Written into the file so it says what its own
                 characters mean.
             sampling: How the activity head was read, for a model that draws from it, or None for
                 one that reads it at its mode. Written in for the same reason the vocabulary is:
-                the sampler is chosen after training, so the run's identity alone does not say
+                the sampler is chosen after training, so the metadata's identity alone does not say
                 which one produced this file.
         """
         schema = with_vocabulary(_SCHEMA, vocabulary)
         if sampling is not None:
             schema = schema.with_metadata(
-                (schema.metadata or {}) | {_SAMPLING: sampling.model_dump_json()}
+                (schema.metadata or {}) | {_SAMPLING: json.dumps(OmegaConf.to_container(sampling, resolve=True))}
             )
-        schema = stamped(schema, run)
+        schema = with_metadata(schema, metadata)
         self._writer = pq.ParquetWriter(
             where=path,
             schema=schema,
@@ -207,14 +209,14 @@ class Generations:
         self._parquet.close()
 
     @property
-    def run(self) -> RunIdentity:
-        """Which run wrote this file, which is what its report is named after.
+    def metadata(self) -> dict[str, str]:
+        """Which metadata wrote this file, which is what its report is named after.
 
         Raises:
             ValueError: If the file carries no identity, and so predates the one it should name
                 itself by.
         """
-        return read_run_identity(self._parquet)
+        return read_metadata(self._parquet)
 
     @property
     def vocabulary(self) -> tuple[str, ...]:
@@ -235,7 +237,7 @@ class Generations:
 
         A block is what one call to `GenerationWriter.write` wrote, held as a Parquet row group. A
         prefix cannot cross one, since a row holds one, which is what makes a block an independent
-        unit: what it costs to read and to score is set by the batch a run wrote rather than by the
+        unit: what it costs to read and to score is set by the batch a metadata wrote rather than by the
         size of the split.
         """
         return self._parquet.num_row_groups

@@ -66,6 +66,7 @@ TABLES = (
         note='Exact-match rate is the share of generated samples that exactly match the observed '
         'suffix. W1 is the 1-Wasserstein distance; length in events, times in days.',
         columns=(
+            MetricEntry(METRICS['energy_score'], 'Energy score'),
             MetricEntry(METRICS['emsc'], 'EMSC'),
             MetricEntry(METRICS['continuation_precision'], 'Precision'),
             MetricEntry(METRICS['continuation_recall'], 'Recall'),

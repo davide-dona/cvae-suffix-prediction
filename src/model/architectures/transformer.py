@@ -1,7 +1,8 @@
+from __future__ import annotations
+from omegaconf import DictConfig, OmegaConf
 import torch
 import torch.nn.functional as F
 
-from src.configs.schema import TransformerConfig
 from src.datasets.codec import DatasetCodec
 from src.datasets.dataset import SplitTrace
 from src.model.components.decoder import Decoder, GeneratedSuffix
@@ -38,7 +39,7 @@ class Transformer(SuffixModel):
                                  suffix position
     """
 
-    def __init__(self, config: TransformerConfig, codec: DatasetCodec):
+    def __init__(self, config: DictConfig, codec: DatasetCodec):
         super().__init__(codec=codec)
         self.embeddings = EventEmbeddings(
             config=config.embeddings, codec=codec, d_model=config.d_model

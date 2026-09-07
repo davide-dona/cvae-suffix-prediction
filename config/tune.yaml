@@ -1,0 +1,20 @@
+defaults:
+- hydra/default
+- _self_
+checkpoint: ???
+device: null
+pairs: null
+samples: null
+num_workers: null
+temperatures:
+- 0.8
+- 0.9
+- 1.0
+- 1.1
+- 1.25
+top_ps:
+- 0.85
+- 0.9
+- 0.95
+- 0.98
+- 1.0

@@ -9,7 +9,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src import paths
-from src.identity import read_vocabulary, with_vocabulary
+from src.artifacts import read_vocabulary, with_vocabulary
 from src.logs.keys import (
     ACTIVITY_KEY,
     CASE_KEY,

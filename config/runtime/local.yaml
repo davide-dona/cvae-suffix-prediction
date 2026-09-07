@@ -1,0 +1,10 @@
+# @package _global_
+seed: 42
+dataloader:
+  batch_size: 4096
+  num_workers: 12
+training:
+  device: cuda:0
+wandb:
+  project: suffix-generation
+  mode: online

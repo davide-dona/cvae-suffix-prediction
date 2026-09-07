@@ -1,0 +1,9 @@
+defaults:
+- hydra/default
+- _self_
+checkpoint: ???
+device: null
+num_samples: null
+num_workers: null
+tuning: null
+sampling: null

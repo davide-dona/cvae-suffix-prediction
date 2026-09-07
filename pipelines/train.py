@@ -1,3 +1,5 @@
+from __future__ import annotations
+from omegaconf import DictConfig, OmegaConf
 import argparse
 from datetime import datetime
 
@@ -6,7 +8,6 @@ from torch.utils.data import DataLoader
 
 from src import paths
 from src.cli import banner, step
-from src.configs import ExperimentConfig, load_config
 from src.datasets.codec import DatasetCodec
 from src.datasets.dataset import TraceDataset, fixed_subset
 from src.identity import RunIdentity
@@ -16,7 +17,7 @@ from src.model import build_model
 from src.training import train
 
 
-def run(config: ExperimentConfig) -> None:
+def run(config: DictConfig) -> None:
     """
     Train the model an experiment config describes, on the dataset it names.
     The dataset must have been preprocessed already.

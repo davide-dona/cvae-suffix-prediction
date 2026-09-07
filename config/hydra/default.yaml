@@ -1,0 +1,9 @@
+# @package _global_
+hydra:
+  run:
+    dir: outputs/${hydra.job.name}/${now:%Y-%m-%d}/${now:%H-%M-%S-%f}
+  sweep:
+    dir: outputs/${hydra.job.name}/${now:%Y-%m-%d}/${now:%H-%M-%S-%f}
+    subdir: ${hydra.job.num}
+  job:
+    chdir: false

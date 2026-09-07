@@ -1,4 +1,5 @@
 from __future__ import annotations
+from omegaconf import DictConfig, OmegaConf
 
 from typing import TYPE_CHECKING
 
@@ -8,7 +9,6 @@ from torch import optim
 from torch.utils.data import DataLoader
 
 from src import paths
-from src.configs.schema import EarlyStoppingConfig, OptimizerConfig, TrainingConfig
 from src.datasets.codec import DatasetCodec
 from src.identity import WANDB_PROJECT, RunIdentity, experiment, wandb_artifact, wandb_id
 from src.logs import ContinuationIndex, Split
@@ -48,9 +48,9 @@ def train(
     dataset: str,
     run: RunIdentity,
     experiment_config: dict,
-    optimizer_config: OptimizerConfig,
-    training: TrainingConfig,
-    early_stopping_config: EarlyStoppingConfig,
+    optimizer_config: DictConfig,
+    training: DictConfig,
+    early_stopping_config: DictConfig,
 ) -> None:
     """
     Train a model on a dataset, logging to W&B and saving checkpoints.
@@ -78,7 +78,7 @@ def train(
             Artifact lineage it belongs to. One W&B run is one identity, so an identity reused
             across runs overlays their curves instead of listing them side by side; what makes
             its tag unique is the caller's business.
-        experiment_config: The whole `ExperimentConfig`, dumped to plain data, written into the
+        experiment_config: The whole `DictConfig`, dumped to plain data, written into the
             checkpoint so the model can be rebuilt from the file alone.
         optimizer_config: The optimizer hyperparameters, its learning rate's warmup included.
             The warmup is stepped per optimizer step, so it means the same on every dataset.

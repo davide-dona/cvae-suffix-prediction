@@ -1,7 +1,8 @@
+from __future__ import annotations
+from omegaconf import DictConfig, OmegaConf
 import torch
 import torch.nn.functional as F
 
-from src.configs.schema import CVAEConfig
 from src.datasets.codec import DatasetCodec
 from src.datasets.dataset import SplitTrace
 from src.distributions import Gaussian
@@ -33,7 +34,7 @@ class TransformerCVAE(SuffixModel):
                                    at every suffix position
     """
 
-    def __init__(self, config: CVAEConfig, codec: DatasetCodec):
+    def __init__(self, config: DictConfig, codec: DatasetCodec):
         super().__init__(codec=codec)
         self.loss_config = config.loss
         # Shared between the encoder and the decoder: a single embedding space for events,

@@ -1,11 +1,11 @@
+from __future__ import annotations
+from omegaconf import DictConfig, OmegaConf
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 import torch
-from pydantic import TypeAdapter
 from torch import nn
 
-from src.configs.schema import CVAEConfig, ModelConfig
 from src.datasets.codec import DatasetCodec
 from src.datasets.dataset import SplitTrace
 from src.distributions import Gaussian, Laplace
@@ -13,9 +13,6 @@ from src.model.checkpoint import MODEL_KEYS, require_keys
 from src.model.components.decoder import DecoderOutput, GeneratedSuffix
 from src.training import LatentMetrics, Loss
 
-# `ModelConfig` is a tagged union rather than a class, so a checkpoint's stored config is
-# validated through an adapter rather than by calling `model_validate` on it.
-_MODEL_CONFIG = TypeAdapter(ModelConfig)
 
 
 @dataclass(frozen=True)
@@ -159,7 +156,7 @@ from src.model.architectures.cvae import TransformerCVAE  # noqa: E402
 from src.model.architectures.transformer import Transformer  # noqa: E402
 
 
-def build_model(config: ModelConfig, codec: DatasetCodec) -> SuffixModel:
+def build_model(config: DictConfig, codec: DatasetCodec) -> SuffixModel:
     """Build the architecture a config declares.
 
     Args:
@@ -168,9 +165,11 @@ def build_model(config: ModelConfig, codec: DatasetCodec) -> SuffixModel:
     Returns:
         The model, on the CPU and in training mode.
     """
-    if isinstance(config, CVAEConfig):
+    if config.kind == 'cvae':
         return TransformerCVAE(config=config, codec=codec)
-    return Transformer(config=config, codec=codec)
+    if config.kind == 'transformer':
+        return Transformer(config=config, codec=codec)
+    raise ValueError(f'Unknown model kind: {config.kind}')
 
 
 def model_from_checkpoint(
@@ -194,7 +193,7 @@ def model_from_checkpoint(
             a checkpoint written before `model.kind` existed looks like from here.
     """
     require_keys(checkpoint, MODEL_KEYS, purpose='rebuilt', remedy='Train the model again.')
-    config = _MODEL_CONFIG.validate_python(checkpoint['model_config'])
+    config = OmegaConf.create(checkpoint['config']['model'])
 
     model = build_model(config=config, codec=codec).to(device=device)
     model.load_state_dict(state_dict=checkpoint['model_state_dict'])

@@ -1,0 +1,16 @@
+defaults:
+- backbone
+- _self_
+kind: cvae
+name: cvae
+prior:
+  hidden_dims:
+  - 128
+  dropout: 0.1
+latent:
+  latent_dim: 16
+loss:
+  kl_annealing_ramp_steps: 1500
+  kl_annealing_start_weight: 0.0
+  kl_annealing_full_weight: 1.0
+  free_bits: 0.3

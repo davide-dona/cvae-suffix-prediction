@@ -1,3 +1,5 @@
+from __future__ import annotations
+from omegaconf import DictConfig, OmegaConf
 import argparse
 
 import numpy as np
@@ -6,7 +8,6 @@ from pandas.api.types import is_numeric_dtype
 
 from src import paths
 from src.cli import banner, step
-from src.configs import DataConfig, DeclareConfig, load_dataset_config
 from src.datasets.codec import DatasetCodec
 from src.logs import (
     CASE_ELAPSED_KEY,
@@ -40,7 +41,7 @@ from src.logs.preprocessing import (
 )
 
 
-def case_length_cutoff(log: pd.DataFrame, *, data_config: DataConfig) -> int:
+def case_length_cutoff(log: pd.DataFrame, *, data_config: DictConfig) -> int:
     """Find the cutoff in events for dropping cases too long to fit the model's sequence tensors.
 
     Args:
@@ -54,7 +55,7 @@ def case_length_cutoff(log: pd.DataFrame, *, data_config: DataConfig) -> int:
     return int(np.ceil(np.percentile(lengths, data_config.max_seq_len_percentile)))
 
 
-def case_duration_cutoff(log: pd.DataFrame, *, data_config: DataConfig) -> float:
+def case_duration_cutoff(log: pd.DataFrame, *, data_config: DictConfig) -> float:
     """Find the cutoff in days for dropping the cases whose duration is not a real one.
 
     Args:
@@ -144,7 +145,7 @@ def preprocess(log: pd.DataFrame, *, feature_columns: list[str]) -> pd.DataFrame
     return log
 
 
-def run(data_config: DataConfig, declare_config: DeclareConfig) -> None:
+def run(data_config: DictConfig, declare_config: DictConfig) -> None:
     """
     Preprocess and split a dataset, writing outputs next to the input.
 

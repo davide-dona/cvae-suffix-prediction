@@ -1,13 +1,12 @@
 from __future__ import annotations
+import json
+from omegaconf import DictConfig, OmegaConf
 
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src.logs.declare.templates import TEMPLATES, Constraint
-
-if TYPE_CHECKING:
-    from src.configs import DeclareConfig
 
 # Parse the declarative model written by `discover_declare_model` back into the constraints.
 _CONSTRAINT_LINE = re.compile(r'^(.*)\[(.*)\]\s*(.*)$')
@@ -16,7 +15,7 @@ COMMENT = '#'
 SETTINGS_LINE = '# settings: '
 
 
-def discovery_settings(path: Path) -> DeclareConfig | None:
+def discovery_settings(path: Path) -> DictConfig | None:
     """Read the header of a declarative model and return the settings it records about how it
     was mined.
     Args:
@@ -27,11 +26,10 @@ def discovery_settings(path: Path) -> DeclareConfig | None:
     Raises:
         pydantic.ValidationError: If the header is there but does not describe a discovery.
     """
-    from src.configs import DeclareConfig
 
     for line in path.read_text().splitlines():
         if line.startswith(SETTINGS_LINE):
-            return DeclareConfig.model_validate_json(line.removeprefix(SETTINGS_LINE))
+            return OmegaConf.create(json.loads(line.removeprefix(SETTINGS_LINE)))
     return None
 
 
